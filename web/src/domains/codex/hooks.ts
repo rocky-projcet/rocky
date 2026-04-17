@@ -13,6 +13,7 @@ import type {
 export const codexQueryKeys = {
   providerAccounts: () => ["provider-accounts"] as const,
   providerStatuses: () => ["provider-statuses"] as const,
+  hardwareStatus: () => ["hardware-status"] as const,
   runtimes: () => ["runtime-descriptors"] as const,
   codexAccount: () => ["codex-account"] as const,
   codexStatus: () => ["codex-status"] as const,
@@ -65,6 +66,16 @@ export function useProviderStatusesQuery() {
     queryKey: codexQueryKeys.providerStatuses(),
     queryFn: ({ signal }) => agentEngineClient.getProviderStatuses(signal),
     refetchInterval: 30000,
+    refetchIntervalInBackground: true,
+  });
+}
+
+export function useHardwareStatusQuery(enabled = true) {
+  return useQuery({
+    queryKey: codexQueryKeys.hardwareStatus(),
+    queryFn: ({ signal }) => agentEngineClient.getHardwareStatus(signal),
+    enabled,
+    refetchInterval: enabled ? 10_000 : false,
     refetchIntervalInBackground: true,
   });
 }

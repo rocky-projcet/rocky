@@ -17,6 +17,10 @@ import type {
   CodexStatusRecord,
   CodexStatusServiceLike,
 } from "../../src/account/codex-status-types.js";
+import type {
+  HardwareStatusRecord,
+  HardwareStatusServiceLike,
+} from "../../src/system/hardware-status-types.js";
 
 function buildState(overrides: Partial<CodexAccountRecord> = {}): CodexAccountRecord {
   return {
@@ -235,6 +239,59 @@ function buildClaudeStatus(
   };
 }
 
+function buildHardwareStatus(
+  overrides: Partial<HardwareStatusRecord> = {}
+): HardwareStatusRecord {
+  return {
+    hostname: "rocky.local",
+    platform: "darwin",
+    arch: "arm64",
+    refreshedAt: "2026-03-20T00:00:00.000Z",
+    cpu: {
+      model: "Apple M2",
+      physicalCores: null,
+      logicalCores: 8,
+      speedGHz: null,
+      usagePercent: 31.4,
+      normalizedLoadPercent: 24.5,
+      loadAverage: {
+        oneMinute: 1.96,
+        fiveMinute: 1.41,
+        fifteenMinute: 1.08,
+      },
+    },
+    memory: {
+      kind: "unified",
+      totalBytes: 24 * 1024 ** 3,
+      usedBytes: 12 * 1024 ** 3,
+      freeBytes: 12 * 1024 ** 3,
+      availableBytes: 12 * 1024 ** 3,
+      usedPercent: 50,
+      swapTotalBytes: 4 * 1024 ** 3,
+      swapUsedBytes: 512 * 1024 ** 2,
+    },
+    gpus: [
+      {
+        name: "Apple M2",
+        vendor: "Apple",
+        coreCount: 8,
+        memoryKind: "unified",
+        memoryBytes: 24 * 1024 ** 3,
+        utilizationPercent: null,
+        note: "GPU 코어 8개 · CPU와 GPU가 통합 메모리를 공유합니다.",
+      },
+    ],
+    storage: {
+      path: "/Users/rocky",
+      totalBytes: 512 * 1024 ** 3,
+      usedBytes: 321 * 1024 ** 3,
+      availableBytes: 191 * 1024 ** 3,
+      usedPercent: 62.7,
+    },
+    ...overrides,
+  };
+}
+
 test("account routes expose global login status, device auth start, and logout", async () => {
   const calls: string[] = [];
   const fakeService: CodexAccountServiceLike = {
@@ -342,6 +399,12 @@ test("account routes expose global login status, device auth start, and logout",
       return buildClaudeStatus();
     },
   };
+  const fakeHardwareStatusService: HardwareStatusServiceLike = {
+    async getStatus() {
+      calls.push("hardware");
+      return buildHardwareStatus();
+    },
+  };
 
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "account-routes-"));
   const server = createAgentEngineServer({
@@ -350,6 +413,7 @@ test("account routes expose global login status, device auth start, and logout",
     codexStatusService: fakeStatusService,
     claudeAccountService: fakeClaudeAccountService,
     claudeStatusService: fakeClaudeStatusService,
+    hardwareStatusService: fakeHardwareStatusService,
     now: () => "2026-03-20T00:00:00.000Z",
   });
 
@@ -424,6 +488,13 @@ test("account routes expose global login status, device auth start, and logout",
     };
     assert.equal(providerStatusesPayload.providers.length, 2);
 
+    const hardwareResponse = await fetch(`${baseUrl}/settings/hardware`);
+    assert.equal(hardwareResponse.status, 200);
+    const hardwarePayload = await hardwareResponse.json() as HardwareStatusRecord;
+    assert.equal(hardwarePayload.platform, "darwin");
+    assert.equal(hardwarePayload.memory.kind, "unified");
+    assert.equal(hardwarePayload.gpus[0]?.name, "Apple M2");
+
     const claudeAccountResponse = await fetch(`${baseUrl}/claude/account`);
     assert.equal(claudeAccountResponse.status, 200);
     assert.equal((await claudeAccountResponse.json() as ClaudeAccountRecord).provider, "claude");
@@ -491,6 +562,7 @@ test("account routes expose global login status, device auth start, and logout",
       "claude-get",
       "status",
       "claude-status",
+      "hardware",
       "claude-get",
       "claude-status",
       "claude-login",

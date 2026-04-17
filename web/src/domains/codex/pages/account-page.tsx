@@ -6,6 +6,7 @@ import { Button } from "@/shared/ui/button";
 import { Card } from "@/shared/ui/card";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { PageState } from "@/shared/components/page-state";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -38,6 +39,7 @@ import {
   shouldShowPendingAuthCard,
   shouldShowUpdateStatusCard,
 } from "../lib/account-status-visibility";
+import { HardwareStatusPanel } from "../components/hardware-status-panel";
 import { buttonVariants } from "@/shared/ui/button";
 
 const ANSI_ESCAPE_PATTERN = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
@@ -358,7 +360,7 @@ function ProviderSummary({
   );
 }
 
-export function AccountPage() {
+function ProviderSettingsPanel() {
   const accountsQuery = useProviderAccountsQuery();
   const statusesQuery = useProviderStatusesQuery();
   const codexLoginMutation = useStartCodexLoginMutation();
@@ -394,7 +396,7 @@ export function AccountPage() {
     return (
       <PageState
         eyebrow="로딩"
-        title="AI 서비스 설정을 불러오는 중입니다"
+        title="AI 서비스 상태를 불러오는 중입니다"
         description="Codex와 Claude 로그인 상태, 설치 상태, 사용량 정보를 읽고 있습니다."
       />
     );
@@ -405,7 +407,7 @@ export function AccountPage() {
     return (
       <PageState
         eyebrow="오류"
-        title="AI 서비스 설정을 불러올 수 없습니다"
+        title="AI 서비스 상태를 불러올 수 없습니다"
         description={
           error instanceof Error
             ? error.message
@@ -497,16 +499,11 @@ export function AccountPage() {
 
   return (
     <section className="space-y-6">
-      <Card className="gap-0 bg-foreground p-6 text-primary-foreground">
-        <p className="text-label-md uppercase text-primary-foreground/60">AI 서비스</p>
-        <h3 className="mt-4 font-heading text-display-sm font-semibold">
-          Codex / Claude 계정 설정
-        </h3>
-        <p className="mt-4 max-w-3xl text-body-lg leading-7 text-primary-foreground/80">
-          각 AI 서비스의 로그인 상태, 설치 여부, 버전 진단을 한 화면에서 관리합니다.
-          Codex는 기본 로그인 버튼만 먼저 보이고, device auth와 token 방식은 고급 옵션에서만 노출됩니다.
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Codex와 Claude 연결 상태, 설치 여부, 버전 진단을 관리합니다. 추가 로그인 방식은 각 서비스의 고급 옵션에서 열 수 있습니다.
         </p>
-      </Card>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="gap-5 p-6">
@@ -776,6 +773,44 @@ export function AccountPage() {
             : "Claude 요청에 실패했습니다."}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+export function AccountPage() {
+  const [activeTab, setActiveTab] = useState("providers");
+
+  return (
+    <section className="space-y-6">
+      <Card className="gap-0 bg-foreground p-6 text-primary-foreground">
+        <p className="text-label-md uppercase text-primary-foreground/60">설정</p>
+        <h3 className="mt-4 font-heading text-display-sm font-semibold">
+          서비스 연결과 로컬 실행 환경
+        </h3>
+        <p className="mt-4 max-w-3xl text-body-lg leading-7 text-primary-foreground/80">
+          AI 서비스 연결 상태와 로컬 AI 실행에 영향을 주는 하드웨어 상태를 한곳에서 확인합니다.
+        </p>
+      </Card>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList className="rounded-full bg-muted p-1">
+            <TabsTrigger value="providers">AI 서비스</TabsTrigger>
+            <TabsTrigger value="hardware">하드웨어 상태</TabsTrigger>
+          </TabsList>
+          <p className="text-sm text-muted-foreground">
+            하드웨어 상태는 10초마다 자동으로 새로 읽습니다.
+          </p>
+        </div>
+
+        <TabsContent value="providers" className="space-y-6">
+          <ProviderSettingsPanel />
+        </TabsContent>
+
+        <TabsContent value="hardware" className="space-y-6">
+          <HardwareStatusPanel enabled={activeTab === "hardware"} />
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }

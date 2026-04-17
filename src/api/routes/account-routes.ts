@@ -4,6 +4,7 @@ import type { ClaudeAccountServiceLike } from "../../account/claude-account-type
 import type { ClaudeStatusServiceLike } from "../../account/claude-status-types.js";
 import type { CodexAccountServiceLike } from "../../account/codex-account-types.js";
 import type { CodexStatusServiceLike } from "../../account/codex-status-types.js";
+import type { HardwareStatusServiceLike } from "../../system/hardware-status-types.js";
 import { sendJson } from "../http/reply.js";
 
 interface AccountRoutesOptions extends FastifyPluginOptions {
@@ -11,6 +12,7 @@ interface AccountRoutesOptions extends FastifyPluginOptions {
   codexStatusService: CodexStatusServiceLike;
   claudeAccountService: ClaudeAccountServiceLike;
   claudeStatusService: ClaudeStatusServiceLike;
+  hardwareStatusService: HardwareStatusServiceLike;
   now?: () => string;
 }
 
@@ -83,6 +85,10 @@ export const registerAccountRoutes: FastifyPluginAsync<
       providers,
       updatedAt: now(),
     });
+  });
+
+  server.get("/settings/hardware", async (_request, reply) => {
+    sendJson(reply, 200, await options.hardwareStatusService.getStatus());
   });
 
   server.get("/codex-status", async (_request, reply) => {

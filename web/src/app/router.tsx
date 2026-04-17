@@ -52,8 +52,12 @@ export const router = createBrowserRouter([
         element: <RunInspectorPage />,
       },
       {
-        path: "account",
+        path: "settings",
         element: <AccountPage />,
+      },
+      {
+        path: "account",
+        element: <Navigate to="/settings" replace />,
       }
     ],
   },

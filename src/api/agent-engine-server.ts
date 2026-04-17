@@ -23,6 +23,7 @@ import { registerRunRoutes } from "./routes/run-routes.js";
 import { registerRuntimeRoutes } from "./routes/runtime-routes.js";
 import { registerSessionRoutes } from "./routes/session-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
+import { SystemHardwareStatusService } from "../system/hardware-status-service.js";
 
 export function createAgentEngineServer(
   options: AgentEngineServerOptions = {}
@@ -88,6 +89,9 @@ export function createAgentEngineServer(
       now: options.now,
       idGenerator: options.idGenerator,
     });
+  const hardwareStatusService =
+    options.hardwareStatusService ??
+    new SystemHardwareStatusService();
 
   const server = Fastify({
     logger: false,
@@ -102,6 +106,7 @@ export function createAgentEngineServer(
     codexStatusService,
     claudeAccountService,
     claudeStatusService,
+    hardwareStatusService,
     now: options.now,
   });
   server.register(registerAuthProfileRoutes, {

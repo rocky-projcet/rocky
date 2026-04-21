@@ -8,6 +8,10 @@ import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 
 import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type { RockyChatRecord } from "../../src/rocky-chat/rocky-chat-types.js";
+import type {
+  AgentRunRecord,
+  AgentSessionRecord,
+} from "../../src/sessions/session-types.js";
 
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
@@ -51,10 +55,85 @@ function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
-test("rocky chat detects nutrition MD requests, prepares a worker, and does not start runs", async () => {
-  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+function buildSession(input: {
+  id: string;
+  agentId: string;
+  title?: string | null;
+}): AgentSessionRecord {
+  const now = "2026-04-21T00:00:00.000Z";
+  return {
+    id: input.id,
+    agentId: input.agentId,
+    kind: "single-task",
+    runtimeKind: "codex-cli",
+    runtimeSessionId: null,
+    authProfileId: null,
+    title: input.title ?? null,
+    status: "running",
+    lifecycle: "active",
+    archivedAt: null,
+    workspaceRoot: `/tmp/rocky-workspace/${input.agentId}`,
+    runtimeHome: `/tmp/rocky-runtime/${input.agentId}`,
+    runtimeConfig: {
+      codexBin: "codex",
+      sandbox: "workspace-write",
+      approval: "on-request",
+      profile: null,
+      authProfileId: null,
+      model: null,
+      reasoningEffort: null,
+      serviceTier: null,
+      ollamaLaunchTarget: null,
+      fullAuto: false,
+      dangerouslyBypassApprovalsAndSandbox: false,
+      additionalWritableDirs: [],
+      configOverrides: [],
+      enableFeatures: [],
+      disableFeatures: [],
+      skipGitRepoCheck: true,
+      ephemeral: false,
+    },
+    createdAt: now,
+    lastActivityAt: now,
+  };
+}
+
+function buildRun(input: {
+  id: string;
+  agentId: string;
+  sessionId: string;
+  prompt: string;
+}): AgentRunRecord {
+  const now = "2026-04-21T00:00:00.000Z";
+  return {
+    id: input.id,
+    agentId: input.agentId,
+    sessionId: input.sessionId,
+    runtimeRunId: `runtime-${input.id}`,
+    triggerType: "manual_task",
+    status: "running",
+    runtimeKind: "codex-cli",
+    ollamaLaunchTarget: null,
+    model: null,
+    reasoningEffort: null,
+    serviceTier: null,
+    prompt: input.prompt,
+    startedAt: now,
+    endedAt: null,
+    summary: null,
+    runtimeSessionId: null,
+    outputLastMessagePath: null,
+    resultPath: `/tmp/rocky-runs/${input.id}/result.json`,
+    eventsPath: `/tmp/rocky-runs/${input.id}/events.jsonl`,
+    artifactsDir: `/tmp/rocky-runs/${input.id}/artifacts`,
+  };
+}
+
+function createRockyChatTestServer(stateRoot: string) {
   const agents: AgentRecord[] = [];
-  const sendTurnCalls: string[] = [];
+  const sessions: AgentSessionRecord[] = [];
+  const runs: AgentRunRecord[] = [];
+  const sendTurnCalls: Array<{ sessionId: string; prompt: string }> = [];
 
   const server = createAgentEngineServer({
     stateRoot,
@@ -90,8 +169,14 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and does not 
       },
     },
     sessionService: {
-      async createSession() {
-        throw new Error("createSession should not be called by rocky chat");
+      async createSession(input) {
+        const session = buildSession({
+          id: `session-${sessions.length + 1}`,
+          agentId: input.agentId,
+          title: input.title,
+        });
+        sessions.push(session);
+        return session;
       },
       async listAgentSessions() {
         return [];
@@ -110,14 +195,32 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and does not 
         return [];
       },
       async sendTurn(input) {
-        sendTurnCalls.push(input.sessionId);
-        throw new Error("sendTurn should not be called by rocky chat");
+        const session = sessions.find((entry) => entry.id === input.sessionId);
+        if (!session) {
+          throw new Error(`Unknown session: ${input.sessionId}`);
+        }
+        sendTurnCalls.push({
+          sessionId: input.sessionId,
+          prompt: input.prompt,
+        });
+        const run = buildRun({
+          id: `run-${runs.length + 1}`,
+          agentId: session.agentId,
+          sessionId: session.id,
+          prompt: input.prompt,
+        });
+        runs.push(run);
+        return run;
       },
       async *streamRunEvents() {
         throw new Error("not used");
       },
-      async getRun() {
-        throw new Error("not used");
+      async getRun(runId) {
+        const run = runs.find((entry) => entry.id === runId);
+        if (!run) {
+          throw new Error(`Unknown run: ${runId}`);
+        }
+        return run;
       },
       async getRunResult() {
         throw new Error("not used");
@@ -128,6 +231,14 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and does not 
       },
     },
   });
+
+  return { agents, runs, sendTurnCalls, server, sessions };
+}
+
+test("rocky chat detects nutrition MD requests, prepares a worker, and starts an orchestrated run", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, runs, sendTurnCalls, server, sessions } =
+    createRockyChatTestServer(stateRoot);
 
   try {
     const response = await server.inject({
@@ -147,18 +258,29 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and does not 
     });
     assert.equal(response.statusCode, 201);
     const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.intent, "specialized-task");
     assert.equal(chat.domain, "nutrition-md");
     assert.equal(chat.worker?.displayName, "영양제 MD 담당");
-    assert.equal(chat.executionStarted, false);
+    assert.equal(chat.executionStarted, true);
     assert.equal(chat.attachments.length, 1);
     assert.equal(chat.messages.length, 2);
     assert.ok(chat.skillCandidates.some((candidate) => candidate.title === "상품명 표기 묶기"));
     assert.ok(chat.skillCandidates.some((candidate) => candidate.title === "민감 자료 보호"));
     assert.equal(chat.dispatches.length, 1);
+    assert.equal(chat.dispatches[0]?.intent, "specialized-task");
+    assert.equal(chat.dispatches[0]?.executionStarted, true);
+    assert.equal(chat.dispatches[0]?.orchestration?.status, "running");
+    assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-nutrition-md");
+    assert.equal(chat.dispatches[0]?.orchestration?.sessionId, "session-1");
+    assert.equal(chat.dispatches[0]?.orchestration?.runId, "run-1");
+    assert.equal(chat.orchestration?.runId, "run-1");
     assert.equal(agents.length, 1);
-    assert.deepEqual(sendTurnCalls, []);
+    assert.equal(sessions.length, 1);
+    assert.equal(runs.length, 1);
+    assert.equal(sendTurnCalls.length, 1);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /영양제 이벤트 엑셀/);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /원가\/마진 정보/);
 
-    agents.splice(0, agents.length);
     const followUp = await server.inject({
       method: "POST",
       url: `/rocky/chats/${chat.id}/messages`,
@@ -168,11 +290,143 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and does not 
     });
     assert.equal(followUp.statusCode, 201);
     const updated = followUp.json<RockyChatRecord>();
+    assert.equal(updated.intent, "specialized-task");
     assert.equal(updated.messages.length, 4);
     assert.ok(updated.skillCandidates.some((candidate) => candidate.title === "채널별 성과 비교"));
     assert.equal(agents.length, 1);
     assert.equal(updated.worker?.agentId, "rocky-nutrition-md");
+    assert.equal(sessions.length, 2);
+    assert.equal(runs.length, 2);
+    assert.equal(sendTurnCalls.length, 2);
+    assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat answers simple conversation without creating workers, dispatches, or agents", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, runs, sendTurnCalls, server, sessions } =
+    createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "안녕",
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.intent, "conversation");
+    assert.equal(chat.worker, null);
+    assert.equal(chat.dispatches.length, 0);
+    assert.equal(chat.skillCandidates.length, 0);
+    assert.equal(chat.orchestration, null);
+    assert.equal(chat.executionStarted, false);
+    assert.equal(chat.messages[1]?.intent, "conversation");
+    assert.equal(chat.messages[1]?.workerId, null);
+    assert.equal(agents.length, 0);
+    assert.equal(sessions.length, 0);
+    assert.equal(runs.length, 0);
     assert.deepEqual(sendTurnCalls, []);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat asks for clarification on vague requests and routes later general tasks through an agent", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, runs, sendTurnCalls, server, sessions } =
+    createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "이거 봐줘",
+        attachments: [
+          {
+            name: "meeting-notes.txt",
+            contentType: "text/plain",
+            size: 320,
+          },
+        ],
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.intent, "clarification");
+    assert.equal(chat.worker, null);
+    assert.equal(chat.dispatches.length, 0);
+    assert.equal(chat.executionStarted, false);
+    assert.equal(chat.messages[1]?.intent, "clarification");
+
+    const followUp = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${chat.id}/messages`,
+      payload: {
+        message: "회의록으로 요약해서 액션 아이템을 정리해줘.",
+      },
+    });
+
+    assert.equal(followUp.statusCode, 201);
+    const updated = followUp.json<RockyChatRecord>();
+    assert.equal(updated.intent, "general-task");
+    assert.equal(updated.worker?.displayName, "자료 정리 담당");
+    assert.equal(updated.worker?.agentId, "rocky-general-task");
+    assert.equal(updated.dispatches.length, 1);
+    assert.equal(updated.dispatches[0]?.intent, "general-task");
+    assert.equal(updated.dispatches[0]?.orchestration?.status, "running");
+    assert.equal(updated.dispatches[0]?.orchestration?.sessionId, "session-1");
+    assert.equal(updated.dispatches[0]?.orchestration?.runId, "run-1");
+    assert.equal(updated.executionStarted, true);
+    assert.equal(agents.length, 1);
+    assert.equal(sessions.length, 1);
+    assert.equal(runs.length, 1);
+    assert.equal(sendTurnCalls.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat refreshes orchestration status from the backing run", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { runs, server } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message:
+          "영양제 이벤트 자료를 상품명 기준으로 묶고 원가와 마진은 보호해서 정리해줘.",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.orchestration?.status, "running");
+
+    runs[0] = {
+      ...runs[0]!,
+      status: "completed",
+      endedAt: "2026-04-21T00:01:00.000Z",
+      summary: "완료",
+    };
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+    assert.equal(refreshed.orchestration?.status, "completed");
+    assert.equal(refreshed.dispatches[0]?.orchestration?.status, "completed");
+    assert.equal(refreshed.dispatches[0]?.orchestration?.endedAt, "2026-04-21T00:01:00.000Z");
   } finally {
     await server.close();
   }

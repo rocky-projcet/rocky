@@ -5,7 +5,9 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
+import { Link } from "react-router-dom";
 import {
+  ExternalLink,
   FileText,
   Paperclip,
   Send,
@@ -27,6 +29,7 @@ import type {
   RockyAttachmentRecord,
   RockyChatRecord,
   RockyMessageRecord,
+  RockyOrchestrationRecord,
 } from "@/domains/rocky/types";
 
 function formatFileSize(size: number): string {
@@ -38,6 +41,34 @@ function formatFileSize(size: number): string {
   }
 
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
+}
+
+function orchestrationStatusLabel(orchestration: RockyOrchestrationRecord): string {
+  switch (orchestration.status) {
+    case "running":
+      return "실행 중";
+    case "completed":
+      return "완료";
+    case "failed":
+      return "실패";
+    case "cancelled":
+      return "취소됨";
+    case "planned":
+    default:
+      return "실행 대기";
+  }
+}
+
+function orchestrationStatusVariant(
+  orchestration: RockyOrchestrationRecord
+): "secondary" | "outline" | "destructive" {
+  if (orchestration.status === "failed" || orchestration.status === "cancelled") {
+    return "destructive";
+  }
+  if (orchestration.status === "running" || orchestration.status === "completed") {
+    return "secondary";
+  }
+  return "outline";
 }
 
 function MessageStatus({
@@ -56,8 +87,16 @@ function MessageStatus({
   );
   const dispatch = chat.dispatches.find((entry) => entry.id === message.dispatchId);
   const protectionHintCount = dispatch?.protectionHints.length ?? 0;
+  const orchestration = dispatch?.orchestration ?? null;
+  const needsClarification = message.intent === "clarification";
 
-  if (!message.workerId && candidates.length === 0 && protectionHintCount === 0) {
+  if (
+    !message.workerId &&
+    candidates.length === 0 &&
+    protectionHintCount === 0 &&
+    !orchestration &&
+    !needsClarification
+  ) {
     return null;
   }
 
@@ -69,6 +108,12 @@ function MessageStatus({
           {chat.worker?.displayName ?? "담당 준비됨"}
         </Badge>
       ) : null}
+      {needsClarification ? <Badge variant="outline">확인 필요</Badge> : null}
+      {orchestration ? (
+        <Badge variant={orchestrationStatusVariant(orchestration)}>
+          {orchestrationStatusLabel(orchestration)}
+        </Badge>
+      ) : null}
       {candidates.length > 0 ? (
         <Badge variant="outline">반복 기준 후보 {candidates.length}개</Badge>
       ) : null}
@@ -77,6 +122,22 @@ function MessageStatus({
           <ShieldCheck />
           보호 항목 {protectionHintCount}개
         </Badge>
+      ) : null}
+      {orchestration?.agentId && orchestration.sessionId ? (
+        <Button
+          variant="outline"
+          size="xs"
+          render={
+            <Link
+              to={`/agents/${encodeURIComponent(orchestration.agentId!)}/sessions/${encodeURIComponent(
+                orchestration.sessionId
+              )}`}
+            />
+          }
+        >
+          세션 열기
+          <ExternalLink />
+        </Button>
       ) : null}
     </div>
   );

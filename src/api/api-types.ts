@@ -41,6 +41,7 @@ export interface SessionServiceLike {
   createSession(input: {
     agentId: string;
     title?: string | null;
+    kind?: AgentSessionKind;
     runtimeKind?: RuntimeKind;
     ollamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
     authProfileId?: string | null;
@@ -78,6 +79,7 @@ export interface SessionServiceLike {
     reasoningEffort?: RuntimeReasoningEffort | null;
     serviceTier?: RuntimeServiceTier | null;
     reuseMessageId?: string;
+    triggerType?: "interactive" | "manual_task" | "scheduled" | "event";
   }): Promise<AgentRunRecord>;
   streamRunEvents(runId: string): AsyncIterable<RuntimeEvent>;
   getRun(runId: string): Promise<AgentRunRecord>;

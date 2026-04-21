@@ -96,6 +96,7 @@ export function createAgentEngineServer(
     new RockyChatService({
       stateRoot: options.stateRoot,
       agentService,
+      sessionService,
       now: options.now,
       idGenerator: options.idGenerator,
     });

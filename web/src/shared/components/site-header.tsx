@@ -16,7 +16,9 @@ export function SiteHeader() {
       <Separator orientation="vertical" className="h-12" />
       <div className="flex w-full items-center justify-between pr-4 lg:pr-6">
         <HeaderBreadcrumb />
-        {isAuthenticated ? <AccountPopover /> : null}
+        <div className="flex items-center gap-2">
+          {isAuthenticated ? <AccountPopover /> : null}
+        </div>
       </div>
     </header>
   );

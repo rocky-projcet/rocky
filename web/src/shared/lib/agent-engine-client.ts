@@ -559,6 +559,31 @@ export interface AgentTaskRunRecord {
 
 export type RockyChatDomain = "nutrition-md" | "general";
 
+export type RockyRoutingIntent =
+  | "conversation"
+  | "clarification"
+  | "general-task"
+  | "specialized-task";
+
+export type RockyOrchestrationStatus =
+  | "planned"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface RockyOrchestrationRecord {
+  id: string;
+  status: RockyOrchestrationStatus;
+  agentId: string | null;
+  sessionId: string | null;
+  runId: string | null;
+  error: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  updatedAt: string;
+}
+
 export interface RockyAttachmentInput {
   name: string;
   contentType?: string | null;
@@ -599,13 +624,15 @@ export interface RockyDispatchRecord {
   id: string;
   chatId: string;
   messageId: string;
+  intent: Extract<RockyRoutingIntent, "general-task" | "specialized-task">;
   domain: RockyChatDomain;
   workerId: string;
   attachmentIds: string[];
   originalRequest: string;
   skillCandidateIds: string[];
   protectionHints: string[];
-  executionStarted: false;
+  orchestration: RockyOrchestrationRecord | null;
+  executionStarted: boolean;
   createdAt: string;
 }
 
@@ -613,6 +640,7 @@ export interface RockyMessageRecord {
   id: string;
   chatId: string;
   role: "user" | "rocky";
+  intent: RockyRoutingIntent;
   text: string;
   attachmentIds: string[];
   domain: RockyChatDomain;
@@ -625,13 +653,15 @@ export interface RockyMessageRecord {
 export interface RockyChatRecord {
   id: string;
   title: string;
+  intent: RockyRoutingIntent;
   domain: RockyChatDomain;
   worker: RockyWorkerRecord | null;
   attachments: RockyAttachmentRecord[];
   messages: RockyMessageRecord[];
   skillCandidates: RockySkillCandidateRecord[];
   dispatches: RockyDispatchRecord[];
-  executionStarted: false;
+  orchestration: RockyOrchestrationRecord | null;
+  executionStarted: boolean;
   createdAt: string;
   updatedAt: string;
 }

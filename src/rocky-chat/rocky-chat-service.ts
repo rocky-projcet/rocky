@@ -14,6 +14,8 @@ import {
   GENERAL_WORKER_ID,
   NUTRITION_AGENT_ID,
   NUTRITION_WORKER_ID,
+  ROCKY_CORE_AGENT_ID,
+  ROCKY_CORE_WORKER_ID,
 } from "./rocky-chat-constants.js";
 import {
   RockyOrchestratorService,
@@ -222,6 +224,10 @@ function isTaskIntent(intent: RockyRoutingIntent): intent is RockyTaskIntent {
   return intent === "general-task" || intent === "specialized-task";
 }
 
+function isCoreIntent(intent: RockyRoutingIntent): boolean {
+  return intent === "conversation" || intent === "clarification";
+}
+
 function protectionHints(message: string, attachments: RockyAttachmentRecord[]): string[] {
   const target = `${message} ${attachments.map((attachment) => attachment.name).join(" ")}`;
   const hints: string[] = [];
@@ -283,6 +289,7 @@ export class RockyChatService {
       attachments,
       domain,
       intent,
+      reuseCoreSessionId: null,
       timestamp,
     });
 
@@ -354,6 +361,9 @@ export class RockyChatService {
       intent,
       createdAt: timestamp,
     });
+    const reuseCoreSessionId = isCoreIntent(intent)
+      ? this.findReusableCoreSessionId(existing)
+      : null;
     const routed = await this.routeRockyMessage({
       chatId,
       messageId: userMessage.id,
@@ -361,6 +371,7 @@ export class RockyChatService {
       attachments: [...existing.attachments, ...attachments],
       domain,
       intent,
+      reuseCoreSessionId,
       timestamp,
     });
     const skillCandidates = this.mergeSkillCandidates(
@@ -439,6 +450,7 @@ export class RockyChatService {
     attachments: RockyAttachmentRecord[];
     domain: RockyChatDomain;
     intent: RockyRoutingIntent;
+    reuseCoreSessionId: string | null;
     timestamp: string;
   }): Promise<{
     worker: RockyWorkerRecord | null;
@@ -447,11 +459,49 @@ export class RockyChatService {
     rockyMessage: RockyMessageRecord;
   }> {
     if (!isTaskIntent(input.intent)) {
-      return {
-        worker: null,
+      const worker = await this.ensureCoreWorker(input.message, input.timestamp);
+      const dispatch = this.buildDispatch({
+        chatId: input.chatId,
+        messageId: input.messageId,
+        intent: input.intent,
+        domain: input.domain,
+        workerId: worker.id,
+        attachments: input.attachments,
+        message: input.message,
         skillCandidates: [],
-        dispatch: null,
-        rockyMessage: this.buildNonTaskRockyMessage(input),
+        timestamp: input.timestamp,
+      });
+      const orchestration = await this.orchestrator.start({
+        chatId: input.chatId,
+        domain: input.domain,
+        message: input.message,
+        worker,
+        dispatch,
+        attachments: input.attachments,
+        skillCandidates: [],
+        protectionHints: dispatch.protectionHints,
+        reuseSessionId: input.reuseCoreSessionId,
+        timestamp: input.timestamp,
+      });
+      const startedDispatch: RockyDispatchRecord = {
+        ...dispatch,
+        orchestration,
+        executionStarted: Boolean(orchestration.runId),
+      };
+
+      return {
+        worker,
+        skillCandidates: [],
+        dispatch: startedDispatch,
+        rockyMessage: this.buildCoreRockyMessage({
+          chatId: input.chatId,
+          domain: input.domain,
+          intent: input.intent,
+          worker,
+          dispatchId: startedDispatch.id,
+          orchestration,
+          timestamp: input.timestamp,
+        }),
       };
     }
 
@@ -554,16 +604,20 @@ export class RockyChatService {
     };
   }
 
-  private buildNonTaskRockyMessage(input: {
+  private buildCoreRockyMessage(input: {
     chatId: string;
     domain: RockyChatDomain;
     intent: RockyRoutingIntent;
+    worker: RockyWorkerRecord;
+    dispatchId: string;
+    orchestration: RockyOrchestrationRecord;
     timestamp: string;
   }): RockyMessageRecord {
     const text =
-      input.intent === "clarification"
-        ? "어떤 방식으로 볼지 먼저 정하면 좋아요. 요약, 문제점 점검, 표 정리, 실행 가능한 작업 중 원하는 방향을 알려주세요."
-        : "편하게 말씀해 주세요. 파일 정리, 요약, 분석처럼 실행이 필요한 일이 보이면 그때 담당을 준비하겠습니다.";
+      input.orchestration.output ??
+      (input.orchestration.status === "failed"
+        ? "Rocky core 실행을 시작하지 못했습니다."
+        : "Rocky가 답변을 작성하고 있어요.");
 
     return {
       id: `message-${this.idGenerator()}`,
@@ -573,9 +627,9 @@ export class RockyChatService {
       text,
       attachmentIds: [],
       domain: input.domain,
-      workerId: null,
+      workerId: input.worker.id,
       skillCandidateIds: [],
-      dispatchId: null,
+      dispatchId: input.dispatchId,
       createdAt: input.timestamp,
     };
   }
@@ -652,7 +706,7 @@ export class RockyChatService {
   private buildDispatch(input: {
     chatId: string;
     messageId: string;
-    intent: RockyTaskIntent;
+    intent: RockyRoutingIntent;
     domain: RockyChatDomain;
     workerId: string;
     attachments: RockyAttachmentRecord[];
@@ -728,6 +782,44 @@ export class RockyChatService {
     return worker;
   }
 
+  private async ensureCoreWorker(
+    reason: string,
+    timestamp: string
+  ): Promise<RockyWorkerRecord> {
+    const agentId = await this.ensureCoreAgent();
+    return {
+      id: ROCKY_CORE_WORKER_ID,
+      domain: "general",
+      displayName: "Rocky",
+      agentId,
+      reason: reason.slice(0, 160),
+      status: "ready",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+  }
+
+  private async ensureCoreAgent(): Promise<string | null> {
+    if (!this.agentService) {
+      return null;
+    }
+
+    const agents = await this.agentService.listAgents();
+    const existing = agents.find((agent) => agent.id === ROCKY_CORE_AGENT_ID);
+    if (existing) {
+      return existing.id;
+    }
+
+    const agent = await this.agentService.createAgent({
+      id: ROCKY_CORE_AGENT_ID,
+      name: "Rocky",
+      description:
+        "Rocky 홈 채팅에서 대화, 요청 해석, 확인 질문 생성을 맡는 코어 오케스트레이터입니다.",
+      defaultRuntime: "codex-cli",
+    });
+    return agent.id;
+  }
+
   private async ensureGeneralAgent(): Promise<string | null> {
     if (!this.agentService) {
       return null;
@@ -770,6 +862,18 @@ export class RockyChatService {
     return agent.id;
   }
 
+  private findReusableCoreSessionId(chat: RockyChatRecord): string | null {
+    const coreDispatch = [...chat.dispatches]
+      .reverse()
+      .find(
+        (dispatch) =>
+          dispatch.workerId === ROCKY_CORE_WORKER_ID &&
+          dispatch.orchestration?.sessionId
+      );
+
+    return coreDispatch?.orchestration?.sessionId ?? null;
+  }
+
   private hydrateChat(chat: RockyChatRecord): RockyChatRecord {
     const dispatches = chat.dispatches.map((dispatch) => ({
       ...dispatch,
@@ -798,6 +902,7 @@ export class RockyChatService {
   ): Promise<RockyChatRecord> {
     const hydrated = this.hydrateChat(chat);
     let changed = false;
+    const messageUpdates = new Map<string, string>();
     const dispatches = await Promise.all(
       hydrated.dispatches.map(async (dispatch) => {
         if (!dispatch.orchestration) {
@@ -808,6 +913,9 @@ export class RockyChatService {
         if (JSON.stringify(orchestration) !== JSON.stringify(dispatch.orchestration)) {
           changed = true;
         }
+        if (orchestration.output) {
+          messageUpdates.set(dispatch.id, orchestration.output);
+        }
 
         return {
           ...dispatch,
@@ -816,11 +924,29 @@ export class RockyChatService {
         };
       })
     );
+    const messages =
+      messageUpdates.size > 0
+        ? hydrated.messages.map((message) => {
+            if (!message.dispatchId) {
+              return message;
+            }
+            const output = messageUpdates.get(message.dispatchId);
+            if (!output || message.text === output) {
+              return message;
+            }
+            changed = true;
+            return {
+              ...message,
+              text: output,
+            };
+          })
+        : hydrated.messages;
     const orchestration =
       [...dispatches].reverse().find((dispatch) => dispatch.orchestration)
         ?.orchestration ?? null;
     const refreshed: RockyChatRecord = {
       ...hydrated,
+      messages,
       dispatches,
       orchestration,
       executionStarted: dispatches.some((dispatch) => dispatch.executionStarted),

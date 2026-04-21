@@ -10,6 +10,7 @@ import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type { RockyChatRecord } from "../../src/rocky-chat/rocky-chat-types.js";
 import type {
   AgentRunRecord,
+  AgentSessionMessage,
   AgentSessionRecord,
 } from "../../src/sessions/session-types.js";
 
@@ -188,7 +189,21 @@ function createRockyChatTestServer(stateRoot: string) {
         throw new Error("not used");
       },
       async getTranscript() {
-        return [];
+        const completedRun = [...runs].reverse().find((run) => run.status === "completed");
+        if (!completedRun) {
+          return [];
+        }
+        return [
+          {
+            id: `assistant-${completedRun.id}`,
+            sessionId: completedRun.sessionId,
+            runId: completedRun.id,
+            role: "assistant",
+            content: completedRun.summary ?? "완료",
+            source: "runtime",
+            createdAt: completedRun.endedAt ?? completedRun.startedAt,
+          } satisfies AgentSessionMessage,
+        ];
       },
       async deleteSession() {},
       async stopSessionRuns() {
@@ -304,7 +319,7 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and starts an
   }
 });
 
-test("rocky chat answers simple conversation without creating workers, dispatches, or agents", async () => {
+test("rocky chat routes simple conversation through rocky core", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const { agents, runs, sendTurnCalls, server, sessions } =
     createRockyChatTestServer(stateRoot);
@@ -321,17 +336,23 @@ test("rocky chat answers simple conversation without creating workers, dispatche
     assert.equal(response.statusCode, 201);
     const chat = response.json<RockyChatRecord>();
     assert.equal(chat.intent, "conversation");
-    assert.equal(chat.worker, null);
-    assert.equal(chat.dispatches.length, 0);
+    assert.equal(chat.worker?.displayName, "Rocky");
+    assert.equal(chat.dispatches.length, 1);
+    assert.equal(chat.dispatches[0]?.intent, "conversation");
+    assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-core");
+    assert.equal(chat.dispatches[0]?.orchestration?.sessionId, "session-1");
+    assert.equal(chat.dispatches[0]?.orchestration?.runId, "run-1");
     assert.equal(chat.skillCandidates.length, 0);
-    assert.equal(chat.orchestration, null);
-    assert.equal(chat.executionStarted, false);
+    assert.equal(chat.orchestration?.agentId, "rocky-core");
+    assert.equal(chat.executionStarted, true);
     assert.equal(chat.messages[1]?.intent, "conversation");
-    assert.equal(chat.messages[1]?.workerId, null);
-    assert.equal(agents.length, 0);
-    assert.equal(sessions.length, 0);
-    assert.equal(runs.length, 0);
-    assert.deepEqual(sendTurnCalls, []);
+    assert.equal(chat.messages[1]?.workerId, "rocky-core-worker");
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.id, "rocky-core");
+    assert.equal(sessions.length, 1);
+    assert.equal(runs.length, 1);
+    assert.equal(sendTurnCalls.length, 1);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /Rocky 홈 채팅의 코어 오케스트레이터/);
   } finally {
     await server.close();
   }
@@ -361,9 +382,11 @@ test("rocky chat asks for clarification on vague requests and routes later gener
     assert.equal(response.statusCode, 201);
     const chat = response.json<RockyChatRecord>();
     assert.equal(chat.intent, "clarification");
-    assert.equal(chat.worker, null);
-    assert.equal(chat.dispatches.length, 0);
-    assert.equal(chat.executionStarted, false);
+    assert.equal(chat.worker?.displayName, "Rocky");
+    assert.equal(chat.dispatches.length, 1);
+    assert.equal(chat.dispatches[0]?.intent, "clarification");
+    assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-core");
+    assert.equal(chat.executionStarted, true);
     assert.equal(chat.messages[1]?.intent, "clarification");
 
     const followUp = await server.inject({
@@ -379,16 +402,21 @@ test("rocky chat asks for clarification on vague requests and routes later gener
     assert.equal(updated.intent, "general-task");
     assert.equal(updated.worker?.displayName, "자료 정리 담당");
     assert.equal(updated.worker?.agentId, "rocky-general-task");
-    assert.equal(updated.dispatches.length, 1);
-    assert.equal(updated.dispatches[0]?.intent, "general-task");
-    assert.equal(updated.dispatches[0]?.orchestration?.status, "running");
-    assert.equal(updated.dispatches[0]?.orchestration?.sessionId, "session-1");
-    assert.equal(updated.dispatches[0]?.orchestration?.runId, "run-1");
+    assert.equal(updated.dispatches.length, 2);
+    assert.equal(updated.dispatches[0]?.intent, "clarification");
+    assert.equal(updated.dispatches[1]?.intent, "general-task");
+    assert.equal(updated.dispatches[1]?.orchestration?.status, "running");
+    assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-2");
+    assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");
     assert.equal(updated.executionStarted, true);
-    assert.equal(agents.length, 1);
-    assert.equal(sessions.length, 1);
-    assert.equal(runs.length, 1);
-    assert.equal(sendTurnCalls.length, 1);
+    assert.equal(agents.length, 2);
+    assert.deepEqual(agents.map((agent) => agent.id), [
+      "rocky-core",
+      "rocky-general-task",
+    ]);
+    assert.equal(sessions.length, 2);
+    assert.equal(runs.length, 2);
+    assert.equal(sendTurnCalls.length, 2);
   } finally {
     await server.close();
   }
@@ -415,7 +443,7 @@ test("rocky chat refreshes orchestration status from the backing run", async () 
       ...runs[0]!,
       status: "completed",
       endedAt: "2026-04-21T00:01:00.000Z",
-      summary: "완료",
+      summary: "영양제 MD 작업을 정리했습니다.",
     };
 
     const refreshedResponse = await server.inject({
@@ -425,6 +453,8 @@ test("rocky chat refreshes orchestration status from the backing run", async () 
     assert.equal(refreshedResponse.statusCode, 200);
     const refreshed = refreshedResponse.json<RockyChatRecord>();
     assert.equal(refreshed.orchestration?.status, "completed");
+    assert.equal(refreshed.orchestration?.output, "영양제 MD 작업을 정리했습니다.");
+    assert.equal(refreshed.messages[1]?.text, "영양제 MD 작업을 정리했습니다.");
     assert.equal(refreshed.dispatches[0]?.orchestration?.status, "completed");
     assert.equal(refreshed.dispatches[0]?.orchestration?.endedAt, "2026-04-21T00:01:00.000Z");
   } finally {

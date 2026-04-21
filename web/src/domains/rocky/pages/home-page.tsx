@@ -18,6 +18,7 @@ import {
 
 import {
   useCreateRockyChatMutation,
+  useRockyChatQuery,
   useSendRockyMessageMutation,
 } from "@/domains/rocky/hooks";
 import { Badge } from "@/shared/ui/badge";
@@ -71,6 +72,19 @@ function orchestrationStatusVariant(
   return "outline";
 }
 
+function workerDisplayName(message: RockyMessageRecord, chat: RockyChatRecord): string {
+  switch (message.workerId) {
+    case "rocky-core-worker":
+      return "Rocky";
+    case "general-worker":
+      return "자료 정리 담당";
+    case "nutrition-md-worker":
+      return "영양제 MD 담당";
+    default:
+      return chat.worker?.displayName ?? "담당 준비됨";
+  }
+}
+
 function MessageStatus({
   chat,
   message,
@@ -105,7 +119,7 @@ function MessageStatus({
       {message.workerId ? (
         <Badge variant="secondary">
           <Sparkles />
-          {chat.worker?.displayName ?? "담당 준비됨"}
+          {workerDisplayName(message, chat)}
         </Badge>
       ) : null}
       {needsClarification ? <Badge variant="outline">확인 필요</Badge> : null}
@@ -384,12 +398,38 @@ export function HomePage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const createChatMutation = useCreateRockyChatMutation();
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
+  const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
+    chat?.id ?? null
+  );
 
   const messageCount = chat?.messages.length ?? 0;
+  const hasActiveOrchestration =
+    chat?.dispatches.some((dispatch) => {
+      const status = dispatch.orchestration?.status;
+      return status === "running" || status === "planned";
+    }) ?? false;
   const pending = createChatMutation.isPending || sendMessageMutation.isPending;
   const canSend = message.trim().length > 0 && !pending;
   const errorMessage =
     createChatMutation.error?.message ?? sendMessageMutation.error?.message;
+
+  useEffect(() => {
+    if (refreshedChat) {
+      setChat(refreshedChat);
+    }
+  }, [refreshedChat]);
+
+  useEffect(() => {
+    if (!chat?.id || !hasActiveOrchestration) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refetchRockyChat();
+    }, 1500);
+
+    return () => window.clearInterval(timer);
+  }, [chat?.id, hasActiveOrchestration, refetchRockyChat]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });

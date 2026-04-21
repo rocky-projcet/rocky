@@ -5,6 +5,7 @@ import type {
   AgentRunRecord,
   AgentRunStatus,
   AgentSessionKind,
+  AgentSessionMessage,
   AgentSessionRecord,
 } from "../sessions/session-types.js";
 import type {
@@ -13,6 +14,7 @@ import type {
   RockyDispatchRecord,
   RockyOrchestrationRecord,
   RockyOrchestrationStatus,
+  RockyRoutingIntent,
   RockySkillCandidateRecord,
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
@@ -34,6 +36,7 @@ export interface RockySessionServiceLike {
     triggerType?: "interactive" | "manual_task" | "scheduled" | "event";
   }): Promise<AgentRunRecord>;
   getRun?(runId: string): Promise<AgentRunRecord>;
+  getTranscript?(sessionId: string): Promise<AgentSessionMessage[]>;
 }
 
 export interface RockyOrchestratorServiceOptions {
@@ -51,6 +54,7 @@ export interface RockyOrchestrationStartInput {
   attachments: RockyAttachmentRecord[];
   skillCandidates: RockySkillCandidateRecord[];
   protectionHints: string[];
+  reuseSessionId?: string | null;
   timestamp: string;
 }
 
@@ -113,7 +117,44 @@ function formatProtectionHints(hints: string[]): string {
   return hints.map((hint) => `- ${hint}`).join("\n");
 }
 
+function latestAssistantText(messages: AgentSessionMessage[]): string | null {
+  const assistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const content = assistant?.content.trim();
+  return content || null;
+}
+
+function isCoreIntent(intent: RockyRoutingIntent): boolean {
+  return intent === "conversation" || intent === "clarification";
+}
+
+function buildCorePrompt(input: RockyOrchestrationStartInput): string {
+  const mode =
+    input.dispatch.intent === "clarification"
+      ? "사용자의 요청이 아직 모호합니다. 실행을 시작하지 말고 필요한 확인 질문을 짧게 하세요."
+      : "사용자와 자연스럽게 대화하고, Rocky가 할 수 있는 일을 구체적으로 설명하세요.";
+
+  return [
+    "당신은 Rocky 홈 채팅의 코어 오케스트레이터입니다.",
+    "한국어로 짧고 실용적으로 답하세요.",
+    "",
+    "역할:",
+    "- 사용자의 질문에는 직접 답합니다.",
+    "- 실행이 필요한 작업이 보이면 어떤 담당 에이전트가 처리할 수 있는지 설명합니다.",
+    "- 모호한 요청은 바로 실행하지 말고 필요한 정보를 묻습니다.",
+    "- 파일 본문을 받지 못한 상태에서 파일 내용을 읽었다고 말하지 않습니다.",
+    "",
+    `현재 모드: ${mode}`,
+    "",
+    "사용자 메시지:",
+    input.message,
+  ].join("\n");
+}
+
 function buildOrchestrationPrompt(input: RockyOrchestrationStartInput): string {
+  if (isCoreIntent(input.dispatch.intent)) {
+    return buildCorePrompt(input);
+  }
+
   const domainLabel =
     input.domain === "nutrition-md" ? "영양제 MD 작업" : "일반 자료 작업";
 
@@ -164,6 +205,7 @@ export class RockyOrchestratorService {
         agentId,
         sessionId: null,
         runId: null,
+        output: null,
         error: !this.sessionService
           ? "Rocky session service is unavailable."
           : "Rocky worker has no executable agent.",
@@ -174,23 +216,27 @@ export class RockyOrchestratorService {
     }
 
     try {
-      const session = await this.sessionService.createSession({
-        agentId,
-        title: input.message.slice(0, 80),
-        kind: "single-task",
-      });
+      const sessionId = input.reuseSessionId ?? null;
+      const session = sessionId
+        ? null
+        : await this.sessionService.createSession({
+            agentId,
+            title: input.message.slice(0, 80),
+            kind: isCoreIntent(input.dispatch.intent) ? "task-request" : "single-task",
+          });
       const run = await this.sessionService.sendTurn({
-        sessionId: session.id,
+        sessionId: session?.id ?? sessionId!,
         prompt: buildOrchestrationPrompt(input),
-        triggerType: "manual_task",
+        triggerType: isCoreIntent(input.dispatch.intent) ? "interactive" : "manual_task",
       });
 
       return {
         id: orchestrationId,
         status: runStatusToOrchestrationStatus(run.status),
         agentId,
-        sessionId: session.id,
+        sessionId: session?.id ?? sessionId,
         runId: run.id,
+        output: null,
         error: null,
         startedAt: run.startedAt,
         endedAt: run.endedAt,
@@ -203,6 +249,7 @@ export class RockyOrchestratorService {
         agentId,
         sessionId: null,
         runId: null,
+        output: null,
         error: errorMessage(error),
         startedAt: null,
         endedAt: this.now(),
@@ -214,25 +261,45 @@ export class RockyOrchestratorService {
   async refresh(
     orchestration: RockyOrchestrationRecord
   ): Promise<RockyOrchestrationRecord> {
-    if (!this.sessionService?.getRun || !orchestration.runId) {
+    if (!this.sessionService || !orchestration.runId) {
       return orchestration;
     }
-    if (
+    const isTerminal =
       orchestration.status === "completed" ||
       orchestration.status === "failed" ||
-      orchestration.status === "cancelled"
-    ) {
+      orchestration.status === "cancelled";
+    const canHydrateOutput = Boolean(
+      !orchestration.output &&
+        orchestration.sessionId &&
+        this.sessionService.getTranscript
+    );
+    if (isTerminal && !canHydrateOutput) {
+      return orchestration;
+    }
+    if (!this.sessionService.getRun && !canHydrateOutput) {
       return orchestration;
     }
 
     try {
-      const run = await this.sessionService.getRun(orchestration.runId);
+      const run =
+        !isTerminal && this.sessionService.getRun
+          ? await this.sessionService.getRun(orchestration.runId)
+          : null;
+      const output =
+        orchestration.sessionId && this.sessionService.getTranscript
+          ? latestAssistantText(await this.sessionService.getTranscript(orchestration.sessionId))
+          : orchestration.output;
       return {
         ...orchestration,
-        status: runStatusToOrchestrationStatus(run.status),
-        error: run.status === "failed" ? run.summary ?? orchestration.error : null,
-        startedAt: run.startedAt,
-        endedAt: run.endedAt,
+        status: run ? runStatusToOrchestrationStatus(run.status) : orchestration.status,
+        output,
+        error: run
+          ? run.status === "failed"
+            ? run.summary ?? orchestration.error
+            : null
+          : orchestration.error,
+        startedAt: run?.startedAt ?? orchestration.startedAt,
+        endedAt: run?.endedAt ?? orchestration.endedAt,
         updatedAt: this.now(),
       };
     } catch {

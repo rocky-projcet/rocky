@@ -21,6 +21,7 @@ export interface RockyOrchestrationRecord {
   agentId: string | null;
   sessionId: string | null;
   runId: string | null;
+  output: string | null;
   error: string | null;
   startedAt: string | null;
   endedAt: string | null;
@@ -67,7 +68,7 @@ export interface RockyDispatchRecord {
   id: string;
   chatId: string;
   messageId: string;
-  intent: Extract<RockyRoutingIntent, "general-task" | "specialized-task">;
+  intent: RockyRoutingIntent;
   domain: RockyChatDomain;
   workerId: string;
   attachmentIds: string[];

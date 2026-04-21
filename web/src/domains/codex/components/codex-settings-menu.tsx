@@ -23,10 +23,10 @@ export function CodexSettingsMenu() {
     <Tooltip>
       <TooltipTrigger
         render={
-        <SidebarMenuButton className="h-auto py-2" aria-label="계정 연결하기">
+        <SidebarMenuButton className="h-auto py-2" aria-label="설정 열기">
           <Sparkles size={16} className="text-amber-500" />
           <span className="flex-1 truncate text-xs group-data-[collapsible=icon]:hidden">
-            AI 서비스 연결
+            설정
           </span>
           <span
             className="neon-dot shrink-0 group-data-[collapsible=icon]:hidden"
@@ -34,14 +34,14 @@ export function CodexSettingsMenu() {
           />
         </SidebarMenuButton>
         }
-        onClick={() => navigate("/account")}
+        onClick={() => navigate("/settings")}
       />
       <TooltipContent
         side="right"
         align="center"
         hidden={state !== "collapsed" || isMobile}
       >
-        AI 서비스 연결
+        설정
       </TooltipContent>
     </Tooltip>
   );

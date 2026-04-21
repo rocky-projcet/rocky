@@ -92,11 +92,11 @@ export function AccountPopover() {
         <Separator />
         <div className="px-2 py-2">
           <Link
-            to="/account"
+            to="/settings"
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground no-underline"
           >
             <Settings size={16} />
-            계정 설정
+            설정
           </Link>
         </div>
       </PopoverContent>

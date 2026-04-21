@@ -34,6 +34,7 @@ import type {
   RuntimeRunStart,
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
+import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -220,4 +221,5 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   agentMessengerService?: AgentMessengerServiceLike;
   runtimeRegistry?: RuntimeRegistryLike;
   taskService?: TaskServiceLike;
+  hardwareStatusService?: HardwareStatusServiceLike;
 }

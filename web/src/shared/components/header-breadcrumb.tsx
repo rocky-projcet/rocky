@@ -83,7 +83,8 @@ export function HeaderBreadcrumb() {
 
   // 그 외 페이지도 breadcrumb 스타일로 통일
   const pathname = location.pathname;
-  let title = "에이전트 엔진";
+  let title = "Rocky";
+  if (pathname === "/") title = "홈";
   if (pathname === "/agents/archived") title = "보관함";
   else if (pathname.startsWith("/runs/")) title = "대화 상세";
   else if (pathname.startsWith("/settings") || pathname.startsWith("/account")) title = "설정";

@@ -557,6 +557,90 @@ export interface AgentTaskRunRecord {
   updatedAt: string;
 }
 
+export type RockyChatDomain = "nutrition-md" | "general";
+
+export interface RockyAttachmentInput {
+  name: string;
+  contentType?: string | null;
+  size?: number | null;
+}
+
+export interface RockyAttachmentRecord {
+  id: string;
+  name: string;
+  contentType: string | null;
+  size: number | null;
+  addedAt: string;
+}
+
+export interface RockySkillCandidateRecord {
+  id: string;
+  title: string;
+  description: string;
+  trigger: string;
+  confidence: number;
+  sourceMessageId: string;
+  status: "candidate";
+  createdAt: string;
+}
+
+export interface RockyWorkerRecord {
+  id: string;
+  domain: RockyChatDomain;
+  displayName: string;
+  agentId: string | null;
+  reason: string;
+  status: "ready";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RockyDispatchRecord {
+  id: string;
+  chatId: string;
+  messageId: string;
+  domain: RockyChatDomain;
+  workerId: string;
+  attachmentIds: string[];
+  originalRequest: string;
+  skillCandidateIds: string[];
+  protectionHints: string[];
+  executionStarted: false;
+  createdAt: string;
+}
+
+export interface RockyMessageRecord {
+  id: string;
+  chatId: string;
+  role: "user" | "rocky";
+  text: string;
+  attachmentIds: string[];
+  domain: RockyChatDomain;
+  workerId: string | null;
+  skillCandidateIds: string[];
+  dispatchId: string | null;
+  createdAt: string;
+}
+
+export interface RockyChatRecord {
+  id: string;
+  title: string;
+  domain: RockyChatDomain;
+  worker: RockyWorkerRecord | null;
+  attachments: RockyAttachmentRecord[];
+  messages: RockyMessageRecord[];
+  skillCandidates: RockySkillCandidateRecord[];
+  dispatches: RockyDispatchRecord[];
+  executionStarted: false;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RockyChatCreateInput {
+  message: string;
+  attachments?: RockyAttachmentInput[];
+}
+
 export interface AgentSessionDeleteOptions {
   stopRunningRuns?: boolean;
 }
@@ -1112,6 +1196,36 @@ export class AgentEngineClient {
       `/tasks/${encodeURIComponent(taskId)}/run`,
       {
         method: "POST",
+      }
+    );
+  }
+
+  listRockyChats(): Promise<RockyChatRecord[]> {
+    return this.request<RockyChatRecord[]>("/rocky/chats");
+  }
+
+  createRockyChat(input: RockyChatCreateInput): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>("/rocky/chats", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  getRockyChat(chatId: string): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}`
+    );
+  }
+
+  sendRockyChatMessage(
+    chatId: string,
+    input: RockyChatCreateInput
+  ): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       }
     );
   }

@@ -9,6 +9,7 @@ import { AccountPage } from "../domains/codex/pages/account-page";
 import { AgentDetailPage } from "../domains/agent/pages/agent-detail-page";
 import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
+import { HomePage } from "../domains/rocky/pages/home-page";
 import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
 import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
 
@@ -19,7 +20,7 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/agents" replace />,
+        element: <HomePage />,
       },
       {
         path: "agents",

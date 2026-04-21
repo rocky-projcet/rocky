@@ -23,6 +23,7 @@ import type {
   AgentTaskRunRecord,
   AgentTaskUpdateInput,
 } from "../tasks/task-types.js";
+import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
 import type {
   RuntimeKind,
   RuntimeEvent,
@@ -221,5 +222,6 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   agentMessengerService?: AgentMessengerServiceLike;
   runtimeRegistry?: RuntimeRegistryLike;
   taskService?: TaskServiceLike;
+  rockyChatService?: RockyChatServiceLike;
   hardwareStatusService?: HardwareStatusServiceLike;
 }

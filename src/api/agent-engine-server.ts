@@ -8,6 +8,7 @@ import { CodexStatusService } from "../account/codex-status-service.js";
 import { AuthProfileService } from "../auth/auth-profile-service.js";
 import { AgentMessengerService } from "../messenger/agent-messenger-service.js";
 import type { AgentMessengerServiceLike } from "../messenger/messenger-types.js";
+import { RockyChatService } from "../rocky-chat/rocky-chat-service.js";
 import { SessionService } from "../sessions/session-service.js";
 import { TaskService } from "../tasks/task-service.js";
 import { createDefaultRuntimeRegistry } from "../runtime/runtime-registry.js";
@@ -21,6 +22,7 @@ import { registerAuthProfileRoutes } from "./routes/auth-profile-routes.js";
 import { registerMessengerRoutes } from "./routes/messenger-routes.js";
 import { registerRunRoutes } from "./routes/run-routes.js";
 import { registerRuntimeRoutes } from "./routes/runtime-routes.js";
+import { registerRockyChatRoutes } from "./routes/rocky-chat-routes.js";
 import { registerSessionRoutes } from "./routes/session-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { SystemHardwareStatusService } from "../system/hardware-status-service.js";
@@ -89,6 +91,14 @@ export function createAgentEngineServer(
       now: options.now,
       idGenerator: options.idGenerator,
     });
+  const rockyChatService =
+    options.rockyChatService ??
+    new RockyChatService({
+      stateRoot: options.stateRoot,
+      agentService,
+      now: options.now,
+      idGenerator: options.idGenerator,
+    });
   const hardwareStatusService =
     options.hardwareStatusService ??
     new SystemHardwareStatusService();
@@ -126,6 +136,9 @@ export function createAgentEngineServer(
   });
   server.register(registerTaskRoutes, {
     taskService,
+  });
+  server.register(registerRockyChatRoutes, {
+    rockyChatService,
   });
   server.addHook("onReady", async () => {
     await agentMessengerService?.start?.();

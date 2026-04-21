@@ -2,9 +2,6 @@ import { NavLink, useLocation } from "react-router-dom";
 import { Bot, Archive } from "lucide-react";
 
 import {
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/shared/ui/sidebar";
@@ -15,26 +12,24 @@ export function NavAgents() {
 
   return (
     <>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          tooltip="에이전트"
+      <SidebarMenuSubItem>
+        <SidebarMenuSubButton
           isActive={active && !location.pathname.startsWith("/agents/archived")}
           render={<NavLink to="/agents" />}
         >
           <Bot />
           <span>에이전트</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          tooltip="보관함"
+        </SidebarMenuSubButton>
+      </SidebarMenuSubItem>
+      <SidebarMenuSubItem>
+        <SidebarMenuSubButton
           isActive={location.pathname.startsWith("/agents/archived")}
           render={<NavLink to="/agents/archived" />}
         >
           <Archive />
           <span>보관함</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
+        </SidebarMenuSubButton>
+      </SidebarMenuSubItem>
     </>
   );
 }

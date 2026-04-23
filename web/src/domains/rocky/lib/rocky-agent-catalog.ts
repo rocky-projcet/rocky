@@ -21,6 +21,12 @@ export const ROCKY_INTERNAL_AGENT_SPECS: RockyInternalAgentSpec[] = [
     description: "요약, 정리, 분석, 작성 같은 일반 작업을 Rocky 대신 실행합니다.",
   },
   {
+    id: "rocky-visual-report",
+    name: "시각화 리포트 담당",
+    role: "차트·리포트 에이전트",
+    description: "지표 요약, 그래프 생성, Markdown 리포트 정리를 Rocky 대신 실행합니다.",
+  },
+  {
     id: "rocky-nutrition-md",
     name: "영양제 MD 담당",
     role: "도메인 위임 에이전트",

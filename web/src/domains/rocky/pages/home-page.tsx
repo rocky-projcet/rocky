@@ -5,23 +5,24 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
-import {
-  FileText,
-  Paperclip,
-  Send,
-  ShieldCheck,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { useQueries } from "@tanstack/react-query";
+import { FileText, Paperclip, Send, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
+import { ArtifactPreviewCard } from "@/domains/run/components/artifact-preview-card";
 import {
   useCreateRockyChatMutation,
   useRockyChatsQuery,
   useRockyChatQuery,
   useSendRockyMessageMutation,
 } from "@/domains/rocky/hooks";
-import { Badge } from "@/shared/ui/badge";
+import type {
+  AgentSessionArtifactManifestEntry,
+  AgentSessionMessage,
+} from "@/domains/session/types";
+import { splitTranscriptArtifacts } from "@/domains/session/lib/transcript-display";
 import { Button } from "@/shared/ui/button";
+import { agentEngineClient } from "@/shared/lib/api-client";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 
@@ -29,8 +30,9 @@ import type {
   RockyAttachmentRecord,
   RockyChatRecord,
   RockyMessageRecord,
-  RockyOrchestrationRecord,
 } from "@/domains/rocky/types";
+
+const LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS = 1500;
 
 function formatFileSize(size: number): string {
   if (size < 1024) {
@@ -43,127 +45,6 @@ function formatFileSize(size: number): string {
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
 }
 
-function orchestrationStatusLabel(orchestration: RockyOrchestrationRecord): string {
-  switch (orchestration.status) {
-    case "running":
-      return "실행 중";
-    case "completed":
-      return "완료";
-    case "failed":
-      return "실패";
-    case "cancelled":
-      return "취소됨";
-    case "planned":
-    default:
-      return "실행 대기";
-  }
-}
-
-function orchestrationStatusVariant(
-  orchestration: RockyOrchestrationRecord
-): "secondary" | "outline" | "destructive" {
-  if (orchestration.status === "failed" || orchestration.status === "cancelled") {
-    return "destructive";
-  }
-  if (orchestration.status === "running" || orchestration.status === "completed") {
-    return "secondary";
-  }
-  return "outline";
-}
-
-function workerDisplayName(message: RockyMessageRecord, chat: RockyChatRecord): string {
-  switch (message.workerId) {
-    case "rocky-core-worker":
-      return "Rocky";
-    case "general-worker":
-      return "자료 정리 담당";
-    case "nutrition-md-worker":
-      return "영양제 MD 담당";
-    default:
-      return chat.worker?.displayName ?? "담당 준비됨";
-  }
-}
-
-function MessageStatus({
-  chat,
-  message,
-}: {
-  chat: RockyChatRecord;
-  message: RockyMessageRecord;
-}) {
-  if (message.role !== "rocky") {
-    return null;
-  }
-
-  const candidates = chat.skillCandidates.filter((candidate) =>
-    message.skillCandidateIds.includes(candidate.id)
-  );
-  const dispatch = chat.dispatches.find((entry) => entry.id === message.dispatchId);
-  const protectionHintCount = dispatch?.protectionHints.length ?? 0;
-  const orchestration = dispatch?.orchestration ?? null;
-  const needsClarification = message.intent === "clarification";
-
-  if (
-    !message.workerId &&
-    candidates.length === 0 &&
-    protectionHintCount === 0 &&
-    !orchestration &&
-    !needsClarification
-  ) {
-    return null;
-  }
-
-  return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {message.workerId ? (
-        <Badge variant="secondary">
-          <Sparkles />
-          {workerDisplayName(message, chat)}
-        </Badge>
-      ) : null}
-      {needsClarification ? <Badge variant="outline">확인 필요</Badge> : null}
-      {orchestration ? (
-        <Badge variant={orchestrationStatusVariant(orchestration)}>
-          {orchestrationStatusLabel(orchestration)}
-        </Badge>
-      ) : null}
-      {candidates.length > 0 ? (
-        <Badge variant="outline">반복 기준 후보 {candidates.length}개</Badge>
-      ) : null}
-      {protectionHintCount > 0 ? (
-        <Badge variant="destructive">
-          <ShieldCheck />
-          보호 항목 {protectionHintCount}개
-        </Badge>
-      ) : null}
-    </div>
-  );
-}
-
-function CandidateList({ chat }: { chat: RockyChatRecord }) {
-  if (chat.skillCandidates.length === 0) {
-    return null;
-  }
-
-  return (
-    <details className="rounded-lg border bg-background/80 p-3 text-sm">
-      <summary className="cursor-pointer font-medium">
-        반복해서 쓸 기준 후보
-      </summary>
-      <div className="mt-3 grid gap-2">
-        {chat.skillCandidates.map((candidate) => (
-          <div key={candidate.id} className="rounded-lg bg-muted/50 p-3">
-            <div className="font-medium">{candidate.title}</div>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {candidate.description}
-            </p>
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-}
-
 function EmptyChatState() {
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center pb-16 text-center">
@@ -173,6 +54,202 @@ function EmptyChatState() {
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
         필요한 일을 편하게 말해 주세요.
       </p>
+    </div>
+  );
+}
+
+function findLatestAssistantMessage(
+  transcript: AgentSessionMessage[] | undefined,
+  runId: string | null
+): AgentSessionMessage | null {
+  if (!transcript || transcript.length === 0) {
+    return null;
+  }
+
+  if (runId) {
+    const runScoped = [...transcript]
+      .reverse()
+      .find((entry) => entry.role === "assistant" && entry.runId === runId);
+    if (runScoped) {
+      return runScoped;
+    }
+  }
+
+  return (
+    [...transcript].reverse().find((entry) => entry.role === "assistant") ?? null
+  );
+}
+
+function resolveRockyMessageState(
+  orchestration:
+    | RockyChatRecord["dispatches"][number]["orchestration"]
+    | null
+    | undefined,
+  message: RockyMessageRecord,
+  transcriptMessage: AgentSessionMessage | null
+):
+  | { kind: "pending"; artifacts: AgentSessionArtifactManifestEntry[] }
+  | { kind: "ready"; text: string; artifacts: AgentSessionArtifactManifestEntry[] }
+  | { kind: "error"; text: string; artifacts: AgentSessionArtifactManifestEntry[] } {
+  const artifacts = splitTranscriptArtifacts(transcriptMessage?.artifacts).visibleArtifacts;
+
+  if (message.role !== "rocky") {
+    return { kind: "ready", text: message.text, artifacts: [] };
+  }
+
+  if (!orchestration) {
+    return { kind: "ready", text: message.text, artifacts };
+  }
+
+  if (orchestration.status === "planned" || orchestration.status === "running") {
+    return { kind: "pending", artifacts };
+  }
+
+  if (orchestration.status === "failed") {
+    return {
+      kind: "error",
+      text: orchestration.error?.trim() || "답변을 완료하지 못했어요.",
+      artifacts,
+    };
+  }
+
+  if (orchestration.status === "cancelled") {
+    return {
+      kind: "error",
+      text: "답변 생성이 취소되었어요.",
+      artifacts,
+    };
+  }
+
+  const finalText =
+    transcriptMessage?.content.trim() ||
+    orchestration.output?.trim() ||
+    message.text.trim();
+  if (finalText) {
+    return { kind: "ready", text: finalText, artifacts };
+  }
+
+  return {
+    kind: "error",
+    text: "최종 답변을 불러오지 못했어요.",
+    artifacts,
+  };
+}
+
+function RockyMarkdownViewer({ markdown }: { markdown: string }) {
+  return (
+    <div className="text-sm leading-7 text-foreground md:text-[15px]">
+      <ReactMarkdown
+        components={{
+          h1: ({ children }) => (
+            <h1 className="mt-5 text-xl font-semibold tracking-tight text-foreground first:mt-0">
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="mt-5 text-lg font-semibold text-foreground first:mt-0">
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="mt-4 text-sm font-semibold uppercase tracking-[0.08em] text-muted-foreground first:mt-0">
+              {children}
+            </h3>
+          ),
+          p: ({ children }) => (
+            <p className="mt-3 leading-7 text-foreground first:mt-0">{children}</p>
+          ),
+          ul: ({ children }) => (
+            <ul className="mt-3 list-disc space-y-2 pl-5 first:mt-0">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="mt-3 list-decimal space-y-2 pl-5 first:mt-0">{children}</ol>
+          ),
+          li: ({ children }) => <li className="pl-1">{children}</li>,
+          blockquote: ({ children }) => (
+            <blockquote className="mt-4 border-l-2 border-border pl-4 text-muted-foreground first:mt-0">
+              {children}
+            </blockquote>
+          ),
+          a: ({ children, href }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-foreground underline decoration-border underline-offset-4"
+            >
+              {children}
+            </a>
+          ),
+          hr: () => <hr className="my-4 border-border" />,
+          pre: ({ children }) => (
+            <div className="custom-scrollbar mt-4 overflow-x-auto rounded-2xl border border-border bg-secondary/90 px-4 py-4 text-foreground first:mt-0">
+              <pre className="w-fit min-w-full whitespace-pre font-mono text-xs leading-6 text-foreground">
+                {children}
+              </pre>
+            </div>
+          ),
+          code: ({ className, children }) => {
+            const content =
+              typeof children === "string"
+                ? children
+                : Array.isArray(children)
+                  ? children
+                    .map((child) => (typeof child === "string" ? child : ""))
+                    .join("")
+                  : "";
+            const isBlockCode =
+              Boolean(className?.includes("language-")) || content.includes("\n");
+
+            if (isBlockCode) {
+              return <code className={className}>{children}</code>;
+            }
+
+            return (
+              <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                {children}
+              </code>
+            );
+          },
+        }}
+      >
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function RockyArtifactGrid({
+  artifacts,
+}: {
+  artifacts: AgentSessionArtifactManifestEntry[];
+}) {
+  if (artifacts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 grid gap-3">
+      {artifacts.map((artifact) => (
+        <ArtifactPreviewCard
+          key={artifact.role}
+          artifact={artifact}
+          showInspectLink={false}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RockyReplyMark() {
+  return (
+    <div className="mt-1 h-6 w-7 shrink-0 overflow-hidden rounded-lg bg-secondary/85">
+      <img
+        src="/Rocky_logo_mark.svg"
+        alt=""
+        aria-hidden="true"
+        className="block h-full w-full object-contain"
+      />
     </div>
   );
 }
@@ -209,28 +286,94 @@ function MessageAttachmentList({
 function MessageBubble({
   chat,
   message,
+  transcriptsBySessionId,
 }: {
   chat: RockyChatRecord;
   message: RockyMessageRecord;
+  transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   const isRocky = message.role === "rocky";
+  const dispatch =
+    chat.dispatches.find((entry) => entry.id === message.dispatchId) ?? null;
+  const transcriptMessage = dispatch?.orchestration?.sessionId
+    ? findLatestAssistantMessage(
+        transcriptsBySessionId[dispatch.orchestration.sessionId],
+        dispatch.orchestration.runId
+      )
+    : null;
+  const rockyMessageState = resolveRockyMessageState(
+    dispatch?.orchestration,
+    message,
+    transcriptMessage
+  );
   const attachments = chat.attachments.filter((attachment) =>
     message.attachmentIds.includes(attachment.id)
   );
 
+  if (isRocky && rockyMessageState.kind === "pending") {
+    return (
+      <div className="flex w-full items-start justify-start gap-2.5">
+        <RockyReplyMark />
+        <article
+          className="w-full max-w-[52rem] px-1 pb-2 pt-0 text-sm leading-6 text-muted-foreground md:px-2"
+          aria-live="polite"
+          role="status"
+        >
+          <div className="inline-flex items-center gap-2">
+            <span>답변중</span>
+            <span className="ia-streaming-dots" aria-label="Rocky가 답변을 작성하고 있습니다">
+              <span className="ia-streaming-dot" />
+              <span className="ia-streaming-dot" />
+              <span className="ia-streaming-dot" />
+            </span>
+          </div>
+          <RockyArtifactGrid artifacts={rockyMessageState.artifacts} />
+        </article>
+      </div>
+    );
+  }
+
+  const bubbleText =
+    !isRocky || rockyMessageState.kind === "pending"
+      ? message.text
+      : rockyMessageState.text;
+  const bubbleTone =
+    isRocky && rockyMessageState.kind === "error"
+      ? "text-destructive"
+      : isRocky
+        ? "text-foreground"
+        : "text-primary-foreground";
+
   return (
-    <div className={cn("flex w-full", isRocky ? "justify-start" : "justify-end")}>
+    <div
+      className={cn(
+        "flex w-full",
+        isRocky ? "items-start justify-start gap-2.5" : "justify-end"
+      )}
+    >
+      {isRocky ? <RockyReplyMark /> : null}
       <article
         className={cn(
-          "max-w-[min(44rem,86%)] rounded-lg px-4 py-3 text-sm leading-6 md:px-5",
+          "text-sm leading-6",
           isRocky
-            ? "bg-transparent text-foreground"
-            : "bg-primary text-primary-foreground"
+            ? cn(
+                "w-full max-w-[52rem] px-1 pb-2 pt-0 md:px-2",
+                bubbleTone
+              )
+            : cn("max-w-[min(44rem,86%)] rounded-lg bg-primary px-4 py-3 md:px-5", bubbleTone)
         )}
       >
-        <div className="whitespace-pre-wrap">{message.text}</div>
+        {isRocky ? (
+          rockyMessageState.kind === "error" ? (
+            <div className="whitespace-pre-wrap">{bubbleText}</div>
+          ) : (
+            <RockyMarkdownViewer markdown={bubbleText} />
+          )
+        ) : (
+          <div className="whitespace-pre-wrap">{bubbleText}</div>
+        )}
         <MessageAttachmentList attachments={attachments} isRocky={isRocky} />
-        <MessageStatus chat={chat} message={message} />
+        {isRocky ? <RockyArtifactGrid artifacts={rockyMessageState.artifacts} /> : null}
       </article>
     </div>
   );
@@ -239,16 +382,22 @@ function MessageBubble({
 function MessageList({
   chat,
   endRef,
+  transcriptsBySessionId,
 }: {
   chat: RockyChatRecord;
   endRef: RefObject<HTMLDivElement | null>;
+  transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-5 pb-8">
       {chat.messages.map((message) => (
-        <MessageBubble key={message.id} chat={chat} message={message} />
+        <MessageBubble
+          key={message.id}
+          chat={chat}
+          message={message}
+          transcriptsBySessionId={transcriptsBySessionId}
+        />
       ))}
-      <CandidateList chat={chat} />
       <div ref={endRef} />
     </div>
   );
@@ -385,6 +534,45 @@ export function HomePage() {
   const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
     chat?.id ?? null
   );
+  const transcriptSessionIds =
+    chat?.dispatches.flatMap((dispatch) =>
+      dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
+    ) ?? [];
+  const uniqueTranscriptSessionIds = [...new Set(transcriptSessionIds)];
+  const activeTranscriptSessionIds = new Set(
+    chat?.dispatches.flatMap((dispatch) => {
+      const orchestration = dispatch.orchestration;
+      if (
+        orchestration?.sessionId &&
+        (orchestration.status === "running" || orchestration.status === "planned")
+      ) {
+        return [orchestration.sessionId];
+      }
+
+      return [];
+    }) ?? []
+  );
+  const transcriptQueries = useQueries({
+    queries: uniqueTranscriptSessionIds.map((sessionId) => ({
+      queryKey: ["transcript", sessionId],
+      queryFn: () => agentEngineClient.getTranscript(sessionId),
+      enabled: Boolean(sessionId),
+      refetchInterval: activeTranscriptSessionIds.has(sessionId)
+        ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS
+        : false,
+      refetchIntervalInBackground: activeTranscriptSessionIds.has(sessionId),
+    })),
+  });
+  const transcriptsBySessionId: Record<string, AgentSessionMessage[]> = {};
+  uniqueTranscriptSessionIds.forEach((sessionId, index) => {
+    const transcript = transcriptQueries[index]?.data;
+    if (transcript) {
+      transcriptsBySessionId[sessionId] = transcript;
+    }
+  });
+  const transcriptRefreshMarker = transcriptQueries
+    .map((query) => String(query.dataUpdatedAt ?? 0))
+    .join(":");
 
   const messageCount = chat?.messages.length ?? 0;
   const hasActiveOrchestration =
@@ -425,7 +613,7 @@ export function HomePage() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messageCount]);
+  }, [messageCount, transcriptRefreshMarker]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -454,7 +642,11 @@ export function HomePage() {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <main className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
         {chat && messageCount > 0 ? (
-          <MessageList chat={chat} endRef={messagesEndRef} />
+          <MessageList
+            chat={chat}
+            endRef={messagesEndRef}
+            transcriptsBySessionId={transcriptsBySessionId}
+          />
         ) : (
           <EmptyChatState />
         )}

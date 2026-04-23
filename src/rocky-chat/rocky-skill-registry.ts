@@ -5,6 +5,8 @@ import {
   NUTRITION_WORKER_ID,
   ROCKY_CORE_AGENT_ID,
   ROCKY_CORE_WORKER_ID,
+  VISUAL_REPORT_AGENT_ID,
+  VISUAL_REPORT_WORKER_ID,
 } from "./rocky-chat-constants.js";
 
 import type {
@@ -145,6 +147,94 @@ export const ROCKY_ORCHESTRATION_SKILLS: RockyOrchestrationSkill[] = [
     ],
     candidateRules: [],
     protectionRules: [],
+  },
+  {
+    id: "rocky.visual-report",
+    version: "2026-04-23",
+    mode: "delegated",
+    domain: "general",
+    displayName: "시각화 리포트 스킬",
+    description:
+      "지표 요약, 추이 분석, 차트 생성, Markdown 리포트 정리를 담당 에이전트로 위임합니다.",
+    worker: {
+      id: VISUAL_REPORT_WORKER_ID,
+      displayName: "시각화 리포트 담당",
+    },
+    agent: {
+      id: VISUAL_REPORT_AGENT_ID,
+      name: "시각화 리포트 담당",
+      description:
+        "Rocky 홈 채팅에서 그래프, 차트, 시각화 리포트 작업을 맡기 위한 담당입니다.",
+    },
+    taskSignals: [
+      "그래프",
+      "차트",
+      "시각화",
+      "리포트",
+      "대시보드",
+      "plot",
+      "chart",
+      "graph",
+      "visual",
+      "trend",
+      "추이",
+      "지표",
+      "통계",
+      "분포",
+      "비중",
+      "월별",
+      "주별",
+      "일별",
+      "분기",
+      "연도",
+      "series",
+      "매출",
+      "성과",
+      "csv",
+      "엑셀",
+      "데이터",
+      "보고서",
+    ],
+    domainSignals: [],
+    capabilities: [
+      "구조화된 데이터를 요약하고 차트가 필요한 지점을 골라 시각화 리포트로 정리합니다.",
+      "가능하면 Python으로 데이터를 집계하고 Rocky UI가 바로 렌더링할 수 있는 차트 아티팩트를 함께 만듭니다.",
+      "최종 결과를 Markdown 제목, 요약, 핵심 인사이트, 표, 다음 액션 구조로 정리합니다.",
+    ],
+    operatingRules: [
+      "구조화된 데이터가 있으면 Python으로 집계나 전처리를 수행해도 됩니다.",
+      "차트가 필요할 때는 파일명에 chart 또는 graph를 포함한 JSON 아티팩트를 저장하세요. 예: sales-trend-chart.json.",
+      '차트 JSON은 {"kind":"line"|"bar"|"area","title":string|null,"xLabel":string|null,"yLabel":string|null,"series":[{"name":string|null,"points":[{"x":string|number,"y":number}]}]} 형식을 우선 사용하세요.',
+      "충분한 수치 근거가 없으면 차트를 억지로 만들지 말고 Markdown 리포트만 작성하세요.",
+      "없는 파일 본문을 읽었다고 가정하지 않습니다.",
+    ],
+    handoffContract: [
+      "최종 답변은 Rocky가 그대로 전달할 수 있는 Markdown 리포트로 작성합니다.",
+      "차트를 만들었다면 본문에서 차트 해석과 핵심 수치를 함께 설명합니다.",
+      "차트를 만들지 못했다면 이유와 필요한 데이터 형식을 분명히 적습니다.",
+    ],
+    candidateRules: [
+      {
+        title: "추이 차트 템플릿",
+        description: "시간축 또는 순서축 지표를 선형/영역 차트로 비교하는 기준입니다.",
+        trigger: "추이/월별/주별/일별 언급",
+        confidence: 0.84,
+        keywords: ["추이", "월별", "주별", "일별", "분기", "연도"],
+      },
+      {
+        title: "지표 요약 카드",
+        description: "차트와 함께 핵심 KPI를 상단 요약 카드처럼 정리하는 기준입니다.",
+        trigger: "지표/성과/리포트 언급",
+        confidence: 0.76,
+        keywords: ["지표", "성과", "리포트", "대시보드", "보고서"],
+      },
+    ],
+    protectionRules: [
+      {
+        label: "고객 정보",
+        keywords: ["고객", "개인정보", "전화번호", "이메일"],
+      },
+    ],
   },
   {
     id: "rocky.general-task",
@@ -442,8 +532,12 @@ export function selectRockySkill(input: {
     };
   }
 
-  const general = delegatedSkills.find((skill) => skill.domain === "general");
-  if (general && skillMatchesTask(general, input.message, input.attachments)) {
+  const general = delegatedSkills.find(
+    (skill) =>
+      skill.domain === "general" &&
+      skillMatchesTask(skill, input.message, input.attachments)
+  );
+  if (general) {
     return {
       skill: general,
       intent: "general-task",

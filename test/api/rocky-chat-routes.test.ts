@@ -482,6 +482,62 @@ test("rocky chat asks for clarification on vague requests and routes later gener
   }
 });
 
+test("rocky chat routes chart and report requests through the visualization worker", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, runs, sendTurnCalls, server, sessions } =
+    createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message:
+          "매출 csv를 보고 월별 추이 그래프랑 핵심 지표 리포트를 만들어줘.",
+        attachments: [
+          {
+            name: "monthly-sales.csv",
+            contentType: "text/csv",
+            size: 2048,
+          },
+        ],
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.intent, "general-task");
+    assert.equal(chat.worker?.displayName, "시각화 리포트 담당");
+    assert.equal(chat.worker?.skillId, "rocky.visual-report");
+    assert.equal(chat.worker?.agentId, "rocky-visual-report");
+    assert.equal(chat.dispatches[0]?.skillId, "rocky.visual-report");
+    assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-visual-report");
+    assert.equal(chat.dispatches[0]?.orchestration?.sessionId, "session-1");
+    assert.equal(chat.dispatches[0]?.orchestration?.runId, "run-1");
+    assert.ok(chat.skillCandidates.some((candidate) => candidate.title === "추이 차트 템플릿"));
+    assert.ok(chat.skillCandidates.some((candidate) => candidate.title === "지표 요약 카드"));
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]?.id, "rocky-visual-report");
+    assert.equal(sessions.length, 1);
+    assert.equal(runs.length, 1);
+    assert.equal(sendTurnCalls.length, 1);
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
+      /Use the workspace-local skill `rocky\.visual-report`/
+    );
+
+    const visualSkill = await readFile(
+      path.join(agents[0]!.workspaceRoot, "skills", "rocky.visual-report", "SKILL.md"),
+      "utf8"
+    );
+    assert.match(visualSkill, /Skill ID: rocky\.visual-report/);
+    assert.match(visualSkill, /chart 또는 graph를 포함한 JSON 아티팩트/);
+    assert.match(visualSkill, /Python으로 집계나 전처리/);
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat refreshes orchestration status from the backing run", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const { runs, server } = createRockyChatTestServer(stateRoot);

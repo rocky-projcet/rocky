@@ -5,14 +5,16 @@ test("home keeps the nutrition MD request inside one Rocky chat", async ({ page 
 
   await expect(page.getByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Rocky" })).toHaveCount(0);
-  await expect(page.getByText("에이전트")).toHaveCount(0);
-  await expect(page.getByText("AI", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "일반" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "디버그" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
 
   await page.getByRole("button", { name: "고급 관리" }).click();
-  await page.getByRole("link", { name: "에이전트" }).click();
-  await expect(page).toHaveURL(/\/agents$/);
-  await page.getByRole("link", { name: "홈" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  const advancedMenu = page.locator("#advanced-management-subtree");
+  await expect(advancedMenu.getByRole("link", { name: "에이전트" })).toBeVisible();
+  await expect(advancedMenu.getByRole("link", { name: "보관함" })).toBeVisible();
+  await expect(advancedMenu.getByRole("link", { name: "Rocky 관리" })).toHaveCount(0);
+  await expect(page.getByText("AI", { exact: true })).toHaveCount(0);
 
   await page.getByLabel("자료 파일 선택").setInputFiles({
     name: "nutrition-event.csv",
@@ -33,6 +35,7 @@ test("home keeps the nutrition MD request inside one Rocky chat", async ({ page 
   await expect(page.getByText(/보호 항목/)).toBeVisible();
   await expect(page.getByText("작업 화면")).toHaveCount(0);
   await expect(page.getByText("확인 결과")).toHaveCount(0);
+  await expect(page.getByText("세션 열기")).toBeVisible();
 
   await page.getByText("반복해서 쓸 기준 후보", { exact: true }).click();
   await expect(page.getByText("상품명 표기 묶기")).toBeVisible();

@@ -276,6 +276,7 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and starts an
     assert.equal(chat.intent, "specialized-task");
     assert.equal(chat.domain, "nutrition-md");
     assert.equal(chat.worker?.displayName, "영양제 MD 담당");
+    assert.equal(chat.worker?.skillId, "rocky.nutrition-md");
     assert.equal(chat.executionStarted, true);
     assert.equal(chat.attachments.length, 1);
     assert.equal(chat.messages.length, 2);
@@ -283,6 +284,7 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and starts an
     assert.ok(chat.skillCandidates.some((candidate) => candidate.title === "민감 자료 보호"));
     assert.equal(chat.dispatches.length, 1);
     assert.equal(chat.dispatches[0]?.intent, "specialized-task");
+    assert.equal(chat.dispatches[0]?.skillId, "rocky.nutrition-md");
     assert.equal(chat.dispatches[0]?.executionStarted, true);
     assert.equal(chat.dispatches[0]?.orchestration?.status, "running");
     assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-nutrition-md");
@@ -337,8 +339,10 @@ test("rocky chat routes simple conversation through rocky core", async () => {
     const chat = response.json<RockyChatRecord>();
     assert.equal(chat.intent, "conversation");
     assert.equal(chat.worker?.displayName, "Rocky");
+    assert.equal(chat.worker?.skillId, "rocky.core");
     assert.equal(chat.dispatches.length, 1);
     assert.equal(chat.dispatches[0]?.intent, "conversation");
+    assert.equal(chat.dispatches[0]?.skillId, "rocky.core");
     assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-core");
     assert.equal(chat.dispatches[0]?.orchestration?.sessionId, "session-1");
     assert.equal(chat.dispatches[0]?.orchestration?.runId, "run-1");
@@ -352,7 +356,7 @@ test("rocky chat routes simple conversation through rocky core", async () => {
     assert.equal(sessions.length, 1);
     assert.equal(runs.length, 1);
     assert.equal(sendTurnCalls.length, 1);
-    assert.match(sendTurnCalls[0]?.prompt ?? "", /Rocky 홈 채팅의 코어 오케스트레이터/);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /Skill ID: rocky\.core/);
   } finally {
     await server.close();
   }
@@ -385,6 +389,7 @@ test("rocky chat asks for clarification on vague requests and routes later gener
     assert.equal(chat.worker?.displayName, "Rocky");
     assert.equal(chat.dispatches.length, 1);
     assert.equal(chat.dispatches[0]?.intent, "clarification");
+    assert.equal(chat.dispatches[0]?.skillId, "rocky.core");
     assert.equal(chat.dispatches[0]?.orchestration?.agentId, "rocky-core");
     assert.equal(chat.executionStarted, true);
     assert.equal(chat.messages[1]?.intent, "clarification");
@@ -401,10 +406,12 @@ test("rocky chat asks for clarification on vague requests and routes later gener
     const updated = followUp.json<RockyChatRecord>();
     assert.equal(updated.intent, "general-task");
     assert.equal(updated.worker?.displayName, "자료 정리 담당");
+    assert.equal(updated.worker?.skillId, "rocky.general-task");
     assert.equal(updated.worker?.agentId, "rocky-general-task");
     assert.equal(updated.dispatches.length, 2);
     assert.equal(updated.dispatches[0]?.intent, "clarification");
     assert.equal(updated.dispatches[1]?.intent, "general-task");
+    assert.equal(updated.dispatches[1]?.skillId, "rocky.general-task");
     assert.equal(updated.dispatches[1]?.orchestration?.status, "running");
     assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-2");
     assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");

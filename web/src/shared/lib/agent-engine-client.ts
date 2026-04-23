@@ -612,6 +612,7 @@ export interface RockySkillCandidateRecord {
 
 export interface RockyWorkerRecord {
   id: string;
+  skillId: string;
   domain: RockyChatDomain;
   displayName: string;
   agentId: string | null;
@@ -625,6 +626,7 @@ export interface RockyDispatchRecord {
   id: string;
   chatId: string;
   messageId: string;
+  skillId: string;
   intent: RockyRoutingIntent;
   domain: RockyChatDomain;
   workerId: string;

@@ -4,11 +4,13 @@ import {
 } from "react-router-dom";
 
 import { AppShell } from "../shared/components/app-shell";
+import { DebugModeOnly } from "../shared/components/debug-mode-only";
 import { PageState } from "../shared/components/page-state";
 import { AccountPage } from "../domains/codex/pages/account-page";
 import { AgentDetailPage } from "../domains/agent/pages/agent-detail-page";
 import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
+import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
 import { HomePage } from "../domains/rocky/pages/home-page";
 import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
 import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
@@ -37,6 +39,17 @@ export const router = createBrowserRouter([
       {
         path: "agents/:agentId/sessions/:sessionId",
         element: <SessionWorkspacePage />,
+      },
+      {
+        path: "rocky/agent",
+        element: (
+          <DebugModeOnly
+            title="Rocky 관리 화면은 디버그 모드에서만 표시합니다"
+            description="일반 모드에서는 Rocky를 홈에서만 상대하고, 내부 에이전트와 위임 상태는 숨깁니다."
+          >
+            <RockyAgentPage />
+          </DebugModeOnly>
+        ),
       },
       {
         path: "runs",

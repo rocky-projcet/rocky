@@ -86,6 +86,7 @@ export function HeaderBreadcrumb() {
   let title = "Rocky";
   if (pathname === "/") title = "홈";
   if (pathname === "/agents/archived") title = "보관함";
+  else if (pathname.startsWith("/rocky/agent")) title = "Rocky 관리";
   else if (pathname.startsWith("/runs/")) title = "대화 상세";
   else if (pathname.startsWith("/settings") || pathname.startsWith("/account")) title = "설정";
   else if (pathname.startsWith("/agents")) title = "에이전트";

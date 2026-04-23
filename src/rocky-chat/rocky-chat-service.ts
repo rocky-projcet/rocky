@@ -10,13 +10,12 @@ import {
   writeRockyWorkerRecord,
 } from "./rocky-chat-store.js";
 import {
-  GENERAL_AGENT_ID,
-  GENERAL_WORKER_ID,
-  NUTRITION_AGENT_ID,
-  NUTRITION_WORKER_ID,
-  ROCKY_CORE_AGENT_ID,
-  ROCKY_CORE_WORKER_ID,
-} from "./rocky-chat-constants.js";
+  extractRockyProtectionHints,
+  extractRockySkillCandidates,
+  getRockySkillByWorkerId,
+  selectRockySkill,
+  type RockyOrchestrationSkill,
+} from "./rocky-skill-registry.js";
 import {
   RockyOrchestratorService,
   type RockyAgentServiceLike,
@@ -63,15 +62,6 @@ function notFound(message: string): Error & { statusCode: number } {
   });
 }
 
-function includesAny(input: string, keywords: string[]): boolean {
-  const normalized = input.toLowerCase();
-  return keywords.some((keyword) => normalized.includes(keyword.toLowerCase()));
-}
-
-function compactMessage(message: string): string {
-  return message.replace(/\s+/gu, " ").trim().toLowerCase();
-}
-
 function titleFromMessage(message: string): string {
   const compact = message.replace(/\s+/gu, " ").trim();
   if (!compact) {
@@ -81,167 +71,12 @@ function titleFromMessage(message: string): string {
   return compact.length > 32 ? `${compact.slice(0, 32)}...` : compact;
 }
 
-function detectDomain(message: string, attachments: RockyAttachmentRecord[]): RockyChatDomain {
-  const attachmentNames = attachments.map((attachment) => attachment.name).join(" ");
-  const target = `${message} ${attachmentNames}`;
-  const nutritionSignals = ["영양제", "건기식", "건강기능식품"];
-  const commerceSignals = [
-    "상품",
-    "제품",
-    "제품명",
-    "상품명",
-    "상품 기획",
-    "판매",
-    "판매량",
-    "재구매",
-    "채널",
-    "쿠팡",
-    "네이버",
-    "자사몰",
-  ];
-  const mdOperationSignals = [
-    "원가",
-    "마진",
-    "공급가",
-    "거래처",
-    "벤더",
-    "이벤트",
-    "행사",
-    "프로모션",
-  ];
-
-  if (includesAny(target, nutritionSignals)) {
-    return "nutrition-md";
-  }
-  if (includesAny(target, commerceSignals) && includesAny(target, mdOperationSignals)) {
-    return "nutrition-md";
-  }
-
-  return "general";
-}
-
-function hasGeneralTaskSignal(message: string, attachments: RockyAttachmentRecord[]): boolean {
-  const attachmentNames = attachments.map((attachment) => attachment.name).join(" ");
-  const target = `${message} ${attachmentNames}`;
-
-  const explicitFileTask =
-    attachments.length > 0 &&
-    includesAny(message, ["정리", "요약", "분석", "작성", "만들", "추출", "비교", "변환"]);
-
-  return (
-    explicitFileTask ||
-    includesAny(target, [
-      "정리",
-      "요약",
-      "분석",
-      "작성",
-      "만들",
-      "찾아",
-      "비교",
-      "추출",
-      "변환",
-      "분류",
-      "계산",
-      "검토",
-      "수정",
-      "번역",
-      "보고서",
-      "회의록",
-      "표로",
-      "엑셀",
-      "csv",
-      "파일",
-      "리스트",
-      "목록",
-      "초안",
-      "기획",
-      "계획",
-      "액션 아이템",
-      "자동화",
-      "코드",
-    ])
-  );
-}
-
-function isConversationMessage(message: string): boolean {
-  const compact = compactMessage(message);
-  const bare = compact.replace(/[!?.,~\s]/gu, "");
-  if (
-    ["안녕", "안녕하세요", "하이", "hi", "hello", "헬로", "ㅎㅇ", "테스트"].includes(bare)
-  ) {
-    return true;
-  }
-
-  return includesAny(compact, [
-    "뭐 할 수",
-    "무엇을 할 수",
-    "사용법",
-    "도움말",
-    "에이전트가 뭐",
-    "rocky가 뭐",
-    "로키가 뭐",
-    "너는 뭐",
-  ]);
-}
-
-function needsClarification(message: string): boolean {
-  const compact = compactMessage(message);
-  return [
-    /^(이거|요거|저거)?\s*(봐줘|봐 줄래|확인해줘|확인해 줄래|확인 가능|어때|가능해|가능|될까|되나)\??$/u,
-    /^(정리|분석|요약|검토)\s*(가능|가능해|될까|해줄 수 있어)\??$/u,
-    /^(도와줘|뭐 해야 해|어떻게 해)\??$/u,
-  ].some((pattern) => pattern.test(compact));
-}
-
-function detectRoutingIntent(
-  message: string,
-  attachments: RockyAttachmentRecord[],
-  detectedDomain: RockyChatDomain,
-  contextDomain: RockyChatDomain = "general"
-): RockyRoutingIntent {
-  if (isConversationMessage(message)) {
-    return "conversation";
-  }
-  if (needsClarification(message)) {
-    return "clarification";
-  }
-
-  const taskSignal = hasGeneralTaskSignal(message, attachments);
-  if (
-    (detectedDomain === "nutrition-md" || contextDomain === "nutrition-md") &&
-    taskSignal
-  ) {
-    return "specialized-task";
-  }
-  if (taskSignal) {
-    return "general-task";
-  }
-
-  return "conversation";
-}
-
 function isTaskIntent(intent: RockyRoutingIntent): intent is RockyTaskIntent {
   return intent === "general-task" || intent === "specialized-task";
 }
 
 function isCoreIntent(intent: RockyRoutingIntent): boolean {
   return intent === "conversation" || intent === "clarification";
-}
-
-function protectionHints(message: string, attachments: RockyAttachmentRecord[]): string[] {
-  const target = `${message} ${attachments.map((attachment) => attachment.name).join(" ")}`;
-  const hints: string[] = [];
-  if (includesAny(target, ["원가", "마진", "공급가"])) {
-    hints.push("원가/마진 정보");
-  }
-  if (includesAny(target, ["거래처", "벤더", "계약"])) {
-    hints.push("거래처/계약 정보");
-  }
-  if (includesAny(target, ["고객", "개인정보", "전화번호", "이메일"])) {
-    hints.push("고객 정보");
-  }
-
-  return hints;
 }
 
 export class RockyChatService {
@@ -272,8 +107,8 @@ export class RockyChatService {
     const timestamp = this.now();
     const chatId = `rocky-chat-${this.idGenerator()}`;
     const attachments = this.normalizeAttachments(input.attachments ?? [], timestamp);
-    const domain = detectDomain(message, attachments);
-    const intent = detectRoutingIntent(message, attachments, domain);
+    const selection = selectRockySkill({ message, attachments });
+    const { domain, intent, skill } = selection;
     const userMessage = this.buildUserMessage({
       chatId,
       message,
@@ -289,6 +124,8 @@ export class RockyChatService {
       attachments,
       domain,
       intent,
+      skill,
+      routingReason: selection.reason,
       reuseCoreSessionId: null,
       timestamp,
     });
@@ -347,12 +184,12 @@ export class RockyChatService {
     const existing = await this.requireChat(chatId);
     const timestamp = this.now();
     const attachments = this.normalizeAttachments(input.attachments ?? [], timestamp);
-    const detectedDomain = detectDomain(message, attachments);
-    const intent = detectRoutingIntent(message, attachments, detectedDomain, existing.domain);
-    const domain =
-      detectedDomain === "general" && intent !== "general-task"
-        ? existing.domain
-        : detectedDomain;
+    const selection = selectRockySkill({
+      message,
+      attachments,
+      contextDomain: existing.domain,
+    });
+    const { domain, intent, skill } = selection;
     const userMessage = this.buildUserMessage({
       chatId,
       message,
@@ -371,6 +208,8 @@ export class RockyChatService {
       attachments: [...existing.attachments, ...attachments],
       domain,
       intent,
+      skill,
+      routingReason: selection.reason,
       reuseCoreSessionId,
       timestamp,
     });
@@ -450,6 +289,8 @@ export class RockyChatService {
     attachments: RockyAttachmentRecord[];
     domain: RockyChatDomain;
     intent: RockyRoutingIntent;
+    skill: RockyOrchestrationSkill;
+    routingReason: string;
     reuseCoreSessionId: string | null;
     timestamp: string;
   }): Promise<{
@@ -459,10 +300,15 @@ export class RockyChatService {
     rockyMessage: RockyMessageRecord;
   }> {
     if (!isTaskIntent(input.intent)) {
-      const worker = await this.ensureCoreWorker(input.message, input.timestamp);
+      const worker = await this.ensureSkillWorker({
+        skill: input.skill,
+        reason: input.routingReason,
+        timestamp: input.timestamp,
+      });
       const dispatch = this.buildDispatch({
         chatId: input.chatId,
         messageId: input.messageId,
+        skill: input.skill,
         intent: input.intent,
         domain: input.domain,
         workerId: worker.id,
@@ -479,6 +325,7 @@ export class RockyChatService {
         dispatch,
         attachments: input.attachments,
         skillCandidates: [],
+        skill: input.skill,
         protectionHints: dispatch.protectionHints,
         reuseSessionId: input.reuseCoreSessionId,
         timestamp: input.timestamp,
@@ -505,15 +352,22 @@ export class RockyChatService {
       };
     }
 
-    const worker = await this.ensureWorker(input.domain, input.message, input.timestamp);
-    const skillCandidates = this.extractSkillCandidates(
-      input.message,
-      input.messageId,
-      input.timestamp
-    );
+    const worker = await this.ensureSkillWorker({
+      skill: input.skill,
+      reason: input.routingReason,
+      timestamp: input.timestamp,
+    });
+    const skillCandidates = extractRockySkillCandidates({
+      skill: input.skill,
+      message: input.message,
+      sourceMessageId: input.messageId,
+      createdAt: input.timestamp,
+      idGenerator: this.idGenerator,
+    });
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
       messageId: input.messageId,
+      skill: input.skill,
       intent: input.intent,
       domain: input.domain,
       workerId: worker.id,
@@ -530,6 +384,7 @@ export class RockyChatService {
       dispatch,
       attachments: input.attachments,
       skillCandidates,
+      skill: input.skill,
       protectionHints: dispatch.protectionHints,
       timestamp: input.timestamp,
     });
@@ -634,66 +489,6 @@ export class RockyChatService {
     };
   }
 
-  private extractSkillCandidates(
-    message: string,
-    sourceMessageId: string,
-    createdAt: string
-  ): RockySkillCandidateRecord[] {
-    const candidates: RockySkillCandidateRecord[] = [];
-    const addCandidate = (
-      title: string,
-      description: string,
-      trigger: string,
-      confidence: number
-    ) => {
-      candidates.push({
-        id: `skill-${this.idGenerator()}`,
-        title,
-        description,
-        trigger,
-        confidence,
-        sourceMessageId,
-        status: "candidate",
-        createdAt,
-      });
-    };
-
-    if (includesAny(message, ["상품명", "제품명", "같은 상품", "다르게 적힌"])) {
-      addCandidate(
-        "상품명 표기 묶기",
-        "같은 상품이 여러 이름으로 적힌 경우 대표 이름 기준으로 묶는 기준입니다.",
-        "상품명/제품명 표기 차이",
-        0.86
-      );
-    }
-    if (includesAny(message, ["원가", "마진", "공급가", "거래처", "벤더"])) {
-      addCandidate(
-        "민감 자료 보호",
-        "원가, 마진, 공급가, 거래처 정보는 보호해서 볼 항목으로 다룹니다.",
-        "원가/마진/거래처 언급",
-        0.9
-      );
-    }
-    if (includesAny(message, ["이벤트", "행사", "프로모션", "기획"])) {
-      addCandidate(
-        "이벤트 기획 기준 정리",
-        "행사 성과를 다음 기획에 재사용할 수 있는 기준으로 정리합니다.",
-        "이벤트/기획 언급",
-        0.78
-      );
-    }
-    if (includesAny(message, ["채널", "쿠팡", "네이버", "자사몰"])) {
-      addCandidate(
-        "채널별 성과 비교",
-        "판매 채널별 성과를 따로 비교해 다음 운영 판단에 사용합니다.",
-        "채널 언급",
-        0.72
-      );
-    }
-
-    return candidates;
-  }
-
   private mergeSkillCandidates(
     current: RockySkillCandidateRecord[],
     next: RockySkillCandidateRecord[]
@@ -706,6 +501,7 @@ export class RockyChatService {
   private buildDispatch(input: {
     chatId: string;
     messageId: string;
+    skill: RockyOrchestrationSkill;
     intent: RockyRoutingIntent;
     domain: RockyChatDomain;
     workerId: string;
@@ -718,145 +514,80 @@ export class RockyChatService {
       id: `dispatch-${this.idGenerator()}`,
       chatId: input.chatId,
       messageId: input.messageId,
+      skillId: input.skill.id,
       intent: input.intent,
       domain: input.domain,
       workerId: input.workerId,
       attachmentIds: input.attachments.map((attachment) => attachment.id),
       originalRequest: input.message,
       skillCandidateIds: input.skillCandidates.map((candidate) => candidate.id),
-      protectionHints: protectionHints(input.message, input.attachments),
+      protectionHints: extractRockyProtectionHints({
+        skill: input.skill,
+        message: input.message,
+        attachments: input.attachments,
+      }),
       orchestration: null,
       executionStarted: false,
       createdAt: input.timestamp,
     };
   }
 
-  private async ensureWorker(
-    domain: RockyChatDomain,
-    reason: string,
-    timestamp: string
-  ): Promise<RockyWorkerRecord> {
-    if (domain !== "nutrition-md") {
-      const agentId = await this.ensureGeneralAgent();
-      return {
-        id: GENERAL_WORKER_ID,
-        domain,
-        displayName: "자료 정리 담당",
-        agentId,
-        reason: "일반 자료 정리 요청",
-        status: "ready",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-    }
-
+  private async ensureSkillWorker(input: {
+    skill: RockyOrchestrationSkill;
+    reason: string;
+    timestamp: string;
+  }): Promise<RockyWorkerRecord> {
     const paths = resolveRockyWorkerPaths({
       stateRoot: this.stateRoot,
-      workerId: NUTRITION_WORKER_ID,
+      workerId: input.skill.worker.id,
     });
-    const agentId = await this.ensureNutritionAgent();
+    const agentId = await this.ensureSkillAgent(input.skill);
     const existing = await readRockyWorkerRecord(paths);
     if (existing) {
       const worker: RockyWorkerRecord = {
         ...existing,
+        skillId: input.skill.id,
+        domain: input.skill.domain,
+        displayName: input.skill.worker.displayName,
         agentId: agentId ?? existing.agentId,
-        reason: reason.slice(0, 160),
+        reason: input.reason.slice(0, 160),
         status: "ready",
-        updatedAt: timestamp,
+        updatedAt: input.timestamp,
       };
       await writeRockyWorkerRecord(paths, worker);
       return worker;
     }
 
     const worker: RockyWorkerRecord = {
-      id: NUTRITION_WORKER_ID,
-      domain,
-      displayName: "영양제 MD 담당",
+      id: input.skill.worker.id,
+      skillId: input.skill.id,
+      domain: input.skill.domain,
+      displayName: input.skill.worker.displayName,
       agentId,
-      reason: reason.slice(0, 160),
+      reason: input.reason.slice(0, 160),
       status: "ready",
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt: input.timestamp,
+      updatedAt: input.timestamp,
     };
     await writeRockyWorkerRecord(paths, worker);
     return worker;
   }
 
-  private async ensureCoreWorker(
-    reason: string,
-    timestamp: string
-  ): Promise<RockyWorkerRecord> {
-    const agentId = await this.ensureCoreAgent();
-    return {
-      id: ROCKY_CORE_WORKER_ID,
-      domain: "general",
-      displayName: "Rocky",
-      agentId,
-      reason: reason.slice(0, 160),
-      status: "ready",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-  }
-
-  private async ensureCoreAgent(): Promise<string | null> {
+  private async ensureSkillAgent(skill: RockyOrchestrationSkill): Promise<string | null> {
     if (!this.agentService) {
       return null;
     }
 
     const agents = await this.agentService.listAgents();
-    const existing = agents.find((agent) => agent.id === ROCKY_CORE_AGENT_ID);
+    const existing = agents.find((agent) => agent.id === skill.agent.id);
     if (existing) {
       return existing.id;
     }
 
     const agent = await this.agentService.createAgent({
-      id: ROCKY_CORE_AGENT_ID,
-      name: "Rocky",
-      description:
-        "Rocky 홈 채팅에서 대화, 요청 해석, 확인 질문 생성을 맡는 코어 오케스트레이터입니다.",
-      defaultRuntime: "codex-cli",
-    });
-    return agent.id;
-  }
-
-  private async ensureGeneralAgent(): Promise<string | null> {
-    if (!this.agentService) {
-      return null;
-    }
-
-    const agents = await this.agentService.listAgents();
-    const existing = agents.find((agent) => agent.id === GENERAL_AGENT_ID);
-    if (existing) {
-      return existing.id;
-    }
-
-    const agent = await this.agentService.createAgent({
-      id: GENERAL_AGENT_ID,
-      name: "자료 정리 담당",
-      description:
-        "Rocky 홈 채팅에서 일반 자료 정리와 단일 작업 요청을 맡기 위한 담당입니다.",
-      defaultRuntime: "codex-cli",
-    });
-    return agent.id;
-  }
-
-  private async ensureNutritionAgent(): Promise<string | null> {
-    if (!this.agentService) {
-      return null;
-    }
-
-    const agents = await this.agentService.listAgents();
-    const existing = agents.find((agent) => agent.id === NUTRITION_AGENT_ID);
-    if (existing) {
-      return existing.id;
-    }
-
-    const agent = await this.agentService.createAgent({
-      id: NUTRITION_AGENT_ID,
-      name: "영양제 MD 담당",
-      description:
-        "Rocky 단일 채팅에서 영양제 MD 자료 요청을 내부적으로 맡기 위한 담당입니다.",
+      id: skill.agent.id,
+      name: skill.agent.name,
+      description: skill.agent.description,
       defaultRuntime: "codex-cli",
     });
     return agent.id;
@@ -867,7 +598,7 @@ export class RockyChatService {
       .reverse()
       .find(
         (dispatch) =>
-          dispatch.workerId === ROCKY_CORE_WORKER_ID &&
+          dispatch.skillId === "rocky.core" &&
           dispatch.orchestration?.sessionId
       );
 
@@ -875,11 +606,26 @@ export class RockyChatService {
   }
 
   private hydrateChat(chat: RockyChatRecord): RockyChatRecord {
-    const dispatches = chat.dispatches.map((dispatch) => ({
-      ...dispatch,
-      orchestration: dispatch.orchestration ?? null,
-      executionStarted: Boolean(dispatch.executionStarted),
-    }));
+    const dispatches = chat.dispatches.map((dispatch) => {
+      const persisted = dispatch as Partial<RockyDispatchRecord>;
+      const fallbackSkill = getRockySkillByWorkerId(dispatch.workerId);
+      return {
+        ...dispatch,
+        skillId: persisted.skillId ?? fallbackSkill.id,
+        orchestration: dispatch.orchestration ?? null,
+        executionStarted: Boolean(dispatch.executionStarted),
+      };
+    });
+    const worker = chat.worker
+      ? {
+          ...chat.worker,
+          skillId:
+            (chat.worker as Partial<RockyWorkerRecord>).skillId ??
+            dispatches.find((dispatch) => dispatch.workerId === chat.worker?.id)
+              ?.skillId ??
+            getRockySkillByWorkerId(chat.worker.id).id,
+        }
+      : null;
     const orchestration =
       chat.orchestration ??
       [...dispatches].reverse().find((dispatch) => dispatch.orchestration)
@@ -888,6 +634,7 @@ export class RockyChatService {
 
     return {
       ...chat,
+      worker,
       dispatches,
       orchestration,
       executionStarted:

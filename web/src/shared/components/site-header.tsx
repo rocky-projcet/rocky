@@ -3,6 +3,7 @@ import { SidebarTrigger } from "@/shared/ui/sidebar";
 import { HeaderBreadcrumb } from "@/shared/components/header-breadcrumb";
 import { AccountPopover } from "@/domains/codex/components/account-popover";
 import { useProviderAccountsQuery } from "@/domains/codex/hooks";
+import { AppModeToggle } from "@/domains/rocky/components/app-mode-toggle";
 
 export function SiteHeader() {
   const accountQuery = useProviderAccountsQuery();
@@ -17,6 +18,7 @@ export function SiteHeader() {
       <div className="flex w-full items-center justify-between pr-4 lg:pr-6">
         <HeaderBreadcrumb />
         <div className="flex items-center gap-2">
+          <AppModeToggle />
           {isAuthenticated ? <AccountPopover /> : null}
         </div>
       </div>

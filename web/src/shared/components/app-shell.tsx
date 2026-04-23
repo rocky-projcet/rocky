@@ -45,7 +45,11 @@ function isRockyHomeRoute(pathname: string): boolean {
 }
 
 function isAdvancedManagementRoute(pathname: string): boolean {
-  return pathname.startsWith("/agents") || pathname.startsWith("/runs");
+  return (
+    pathname.startsWith("/agents") ||
+    pathname.startsWith("/runs") ||
+    pathname.startsWith("/rocky/agent")
+  );
 }
 
 export function AppShell() {

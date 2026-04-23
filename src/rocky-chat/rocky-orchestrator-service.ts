@@ -18,6 +18,7 @@ import type {
   RockySkillCandidateRecord,
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
+import type { RockyOrchestrationSkill } from "./rocky-skill-registry.js";
 
 export interface RockyAgentServiceLike {
   createAgent(input?: AgentCreateInput): Promise<AgentRecord>;
@@ -53,6 +54,7 @@ export interface RockyOrchestrationStartInput {
   dispatch: RockyDispatchRecord;
   attachments: RockyAttachmentRecord[];
   skillCandidates: RockySkillCandidateRecord[];
+  skill: RockyOrchestrationSkill;
   protectionHints: string[];
   reuseSessionId?: string | null;
   timestamp: string;
@@ -117,6 +119,14 @@ function formatProtectionHints(hints: string[]): string {
   return hints.map((hint) => `- ${hint}`).join("\n");
 }
 
+function formatList(items: string[]): string {
+  if (items.length === 0) {
+    return "- 없음";
+  }
+
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
 function latestAssistantText(messages: AgentSessionMessage[]): string | null {
   const assistant = [...messages].reverse().find((message) => message.role === "assistant");
   const content = assistant?.content.trim();
@@ -127,42 +137,38 @@ function isCoreIntent(intent: RockyRoutingIntent): boolean {
   return intent === "conversation" || intent === "clarification";
 }
 
-function buildCorePrompt(input: RockyOrchestrationStartInput): string {
+function buildSkillPrompt(input: RockyOrchestrationStartInput): string {
   const mode =
-    input.dispatch.intent === "clarification"
-      ? "사용자의 요청이 아직 모호합니다. 실행을 시작하지 말고 필요한 확인 질문을 짧게 하세요."
-      : "사용자와 자연스럽게 대화하고, Rocky가 할 수 있는 일을 구체적으로 설명하세요.";
-
-  return [
-    "당신은 Rocky 홈 채팅의 코어 오케스트레이터입니다.",
-    "한국어로 짧고 실용적으로 답하세요.",
-    "",
-    "역할:",
-    "- 사용자의 질문에는 직접 답합니다.",
-    "- 실행이 필요한 작업이 보이면 어떤 담당 에이전트가 처리할 수 있는지 설명합니다.",
-    "- 모호한 요청은 바로 실행하지 말고 필요한 정보를 묻습니다.",
-    "- 파일 본문을 받지 못한 상태에서 파일 내용을 읽었다고 말하지 않습니다.",
-    "",
-    `현재 모드: ${mode}`,
-    "",
-    "사용자 메시지:",
-    input.message,
-  ].join("\n");
-}
-
-function buildOrchestrationPrompt(input: RockyOrchestrationStartInput): string {
-  if (isCoreIntent(input.dispatch.intent)) {
-    return buildCorePrompt(input);
-  }
+    input.skill.mode === "core"
+      ? input.dispatch.intent === "clarification"
+        ? "core clarification"
+        : "core conversation"
+      : "delegated execution";
 
   const domainLabel =
     input.domain === "nutrition-md" ? "영양제 MD 작업" : "일반 자료 작업";
 
   return [
-    "Rocky 홈 채팅에서 위임된 작업입니다.",
+    "Rocky skill execution request",
     "",
+    `Skill: ${input.skill.displayName}`,
+    `Skill ID: ${input.skill.id}`,
+    `Skill version: ${input.skill.version}`,
+    `Execution mode: ${mode}`,
     `작업 영역: ${domainLabel}`,
     `담당: ${input.worker.displayName}`,
+    "",
+    "스킬 설명:",
+    input.skill.description,
+    "",
+    "스킬 역량:",
+    formatList(input.skill.capabilities),
+    "",
+    "운영 규칙:",
+    formatList(input.skill.operatingRules),
+    "",
+    "Rocky 전달 계약:",
+    formatList(input.skill.handoffContract),
     "",
     "사용자 요청:",
     input.message,
@@ -176,11 +182,10 @@ function buildOrchestrationPrompt(input: RockyOrchestrationStartInput): string {
     "보호해서 다룰 항목:",
     formatProtectionHints(input.protectionHints),
     "",
-    "응답 지침:",
-    "- 사용자의 요청을 실제 작업으로 처리하세요.",
-    "- 첨부 파일 본문이 현재 작업공간에 없으면, 없는 파일을 읽었다고 가정하지 말고 필요한 파일을 요청하세요.",
-    "- 원가, 마진, 거래처, 고객 정보는 노출 범위를 조심해서 다루세요.",
-    "- 결과는 한국어로 간결하게 정리하고, 다음 액션이 필요하면 명확히 적으세요.",
+    "응답:",
+    "- 한국어로 답하세요.",
+    "- Rocky가 별도 가공 없이 사용자에게 전달할 수 있는 최종 답변을 작성하세요.",
+    "- 실행하지 못한 부분이 있으면 이유와 필요한 입력을 명확히 적으세요.",
   ].join("\n");
 }
 
@@ -226,7 +231,7 @@ export class RockyOrchestratorService {
           });
       const run = await this.sessionService.sendTurn({
         sessionId: session?.id ?? sessionId!,
-        prompt: buildOrchestrationPrompt(input),
+        prompt: buildSkillPrompt(input),
         triggerType: isCoreIntent(input.dispatch.intent) ? "interactive" : "manual_task",
       });
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { useAgentsQuery } from "../hooks";
 import { AgentGridView, AgentViewModeToggle, type ViewMode } from "../components/agent-grid-view";
+import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { Card } from "@/shared/ui/card";
 import { Separator } from "@/shared/ui/separator";
 
@@ -21,7 +22,7 @@ export function AgentsArchivedPage() {
     );
   }
 
-  const allAgents = agentsQuery.data ?? [];
+  const allAgents = filterUserManagedAgents(agentsQuery.data ?? []);
   const archived = allAgents.filter((a) => a.lifecycle === "archived");
 
   return (

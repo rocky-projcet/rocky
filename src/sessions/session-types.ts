@@ -146,6 +146,7 @@ export interface AgentSessionTurnInput
   runId?: string;
   reuseMessageId?: string;
   prompt: string;
+  extraSystemInstructions?: string[];
   triggerType?: AgentRunTriggerType;
   images?: string[];
   extraEnv?: NodeJS.ProcessEnv;

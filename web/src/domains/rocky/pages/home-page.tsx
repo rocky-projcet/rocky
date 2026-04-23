@@ -5,9 +5,7 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
-import { Link } from "react-router-dom";
 import {
-  ExternalLink,
   FileText,
   Paperclip,
   Send,
@@ -18,6 +16,7 @@ import {
 
 import {
   useCreateRockyChatMutation,
+  useRockyChatsQuery,
   useRockyChatQuery,
   useSendRockyMessageMutation,
 } from "@/domains/rocky/hooks";
@@ -136,22 +135,6 @@ function MessageStatus({
           <ShieldCheck />
           보호 항목 {protectionHintCount}개
         </Badge>
-      ) : null}
-      {orchestration?.agentId && orchestration.sessionId ? (
-        <Button
-          variant="outline"
-          size="xs"
-          render={
-            <Link
-              to={`/agents/${encodeURIComponent(orchestration.agentId!)}/sessions/${encodeURIComponent(
-                orchestration.sessionId
-              )}`}
-            />
-          }
-        >
-          세션 열기
-          <ExternalLink />
-        </Button>
       ) : null}
     </div>
   );
@@ -396,6 +379,7 @@ export function HomePage() {
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const { data: rockyChats } = useRockyChatsQuery();
   const createChatMutation = useCreateRockyChatMutation();
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
   const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
@@ -418,6 +402,14 @@ export function HomePage() {
       setChat(refreshedChat);
     }
   }, [refreshedChat]);
+
+  useEffect(() => {
+    if (chat || !rockyChats || rockyChats.length === 0) {
+      return;
+    }
+
+    setChat(rockyChats[0]);
+  }, [chat, rockyChats]);
 
   useEffect(() => {
     if (!chat?.id || !hasActiveOrchestration) {

@@ -72,6 +72,7 @@ export interface SessionServiceLike {
   sendTurn(input: {
     sessionId: string;
     prompt: string;
+    extraSystemInstructions?: string[];
     images?: string[];
     runtimeKind?: RuntimeKind;
     ollamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;

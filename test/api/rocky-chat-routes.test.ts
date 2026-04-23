@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
+import { ROCKY_AGENT_REQUEST_CONTEXT_DIR } from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
 
 import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type { RockyChatRecord } from "../../src/rocky-chat/rocky-chat-types.js";
@@ -134,13 +135,26 @@ function createRockyChatTestServer(stateRoot: string) {
   const agents: AgentRecord[] = [];
   const sessions: AgentSessionRecord[] = [];
   const runs: AgentRunRecord[] = [];
-  const sendTurnCalls: Array<{ sessionId: string; prompt: string }> = [];
+  const sendTurnCalls: Array<{
+    sessionId: string;
+    prompt: string;
+    extraSystemInstructions: string[];
+  }> = [];
 
   const server = createAgentEngineServer({
     stateRoot,
     agentService: {
       async createAgent(input) {
-        const agent = buildAgent(input ?? {});
+        const agentId = input?.id ?? "rocky-nutrition-md";
+        const agent = buildAgent({
+          ...(input ?? {}),
+          workspaceRoot:
+            input?.workspaceRoot ??
+            path.join(stateRoot, "agent-workspaces", agentId, "workspace"),
+          runtimeHome:
+            input?.runtimeHome ??
+            path.join(stateRoot, "agent-workspaces", agentId, "runtime-home"),
+        });
         agents.push(agent);
         return agent;
       },
@@ -217,6 +231,7 @@ function createRockyChatTestServer(stateRoot: string) {
         sendTurnCalls.push({
           sessionId: input.sessionId,
           prompt: input.prompt,
+          extraSystemInstructions: input.extraSystemInstructions ?? [],
         });
         const run = buildRun({
           id: `run-${runs.length + 1}`,
@@ -295,8 +310,28 @@ test("rocky chat detects nutrition MD requests, prepares a worker, and starts an
     assert.equal(sessions.length, 1);
     assert.equal(runs.length, 1);
     assert.equal(sendTurnCalls.length, 1);
-    assert.match(sendTurnCalls[0]?.prompt ?? "", /영양제 이벤트 엑셀/);
-    assert.match(sendTurnCalls[0]?.prompt ?? "", /원가\/마진 정보/);
+    assert.equal(
+      sendTurnCalls[0]?.prompt,
+      "영양제 이벤트 엑셀을 상품명 기준으로 묶고 원가와 마진은 보호해서 정리해줘."
+    );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
+      /Use the workspace-local skill `rocky\.nutrition-md`/
+    );
+    const nutritionSkill = await readFile(
+      path.join(agents[0]!.workspaceRoot, "skills", "rocky.nutrition-md", "SKILL.md"),
+      "utf8"
+    );
+    assert.match(nutritionSkill, /Skill ID: rocky\.nutrition-md/);
+    const nutritionContextPath =
+      sendTurnCalls[0]?.extraSystemInstructions[1]?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${chat.dispatches[0]!.id}.md`;
+    const nutritionContext = await readFile(
+      path.join(agents[0]!.workspaceRoot, nutritionContextPath),
+      "utf8"
+    );
+    assert.match(nutritionContext, /원가\/마진 정보/);
+    assert.match(nutritionContext, /상품명 표기 묶기/);
 
     const followUp = await server.inject({
       method: "POST",
@@ -356,7 +391,25 @@ test("rocky chat routes simple conversation through rocky core", async () => {
     assert.equal(sessions.length, 1);
     assert.equal(runs.length, 1);
     assert.equal(sendTurnCalls.length, 1);
-    assert.match(sendTurnCalls[0]?.prompt ?? "", /Skill ID: rocky\.core/);
+    assert.equal(sendTurnCalls[0]?.prompt, "안녕");
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
+      /Use the workspace-local skill `rocky\.core`/
+    );
+    const coreSkill = await readFile(
+      path.join(agents[0]!.workspaceRoot, "skills", "rocky.core", "SKILL.md"),
+      "utf8"
+    );
+    assert.match(coreSkill, /Skill ID: rocky\.core/);
+    assert.match(coreSkill, /사용자 요청은 현재 turn의 원문 user message를 그대로 사용합니다/);
+    const coreContextPath =
+      sendTurnCalls[0]?.extraSystemInstructions[1]?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${chat.dispatches[0]!.id}.md`;
+    const coreContext = await readFile(
+      path.join(agents[0]!.workspaceRoot, coreContextPath),
+      "utf8"
+    );
+    assert.match(coreContext, /첨부 메타데이터:\n- 없음/);
   } finally {
     await server.close();
   }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { AgentRecord } from "../agents/agent-types.js";
 import {
   listRockyChatPaths,
   readRockyChatRecord,
@@ -16,6 +17,11 @@ import {
   selectRockySkill,
   type RockyOrchestrationSkill,
 } from "./rocky-skill-registry.js";
+import {
+  buildRockyTurnSystemInstructions,
+  syncRockyAgentSkillWorkspace,
+  writeRockyTurnContextFile,
+} from "./rocky-agent-skill-workspace.js";
 import {
   RockyOrchestratorService,
   type RockyAgentServiceLike,
@@ -300,7 +306,7 @@ export class RockyChatService {
     rockyMessage: RockyMessageRecord;
   }> {
     if (!isTaskIntent(input.intent)) {
-      const worker = await this.ensureSkillWorker({
+      const { agent, worker } = await this.ensureSkillWorker({
         skill: input.skill,
         reason: input.routingReason,
         timestamp: input.timestamp,
@@ -317,6 +323,22 @@ export class RockyChatService {
         skillCandidates: [],
         timestamp: input.timestamp,
       });
+      const extraSystemInstructions = agent
+        ? buildRockyTurnSystemInstructions({
+            skill: input.skill,
+            contextRelativePath: await writeRockyTurnContextFile({
+              agent,
+              chatId: input.chatId,
+              dispatch,
+              domain: input.domain,
+              skill: input.skill,
+              attachments: input.attachments,
+              skillCandidates: [],
+              protectionHints: dispatch.protectionHints,
+              timestamp: input.timestamp,
+            }),
+          })
+        : [];
       const orchestration = await this.orchestrator.start({
         chatId: input.chatId,
         domain: input.domain,
@@ -329,6 +351,7 @@ export class RockyChatService {
         protectionHints: dispatch.protectionHints,
         reuseSessionId: input.reuseCoreSessionId,
         timestamp: input.timestamp,
+        extraSystemInstructions,
       });
       const startedDispatch: RockyDispatchRecord = {
         ...dispatch,
@@ -352,7 +375,7 @@ export class RockyChatService {
       };
     }
 
-    const worker = await this.ensureSkillWorker({
+    const { agent, worker } = await this.ensureSkillWorker({
       skill: input.skill,
       reason: input.routingReason,
       timestamp: input.timestamp,
@@ -376,6 +399,22 @@ export class RockyChatService {
       skillCandidates,
       timestamp: input.timestamp,
     });
+    const extraSystemInstructions = agent
+      ? buildRockyTurnSystemInstructions({
+          skill: input.skill,
+          contextRelativePath: await writeRockyTurnContextFile({
+            agent,
+            chatId: input.chatId,
+            dispatch,
+            domain: input.domain,
+            skill: input.skill,
+            attachments: input.attachments,
+            skillCandidates,
+            protectionHints: dispatch.protectionHints,
+            timestamp: input.timestamp,
+          }),
+        })
+      : [];
     const orchestration = await this.orchestrator.start({
       chatId: input.chatId,
       domain: input.domain,
@@ -387,6 +426,7 @@ export class RockyChatService {
       skill: input.skill,
       protectionHints: dispatch.protectionHints,
       timestamp: input.timestamp,
+      extraSystemInstructions,
     });
     const startedDispatch: RockyDispatchRecord = {
       ...dispatch,
@@ -536,12 +576,13 @@ export class RockyChatService {
     skill: RockyOrchestrationSkill;
     reason: string;
     timestamp: string;
-  }): Promise<RockyWorkerRecord> {
+  }): Promise<{ agent: AgentRecord | null; worker: RockyWorkerRecord }> {
     const paths = resolveRockyWorkerPaths({
       stateRoot: this.stateRoot,
       workerId: input.skill.worker.id,
     });
-    const agentId = await this.ensureSkillAgent(input.skill);
+    const agent = await this.ensureSkillAgent(input.skill);
+    const agentId = agent?.id ?? null;
     const existing = await readRockyWorkerRecord(paths);
     if (existing) {
       const worker: RockyWorkerRecord = {
@@ -555,7 +596,7 @@ export class RockyChatService {
         updatedAt: input.timestamp,
       };
       await writeRockyWorkerRecord(paths, worker);
-      return worker;
+      return { agent, worker };
     }
 
     const worker: RockyWorkerRecord = {
@@ -570,10 +611,12 @@ export class RockyChatService {
       updatedAt: input.timestamp,
     };
     await writeRockyWorkerRecord(paths, worker);
-    return worker;
+    return { agent, worker };
   }
 
-  private async ensureSkillAgent(skill: RockyOrchestrationSkill): Promise<string | null> {
+  private async ensureSkillAgent(
+    skill: RockyOrchestrationSkill
+  ): Promise<AgentRecord | null> {
     if (!this.agentService) {
       return null;
     }
@@ -581,7 +624,11 @@ export class RockyChatService {
     const agents = await this.agentService.listAgents();
     const existing = agents.find((agent) => agent.id === skill.agent.id);
     if (existing) {
-      return existing.id;
+      await syncRockyAgentSkillWorkspace({
+        agent: existing,
+        skill,
+      });
+      return existing;
     }
 
     const agent = await this.agentService.createAgent({
@@ -590,7 +637,11 @@ export class RockyChatService {
       description: skill.agent.description,
       defaultRuntime: "codex-cli",
     });
-    return agent.id;
+    await syncRockyAgentSkillWorkspace({
+      agent,
+      skill,
+    });
+    return agent;
   }
 
   private findReusableCoreSessionId(chat: RockyChatRecord): string | null {

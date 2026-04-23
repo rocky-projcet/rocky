@@ -411,10 +411,11 @@ export function runtimeSessionOverridesFromRecord(
 
 export function buildRuntimePrompt(
   session: AgentSessionRecord,
-  prompt: string
+  prompt: string,
+  extraSystemInstructions: string[] = []
 ): string {
   return [
-    buildRuntimeSystemPrompt(session, prompt),
+    buildRuntimeSystemPrompt(session, prompt, extraSystemInstructions),
     USER_REQUEST_OPEN,
     prompt,
     USER_REQUEST_CLOSE,
@@ -423,7 +424,8 @@ export function buildRuntimePrompt(
 
 export function buildRuntimeSystemPrompt(
   session: AgentSessionRecord,
-  prompt = ""
+  prompt = "",
+  extraSystemInstructions: string[] = []
 ): string {
   const sandbox = session.runtimeConfig.sandbox;
   const shellExecutionHint = detectShellExecutionHint(prompt);
@@ -462,6 +464,13 @@ export function buildRuntimeSystemPrompt(
         "- If the command fails, report only the exact stderr and exit status produced by that command_execution step.",
         "</required_command_execution>",
       ]
+      : []),
+    ...(extraSystemInstructions.length > 0
+      ? [
+          "<turn_instructions>",
+          ...extraSystemInstructions.map((instruction) => `- ${instruction}`),
+          "</turn_instructions>",
+        ]
       : []),
     "<runtime_rules>",
     ...runtimeRules,
@@ -606,15 +615,21 @@ export function buildOllamaConversationMessages({
   session,
   transcript,
   prompt,
+  extraSystemInstructions = [],
 }: {
   session: AgentSessionRecord;
   transcript: AgentSessionMessage[];
   prompt: string;
+  extraSystemInstructions?: string[];
 }): RuntimeConversationMessage[] {
   const messages: RuntimeConversationMessage[] = [
     {
       role: "system",
-      content: buildRuntimeSystemPrompt(session, prompt),
+      content: buildRuntimeSystemPrompt(
+        session,
+        prompt,
+        extraSystemInstructions
+      ),
     },
   ];
 
@@ -1237,7 +1252,11 @@ export function buildRuntimeRequest({
   return {
     sessionId: session.id,
     runId,
-    prompt: buildRuntimePrompt(session, input.prompt),
+    prompt: buildRuntimePrompt(
+      session,
+      input.prompt,
+      input.extraSystemInstructions ?? []
+    ),
     dangerouslyBypassApprovalsAndSandbox: requestedBypass || browserAutomationBypass,
     additionalWritableDirs: input.additionalWritableDirs,
     configOverrides: input.configOverrides,

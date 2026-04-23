@@ -35,6 +35,7 @@ export interface RockySessionServiceLike {
     sessionId: string;
     prompt: string;
     triggerType?: "interactive" | "manual_task" | "scheduled" | "event";
+    extraSystemInstructions?: string[];
   }): Promise<AgentRunRecord>;
   getRun?(runId: string): Promise<AgentRunRecord>;
   getTranscript?(sessionId: string): Promise<AgentSessionMessage[]>;
@@ -58,6 +59,7 @@ export interface RockyOrchestrationStartInput {
   protectionHints: string[];
   reuseSessionId?: string | null;
   timestamp: string;
+  extraSystemInstructions?: string[];
 }
 
 function runStatusToOrchestrationStatus(
@@ -83,50 +85,6 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-function formatAttachments(attachments: RockyAttachmentRecord[]): string {
-  if (attachments.length === 0) {
-    return "- 없음";
-  }
-
-  return attachments
-    .map((attachment) => {
-      const size =
-        typeof attachment.size === "number" ? `${attachment.size} bytes` : "size unknown";
-      const contentType = attachment.contentType ?? "content type unknown";
-      return `- ${attachment.name} (${contentType}, ${size})`;
-    })
-    .join("\n");
-}
-
-function formatSkillCandidates(candidates: RockySkillCandidateRecord[]): string {
-  if (candidates.length === 0) {
-    return "- 없음";
-  }
-
-  return candidates
-    .map(
-      (candidate) =>
-        `- ${candidate.title}: ${candidate.description} (trigger: ${candidate.trigger})`
-    )
-    .join("\n");
-}
-
-function formatProtectionHints(hints: string[]): string {
-  if (hints.length === 0) {
-    return "- 없음";
-  }
-
-  return hints.map((hint) => `- ${hint}`).join("\n");
-}
-
-function formatList(items: string[]): string {
-  if (items.length === 0) {
-    return "- 없음";
-  }
-
-  return items.map((item) => `- ${item}`).join("\n");
-}
-
 function latestAssistantText(messages: AgentSessionMessage[]): string | null {
   const assistant = [...messages].reverse().find((message) => message.role === "assistant");
   const content = assistant?.content.trim();
@@ -135,58 +93,6 @@ function latestAssistantText(messages: AgentSessionMessage[]): string | null {
 
 function isCoreIntent(intent: RockyRoutingIntent): boolean {
   return intent === "conversation" || intent === "clarification";
-}
-
-function buildSkillPrompt(input: RockyOrchestrationStartInput): string {
-  const mode =
-    input.skill.mode === "core"
-      ? input.dispatch.intent === "clarification"
-        ? "core clarification"
-        : "core conversation"
-      : "delegated execution";
-
-  const domainLabel =
-    input.domain === "nutrition-md" ? "영양제 MD 작업" : "일반 자료 작업";
-
-  return [
-    "Rocky skill execution request",
-    "",
-    `Skill: ${input.skill.displayName}`,
-    `Skill ID: ${input.skill.id}`,
-    `Skill version: ${input.skill.version}`,
-    `Execution mode: ${mode}`,
-    `작업 영역: ${domainLabel}`,
-    `담당: ${input.worker.displayName}`,
-    "",
-    "스킬 설명:",
-    input.skill.description,
-    "",
-    "스킬 역량:",
-    formatList(input.skill.capabilities),
-    "",
-    "운영 규칙:",
-    formatList(input.skill.operatingRules),
-    "",
-    "Rocky 전달 계약:",
-    formatList(input.skill.handoffContract),
-    "",
-    "사용자 요청:",
-    input.message,
-    "",
-    "첨부 메타데이터:",
-    formatAttachments(input.attachments),
-    "",
-    "반복 기준 후보:",
-    formatSkillCandidates(input.skillCandidates),
-    "",
-    "보호해서 다룰 항목:",
-    formatProtectionHints(input.protectionHints),
-    "",
-    "응답:",
-    "- 한국어로 답하세요.",
-    "- Rocky가 별도 가공 없이 사용자에게 전달할 수 있는 최종 답변을 작성하세요.",
-    "- 실행하지 못한 부분이 있으면 이유와 필요한 입력을 명확히 적으세요.",
-  ].join("\n");
 }
 
 export class RockyOrchestratorService {
@@ -231,8 +137,9 @@ export class RockyOrchestratorService {
           });
       const run = await this.sessionService.sendTurn({
         sessionId: session?.id ?? sessionId!,
-        prompt: buildSkillPrompt(input),
+        prompt: input.message,
         triggerType: isCoreIntent(input.dispatch.intent) ? "interactive" : "manual_task",
+        extraSystemInstructions: input.extraSystemInstructions,
       });
 
       return {

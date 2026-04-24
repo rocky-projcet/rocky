@@ -37,6 +37,7 @@ import type {
 } from "@/domains/rocky/types";
 
 const LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS = 1500;
+const PPT_CONTENT_TYPE = "application/vnd.ms-powerpoint";
 const PPTX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
@@ -46,6 +47,7 @@ type RockyPreviewPanelSource = {
   downloadHref: string;
   kind: "html" | "powerpoint";
   name: string;
+  previewHref?: string | null;
 };
 
 function formatFileSize(size: number): string {
@@ -92,7 +94,12 @@ function isPowerPointFile(name: string, contentType: string): boolean {
   const normalizedType = baseContentType(contentType);
   const normalizedName = name.toLowerCase();
 
-  return normalizedType === PPTX_CONTENT_TYPE || normalizedName.endsWith(".pptx");
+  return (
+    normalizedType === PPT_CONTENT_TYPE ||
+    normalizedType === PPTX_CONTENT_TYPE ||
+    normalizedName.endsWith(".ppt") ||
+    normalizedName.endsWith(".pptx")
+  );
 }
 
 function isPowerPointArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
@@ -121,6 +128,9 @@ function buildArtifactPreviewPanelSource(
       downloadHref,
       kind: "powerpoint",
       name: artifact.name,
+      previewHref: artifact.previewUrl
+        ? agentEngineClient.resolveApiPath(artifact.previewUrl)
+        : null,
     };
   }
 
@@ -266,6 +276,9 @@ async function openRockyWorkspacePath(
         downloadHref: agentEngineClient.resolveApiPath(preview.downloadUrl),
         kind: previewPanelKind,
         name: preview.name,
+        previewHref: preview.inlinePreviewUrl
+          ? agentEngineClient.resolveApiPath(preview.inlinePreviewUrl)
+          : null,
       });
       return;
     }
@@ -1027,6 +1040,7 @@ function ArtifactPreviewPanel({
               contentType={source.contentType}
               downloadHref={source.downloadHref}
               name={source.name}
+              previewHref={source.previewHref}
             />
           </div>
         ) : state.kind === "loading" ? (

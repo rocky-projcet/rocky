@@ -19,6 +19,10 @@ const INLINE_PREVIEW_CONTENT_TYPES = new Set([
   "video/quicktime",
   "video/webm",
 ]);
+const PRESENTATION_PREVIEW_CONTENT_TYPES = new Set([
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
 
 export function baseContentType(contentType: string): string {
   return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
@@ -218,6 +222,14 @@ export function isInlinePreviewAllowed(contentType: string): boolean {
   return INLINE_PREVIEW_CONTENT_TYPES.has(baseContentType(contentType));
 }
 
+export function isPresentationPreviewAllowed(contentType: string): boolean {
+  return PRESENTATION_PREVIEW_CONTENT_TYPES.has(baseContentType(contentType));
+}
+
+export function isPreviewAllowed(contentType: string): boolean {
+  return isInlinePreviewAllowed(contentType) || isPresentationPreviewAllowed(contentType);
+}
+
 export function buildArtifactViewMetadata({
   runId,
   role,
@@ -242,7 +254,7 @@ export function buildArtifactViewMetadata({
     name,
     contentType,
   });
-  const previewable = isInlinePreviewAllowed(contentType);
+  const previewable = isPreviewAllowed(contentType);
 
   return {
     name,

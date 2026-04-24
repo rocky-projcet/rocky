@@ -10,7 +10,9 @@ import {
   buildArtifactViewMetadata,
   contentTypeForArtifactPath,
   isInlinePreviewAllowed,
+  isPresentationPreviewAllowed,
 } from "../../runtime/runtime-artifact-metadata.js";
+import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 function ensureArtifactPathInRun(run: AgentRunRecord, artifactPath: string): string {
   const resolvedArtifactPath = path.resolve(artifactPath);
@@ -111,6 +113,20 @@ export async function sendArtifactPreview(
 
   const artifactPath = ensureArtifactPathInRun(run, artifactRef.path);
   const contentType = contentTypeForArtifactPath(artifactPath);
+  if (isPresentationPreviewAllowed(contentType)) {
+    const preview = await convertPresentationToPdfPreview(artifactPath);
+
+    reply.code(200);
+    reply.header("Content-Type", "application/pdf");
+    reply.header(
+      "Content-Disposition",
+      `inline; filename="${path.basename(preview.path)}"`
+    );
+    reply.header("Content-Length", String(preview.body.byteLength));
+    reply.send(preview.body);
+    return;
+  }
+
   if (!isInlinePreviewAllowed(contentType)) {
     const error = new Error(
       `Artifact type does not support inline preview: ${artifactRole}`

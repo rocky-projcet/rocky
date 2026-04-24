@@ -22,7 +22,10 @@ import {
   baseContentType,
   contentTypeForArtifactPath,
   isInlinePreviewAllowed,
+  isPresentationPreviewAllowed,
+  isPreviewAllowed,
 } from "../../runtime/runtime-artifact-metadata.js";
+import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 const MAX_TEXT_PREVIEW_BYTES = 64 * 1024;
 const WORKSPACE_UPLOADS_DIRECTORY = "uploads";
@@ -254,7 +257,7 @@ function hasInlineWorkspacePreview(
       previewKind === "audio" ||
       previewKind === "video" ||
       previewKind === "document") &&
-    isInlinePreviewAllowed(contentType)
+    isPreviewAllowed(contentType)
   );
 }
 
@@ -535,6 +538,20 @@ export async function sendWorkspaceFilePreview(
 
   const contentType = contentTypeForArtifactPath(absolutePath);
   const normalizedType = baseContentType(contentType);
+  if (isPresentationPreviewAllowed(contentType)) {
+    const preview = await convertPresentationToPdfPreview(absolutePath);
+
+    reply.code(200);
+    reply.header("Content-Type", "application/pdf");
+    reply.header(
+      "Content-Disposition",
+      `inline; filename="${path.basename(preview.path)}"`
+    );
+    reply.header("Content-Length", String(preview.body.byteLength));
+    reply.send(preview.body);
+    return;
+  }
+
   if (!isInlinePreviewAllowed(contentType)) {
     const error = new Error(
       `Workspace file type does not support inline preview: ${relativePath || path.basename(absolutePath)}`

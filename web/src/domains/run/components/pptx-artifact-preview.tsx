@@ -1278,6 +1278,10 @@ function isPptxFile(name: string, contentType?: string | null): boolean {
   );
 }
 
+function baseContentType(value: string): string {
+  return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
 function clampPercent(value: number): number {
   return Math.max(-10, Math.min(110, value));
 }
@@ -1335,6 +1339,7 @@ export function PptxArtifactPreview(props: {
   contentType?: string | null;
   downloadHref: string;
   name: string;
+  previewHref?: string | null;
 }) {
   const [state, setState] = React.useState<
     | { kind: "loading" }
@@ -1342,7 +1347,59 @@ export function PptxArtifactPreview(props: {
     | { kind: "error"; message: string }
     | { kind: "unsupported" }
   >(isPptxFile(props.name, props.contentType) ? { kind: "loading" } : { kind: "unsupported" });
+  const [pdfPreviewState, setPdfPreviewState] = React.useState<
+    | { kind: "disabled" }
+    | { kind: "loading" }
+    | { kind: "ready"; url: string }
+    | { kind: "error"; message: string }
+  >(props.previewHref ? { kind: "loading" } : { kind: "disabled" });
   const [slideIndex, setSlideIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!props.previewHref) {
+      setPdfPreviewState({ kind: "disabled" });
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+
+    setPdfPreviewState({ kind: "loading" });
+    fetch(props.previewHref, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+        if (baseContentType(contentType) !== "application/pdf") {
+          throw new Error(`PDF 미리보기 응답이 아닙니다: ${contentType || "unknown"}`);
+        }
+
+        objectUrl = URL.createObjectURL(await response.blob());
+        setPdfPreviewState({ kind: "ready", url: objectUrl });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setPdfPreviewState({
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "PDF 변환 미리보기를 불러오지 못했습니다.",
+        });
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [props.previewHref]);
 
   React.useEffect(() => {
     if (!isPptxFile(props.name, props.contentType)) {
@@ -1386,10 +1443,38 @@ export function PptxArtifactPreview(props: {
     };
   }, [props.contentType, props.downloadHref, props.name]);
 
+  if (pdfPreviewState.kind === "loading") {
+    return (
+      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md text-muted-foreground">
+        PPT/PPTX를 PDF 미리보기로 변환하는 중입니다.
+      </div>
+    );
+  }
+
+  if (pdfPreviewState.kind === "ready") {
+    return (
+      <div className="h-full min-h-[28rem] overflow-hidden rounded-2xl border border-border bg-card">
+        <object
+          data={pdfPreviewState.url}
+          type="application/pdf"
+          className="h-full min-h-[28rem] w-full"
+          aria-label={`${props.name} PDF 변환 미리보기`}
+        >
+          <div className="flex h-full min-h-[28rem] items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+            브라우저에서 PDF 인라인 미리보기를 지원하지 않습니다. 다운로드를 사용할 수 있습니다.
+          </div>
+        </object>
+      </div>
+    );
+  }
+
   if (state.kind === "unsupported") {
     return (
       <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md leading-6 text-muted-foreground">
-        구형 `.ppt` 파일은 브라우저 내장 뷰어로 안전하게 렌더링할 수 없습니다. `.pptx`로 저장하면 이 화면에서 바로 볼 수 있습니다.
+        구형 `.ppt` 파일은 브라우저 내장 뷰어로 안전하게 렌더링할 수 없습니다.
+        {pdfPreviewState.kind === "error"
+          ? ` PDF 변환도 실패했습니다. ${pdfPreviewState.message}`
+          : " PDF 변환 미리보기를 사용할 수 있으면 이 화면에서 바로 볼 수 있습니다."}
       </div>
     );
   }

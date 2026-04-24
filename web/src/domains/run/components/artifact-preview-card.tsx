@@ -80,8 +80,10 @@ function isPowerPointPreviewSupported(artifact: ArtifactLike): boolean {
   const name = artifact.name.toLowerCase();
 
   return (
+    contentType === "application/vnd.ms-powerpoint" ||
     contentType ===
       "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    name.endsWith(".ppt") ||
     name.endsWith(".pptx")
   );
 }
@@ -475,6 +477,7 @@ export function ArtifactPreviewCard(props: {
                     contentType={props.artifact.contentType}
                     downloadHref={downloadHref}
                     name={props.artifact.name}
+                    previewHref={previewHref}
                   />
                 ) : null}
 
@@ -605,6 +608,7 @@ export function ArtifactPreviewCard(props: {
                   contentType={props.artifact.contentType}
                   downloadHref={downloadHref}
                   name={props.artifact.name}
+                  previewHref={previewHref}
                 />
               ) : null}
             </div>

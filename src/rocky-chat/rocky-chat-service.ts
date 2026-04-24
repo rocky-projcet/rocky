@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import {
+  deleteRockyChatRecord,
   listRockyChatPaths,
   readRockyChatRecord,
   readRockyWorkerRecord,
@@ -14,6 +15,7 @@ import {
   extractRockyProtectionHints,
   extractRockySkillCandidates,
   getRockySkillByWorkerId,
+  requestRequiresChartArtifact,
   selectRockySkill,
   type RockyOrchestrationSkill,
 } from "./rocky-skill-registry.js";
@@ -85,11 +87,16 @@ function isCoreIntent(intent: RockyRoutingIntent): boolean {
   return intent === "conversation" || intent === "clarification";
 }
 
+function isUnknownSessionError(error: unknown): boolean {
+  return error instanceof Error && /^Unknown session: /u.test(error.message);
+}
+
 export class RockyChatService {
   private readonly stateRoot: string | undefined;
   private readonly now: () => string;
   private readonly idGenerator: () => string;
   private readonly agentService: RockyAgentServiceLike | undefined;
+  private readonly sessionService: RockySessionServiceLike | undefined;
   private readonly orchestrator: RockyOrchestratorService;
 
   constructor(options: RockyChatServiceOptions = {}) {
@@ -97,6 +104,7 @@ export class RockyChatService {
     this.now = options.now ?? (() => new Date().toISOString());
     this.idGenerator = options.idGenerator ?? randomUUID;
     this.agentService = options.agentService;
+    this.sessionService = options.sessionService;
     this.orchestrator = new RockyOrchestratorService({
       sessionService: options.sessionService,
       now: this.now,
@@ -246,6 +254,25 @@ export class RockyChatService {
     return chat;
   }
 
+  async deleteChat(chatId: string): Promise<void> {
+    const chat = await this.requireChat(chatId);
+    const sessionIds = [...new Set(
+      chat.dispatches.flatMap((dispatch) =>
+        dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
+      )
+    )];
+
+    await Promise.all(
+      sessionIds.map((sessionId) => this.deleteSessionIfPresent(sessionId))
+    );
+    await deleteRockyChatRecord(
+      resolveRockyChatPaths({
+        stateRoot: this.stateRoot,
+        chatId,
+      })
+    );
+  }
+
   private normalizeAttachments(
     attachments: RockyAttachmentInput[],
     addedAt: string
@@ -323,22 +350,17 @@ export class RockyChatService {
         skillCandidates: [],
         timestamp: input.timestamp,
       });
-      const extraSystemInstructions = agent
-        ? buildRockyTurnSystemInstructions({
-            skill: input.skill,
-            contextRelativePath: await writeRockyTurnContextFile({
-              agent,
-              chatId: input.chatId,
-              dispatch,
-              domain: input.domain,
-              skill: input.skill,
-              attachments: input.attachments,
-              skillCandidates: [],
-              protectionHints: dispatch.protectionHints,
-              timestamp: input.timestamp,
-            }),
-          })
-        : [];
+      const extraSystemInstructions = await this.buildExtraSystemInstructions({
+        agent,
+        chatId: input.chatId,
+        dispatch,
+        domain: input.domain,
+        skill: input.skill,
+        message: input.message,
+        attachments: input.attachments,
+        skillCandidates: [],
+        timestamp: input.timestamp,
+      });
       const orchestration = await this.orchestrator.start({
         chatId: input.chatId,
         domain: input.domain,
@@ -399,22 +421,17 @@ export class RockyChatService {
       skillCandidates,
       timestamp: input.timestamp,
     });
-    const extraSystemInstructions = agent
-      ? buildRockyTurnSystemInstructions({
-          skill: input.skill,
-          contextRelativePath: await writeRockyTurnContextFile({
-            agent,
-            chatId: input.chatId,
-            dispatch,
-            domain: input.domain,
-            skill: input.skill,
-            attachments: input.attachments,
-            skillCandidates,
-            protectionHints: dispatch.protectionHints,
-            timestamp: input.timestamp,
-          }),
-        })
-      : [];
+    const extraSystemInstructions = await this.buildExtraSystemInstructions({
+      agent,
+      chatId: input.chatId,
+      dispatch,
+      domain: input.domain,
+      skill: input.skill,
+      message: input.message,
+      attachments: input.attachments,
+      skillCandidates,
+      timestamp: input.timestamp,
+    });
     const orchestration = await this.orchestrator.start({
       chatId: input.chatId,
       domain: input.domain,
@@ -450,6 +467,66 @@ export class RockyChatService {
         timestamp: input.timestamp,
       }),
     };
+  }
+
+  private async buildExtraSystemInstructions(input: {
+    agent: AgentRecord | null;
+    chatId: string;
+    dispatch: RockyDispatchRecord;
+    domain: RockyChatDomain;
+    skill: RockyOrchestrationSkill;
+    message: string;
+    attachments: RockyAttachmentRecord[];
+    skillCandidates: RockySkillCandidateRecord[];
+    timestamp: string;
+  }): Promise<string[]> {
+    if (!input.agent) {
+      return [];
+    }
+
+    const extraSystemInstructions = buildRockyTurnSystemInstructions({
+      skill: input.skill,
+      contextRelativePath: await writeRockyTurnContextFile({
+        agent: input.agent,
+        chatId: input.chatId,
+        dispatch: input.dispatch,
+        domain: input.domain,
+        skill: input.skill,
+        attachments: input.attachments,
+        skillCandidates: input.skillCandidates,
+        protectionHints: input.dispatch.protectionHints,
+        timestamp: input.timestamp,
+      }),
+    });
+
+    if (requestRequiresChartArtifact(input.skill, input.message, input.attachments)) {
+      extraSystemInstructions.push(
+        "This turn requires at least one Rocky-previewable chart JSON artifact before the final answer. Save a JSON artifact whose filename includes `chart` or `graph` and make sure it contains real plotted data.",
+        "Do not substitute ASCII charts, unicode sparklines, or fenced-code diagrams in the Markdown body. If you cannot produce a data-backed chart artifact, state that clearly instead of faking a chart."
+      );
+    }
+
+    return extraSystemInstructions;
+  }
+
+  private async deleteSessionIfPresent(sessionId: string): Promise<void> {
+    if (!this.sessionService) {
+      return;
+    }
+
+    try {
+      if (this.sessionService.stopSessionRuns) {
+        await this.sessionService.stopSessionRuns(sessionId);
+      }
+      if (this.sessionService.deleteSession) {
+        await this.sessionService.deleteSession(sessionId);
+      }
+    } catch (error) {
+      if (isUnknownSessionError(error)) {
+        return;
+      }
+      throw error;
+    }
   }
 
   private buildTaskRockyMessage(input: {

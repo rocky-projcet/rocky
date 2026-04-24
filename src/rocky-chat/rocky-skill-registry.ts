@@ -86,6 +86,28 @@ function requestText(message: string, attachments: RockyAttachmentRecord[]): str
   return `${message} ${attachmentText(attachments)}`;
 }
 
+const VISUAL_REPORT_REQUIRED_CHART_SIGNALS = [
+  "그래프",
+  "차트",
+  "시각화",
+  "plot",
+  "chart",
+  "graph",
+  "trend",
+  "추이",
+  "시계열",
+  "라인 차트",
+  "선 그래프",
+  "bar chart",
+  "line chart",
+  "area chart",
+  "주가",
+  "종가",
+  "주식",
+  "캔들",
+  "sparkline",
+];
+
 function hasExplicitAttachmentTask(
   message: string,
   attachments: RockyAttachmentRecord[]
@@ -205,12 +227,15 @@ export const ROCKY_ORCHESTRATION_SKILLS: RockyOrchestrationSkill[] = [
       "구조화된 데이터가 있으면 Python으로 집계나 전처리를 수행해도 됩니다.",
       "차트가 필요할 때는 파일명에 chart 또는 graph를 포함한 JSON 아티팩트를 저장하세요. 예: sales-trend-chart.json.",
       '차트 JSON은 {"kind":"line"|"bar"|"area","title":string|null,"xLabel":string|null,"yLabel":string|null,"series":[{"name":string|null,"points":[{"x":string|number,"y":number}]}]} 형식을 우선 사용하세요.',
+      "사용자가 그래프나 차트를 요청했다면 ASCII 그래프, 유니코드 스파크라인, 코드 블록 도식으로 대체하지 마세요.",
+      "그래프나 차트 요청이라면 최종 답변 전에 반드시 Rocky 미리보기가 가능한 chart JSON 아티팩트를 남기세요.",
       "충분한 수치 근거가 없으면 차트를 억지로 만들지 말고 Markdown 리포트만 작성하세요.",
       "없는 파일 본문을 읽었다고 가정하지 않습니다.",
     ],
     handoffContract: [
       "최종 답변은 Rocky가 그대로 전달할 수 있는 Markdown 리포트로 작성합니다.",
       "차트를 만들었다면 본문에서 차트 해석과 핵심 수치를 함께 설명합니다.",
+      "차트 요청에서는 본문 안에 ASCII 차트를 다시 그리지 말고, 생성한 차트 artifact의 해석만 적습니다.",
       "차트를 만들지 못했다면 이유와 필요한 데이터 형식을 분명히 적습니다.",
     ],
     candidateRules: [
@@ -493,6 +518,18 @@ function skillMatchesTask(
     hasExplicitAttachmentTask(message, attachments) ||
     includesAny(requestText(message, attachments), skill.taskSignals)
   );
+}
+
+export function requestRequiresChartArtifact(
+  skill: RockyOrchestrationSkill,
+  message: string,
+  attachments: RockyAttachmentRecord[]
+): boolean {
+  if (skill.id !== "rocky.visual-report") {
+    return false;
+  }
+
+  return includesAny(message, VISUAL_REPORT_REQUIRED_CHART_SIGNALS);
 }
 
 export function selectRockySkill(input: {

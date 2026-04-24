@@ -39,6 +39,8 @@ export interface RockySessionServiceLike {
   }): Promise<AgentRunRecord>;
   getRun?(runId: string): Promise<AgentRunRecord>;
   getTranscript?(sessionId: string): Promise<AgentSessionMessage[]>;
+  deleteSession?(sessionId: string): Promise<void>;
+  stopSessionRuns?(sessionId: string): Promise<string[]>;
 }
 
 export interface RockyOrchestratorServiceOptions {

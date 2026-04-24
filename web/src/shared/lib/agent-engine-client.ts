@@ -1263,6 +1263,15 @@ export class AgentEngineClient {
     );
   }
 
+  async deleteRockyChat(chatId: string): Promise<void> {
+    await this.request<Record<string, never> | null>(
+      `/rocky/chats/${encodeURIComponent(chatId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
   listAgentMessengerConnections(
     agentId: string
   ): Promise<AgentMessengerSlotsResponse> {

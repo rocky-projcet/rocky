@@ -1,5 +1,5 @@
 import path from "node:path";
-import { access, mkdir, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 
 import { readJsonFile, serializeJson } from "../sessions/session-store.js";
@@ -89,6 +89,15 @@ export async function readRockyChatRecord(
   }
 
   return readJsonFile<RockyChatRecord>(paths.chatPath);
+}
+
+export async function deleteRockyChatRecord(
+  paths: RockyChatPaths
+): Promise<void> {
+  await rm(paths.chatRoot, {
+    recursive: true,
+    force: false,
+  });
 }
 
 export async function listRockyChatPaths(

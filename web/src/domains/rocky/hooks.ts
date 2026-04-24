@@ -57,3 +57,20 @@ export function useSendRockyMessageMutation(chatId: string | null) {
     },
   });
 }
+
+export function useDeleteRockyChatMutation(chatId: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => {
+      if (!chatId) {
+        throw new Error("Rocky chat id is required.");
+      }
+
+      return agentEngineClient.deleteRockyChat(chatId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats });
+    },
+  });
+}

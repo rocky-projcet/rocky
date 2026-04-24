@@ -102,7 +102,12 @@ function RockyAgentCard(props: {
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" render={<Link to={`/agents/${props.agent.id}`} />}>
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={<Link to={`/agents/${props.agent.id}`} />}
+            >
               상세 보기
               <ExternalLink className="size-4" />
             </Button>
@@ -110,6 +115,7 @@ function RockyAgentCard(props: {
               <Button
                 variant="ghost"
                 size="sm"
+                nativeButton={false}
                 render={<Link to={`/agents/${props.agent.id}/sessions/${latestSession.id}`} />}
               >
                 최근 세션

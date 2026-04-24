@@ -135,11 +135,13 @@ function createRockyChatTestServer(stateRoot: string) {
   const agents: AgentRecord[] = [];
   const sessions: AgentSessionRecord[] = [];
   const runs: AgentRunRecord[] = [];
+  const deletedSessionIds: string[] = [];
   const sendTurnCalls: Array<{
     sessionId: string;
     prompt: string;
     extraSystemInstructions: string[];
   }> = [];
+  const stoppedSessionIds: string[] = [];
 
   const server = createAgentEngineServer({
     stateRoot,
@@ -219,8 +221,30 @@ function createRockyChatTestServer(stateRoot: string) {
           } satisfies AgentSessionMessage,
         ];
       },
-      async deleteSession() {},
-      async stopSessionRuns() {
+      async deleteSession(sessionId) {
+        deletedSessionIds.push(sessionId);
+        const sessionIndex = sessions.findIndex((entry) => entry.id === sessionId);
+        if (sessionIndex >= 0) {
+          sessions.splice(sessionIndex, 1);
+        }
+        for (let index = runs.length - 1; index >= 0; index -= 1) {
+          if (runs[index]?.sessionId === sessionId) {
+            runs.splice(index, 1);
+          }
+        }
+      },
+      async stopSessionRuns(sessionId) {
+        stoppedSessionIds.push(sessionId);
+        runs.forEach((run, index) => {
+          if (run.sessionId === sessionId && run.status === "running") {
+            runs[index] = {
+              ...run,
+              status: "cancelled",
+              endedAt: "2026-04-21T00:00:30.000Z",
+              summary: run.summary ?? "cancelled",
+            };
+          }
+        });
         return [];
       },
       async sendTurn(input) {
@@ -262,7 +286,15 @@ function createRockyChatTestServer(stateRoot: string) {
     },
   });
 
-  return { agents, runs, sendTurnCalls, server, sessions };
+  return {
+    agents,
+    deletedSessionIds,
+    runs,
+    sendTurnCalls,
+    server,
+    sessions,
+    stoppedSessionIds,
+  };
 }
 
 test("rocky chat detects nutrition MD requests, prepares a worker, and starts an orchestrated run", async () => {
@@ -525,6 +557,14 @@ test("rocky chat routes chart and report requests through the visualization work
       sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
       /Use the workspace-local skill `rocky\.visual-report`/
     );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      /requires at least one Rocky-previewable chart JSON artifact/
+    );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      /Do not substitute ASCII charts, unicode sparklines, or fenced-code diagrams/
+    );
 
     const visualSkill = await readFile(
       path.join(agents[0]!.workspaceRoot, "skills", "rocky.visual-report", "SKILL.md"),
@@ -533,6 +573,48 @@ test("rocky chat routes chart and report requests through the visualization work
     assert.match(visualSkill, /Skill ID: rocky\.visual-report/);
     assert.match(visualSkill, /chart 또는 graph를 포함한 JSON 아티팩트/);
     assert.match(visualSkill, /Python으로 집계나 전처리/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat deletes the current chat and associated sessions", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const {
+    deletedSessionIds,
+    sendTurnCalls,
+    server,
+    sessions,
+    stoppedSessionIds,
+  } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "회의록을 보고 액션 아이템 위주로 정리해줘.",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(sessions.length, 1);
+    assert.equal(sendTurnCalls.length, 1);
+
+    const deleteResponse = await server.inject({
+      method: "DELETE",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(deleteResponse.statusCode, 204);
+    assert.deepEqual(stoppedSessionIds, ["session-1"]);
+    assert.deepEqual(deletedSessionIds, ["session-1"]);
+    assert.equal(sessions.length, 0);
+
+    const missingResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(missingResponse.statusCode, 404);
   } finally {
     await server.close();
   }

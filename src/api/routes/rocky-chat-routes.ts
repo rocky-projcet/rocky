@@ -100,4 +100,12 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
       sendJson(reply, 201, chat);
     }
   );
+
+  server.delete<{ Params: { chatId: string } }>(
+    "/rocky/chats/:chatId",
+    async (request, reply) => {
+      await options.rockyChatService.deleteChat(request.params.chatId);
+      reply.status(204).send();
+    }
+  );
 };

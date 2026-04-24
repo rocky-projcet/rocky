@@ -28,7 +28,7 @@ export function DebugModeOnly(props: {
             <Bug className="size-4" />
             디버그 모드로 보기
           </Button>
-          <Button variant="ghost" size="sm" render={<Link to="/" />}>
+          <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/" />}>
             <Home className="size-4" />
             홈으로
           </Button>

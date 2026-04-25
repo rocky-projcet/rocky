@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-test("home keeps task requests inside one Rocky Core chat", async ({ page }) => {
+test("home keeps task requests inside one Rocky Core chat", async ({ page, request }) => {
   const nonce = Date.now().toString();
   const fileName = `nutrition-event-${nonce}.csv`;
   const userPrompt =
-    `영양제 이벤트 엑셀을 상품명 기준으로 묶고 원가와 마진은 보호해서 정리해줘. 테스트 ${nonce}`;
+    `테스트 ${nonce}: 영양제 이벤트 엑셀을 상품명 기준으로 묶고 원가와 마진은 보호해서 정리해줘.`;
 
   await page.goto("/");
 
@@ -47,4 +47,31 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page }) => 
   await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
   await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
   await expect(page.getByText("세션 열기")).toHaveCount(0);
+
+  const chatsResponse = await request.get("/api/rocky/chats");
+  expect(chatsResponse.ok()).toBeTruthy();
+  const chats = await chatsResponse.json();
+  const createdChat = chats.find((candidate: { messages?: Array<{ text?: string }> }) =>
+    candidate.messages?.some((message) => message.text === userPrompt)
+  );
+  expect(createdChat).toBeTruthy();
+
+  await page.getByRole("button", { name: "이전 대화" }).click();
+  const historyDialog = page.getByRole("dialog", { name: "이전 대화" });
+  await expect(historyDialog).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await historyDialog
+    .getByTestId(`previous-chat-delete-${createdChat.id}`)
+    .click();
+
+  await expect
+    .poll(async () => {
+      const refreshedResponse = await request.get("/api/rocky/chats");
+      const refreshedChats = await refreshedResponse.json();
+      return refreshedChats.some((candidate: { id?: string }) => candidate.id === createdChat.id);
+    })
+    .toBe(false);
 });

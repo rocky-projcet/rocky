@@ -62,14 +62,17 @@ export function useDeleteRockyChatMutation(chatId: string | null) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () => {
-      if (!chatId) {
+    mutationFn: async (inputChatId?: string) => {
+      const targetChatId = inputChatId ?? chatId;
+      if (!targetChatId) {
         throw new Error("Rocky chat id is required.");
       }
 
-      return agentEngineClient.deleteRockyChat(chatId);
+      await agentEngineClient.deleteRockyChat(targetChatId);
+      return targetChatId;
     },
-    onSuccess: async () => {
+    onSuccess: async (deletedChatId) => {
+      queryClient.removeQueries({ queryKey: rockyQueryKeys.chat(deletedChatId) });
       await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats });
     },
   });

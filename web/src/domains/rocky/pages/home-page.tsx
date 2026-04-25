@@ -6,7 +6,7 @@ import {
   type RefObject,
 } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { FileText, Paperclip, Send, X } from "lucide-react";
+import { FileText, History, Paperclip, Send, Trash2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -25,6 +25,14 @@ import type {
 } from "@/domains/session/types";
 import { splitTranscriptArtifacts } from "@/domains/session/lib/transcript-display";
 import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import { Textarea } from "@/shared/ui/textarea";
@@ -59,6 +67,25 @@ function formatFileSize(size: number): string {
   }
 
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return "아직 없음";
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
 }
 
 function encodeUtf8Base64(value: string): string {
@@ -846,6 +873,7 @@ function SelectedFileList({
 function ChatComposer({
   canSend,
   canClearChat,
+  canLoadHistory,
   chatStarted,
   isClearingChat,
   errorMessage,
@@ -854,11 +882,13 @@ function ChatComposer({
   onFilesChange,
   onFileRemove,
   onClearChat,
+  onOpenHistory,
   onMessageChange,
   onSubmit,
 }: {
   canSend: boolean;
   canClearChat: boolean;
+  canLoadHistory: boolean;
   chatStarted: boolean;
   isClearingChat: boolean;
   errorMessage: string | undefined;
@@ -867,13 +897,24 @@ function ChatComposer({
   onFilesChange: (files: File[]) => void;
   onFileRemove: (file: File) => void;
   onClearChat: () => void;
+  onOpenHistory: () => void;
   onMessageChange: (message: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
-      {chatStarted ? (
-        <div className="mx-auto mb-2 flex w-full max-w-4xl justify-end">
+      <div className="mx-auto mb-2 flex w-full max-w-4xl justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!canLoadHistory}
+          onClick={onOpenHistory}
+        >
+          <History className="size-4" />
+          이전 대화
+        </Button>
+        {chatStarted ? (
           <Button
             type="button"
             variant="outline"
@@ -883,8 +924,8 @@ function ChatComposer({
           >
             {isClearingChat ? "정리중" : "대화 정리"}
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <form
         className="mx-auto w-full max-w-4xl rounded-2xl border bg-card p-2 shadow-sm"
@@ -944,6 +985,134 @@ function ChatComposer({
         ) : null}
       </form>
     </footer>
+  );
+}
+
+function PreviousChatsDialog({
+  chats,
+  currentChatId,
+  deletingChatId,
+  disabled,
+  errorMessage,
+  loading,
+  onDeleteChat,
+  onOpenChange,
+  onSelectChat,
+  open,
+}: {
+  chats: RockyChatRecord[];
+  currentChatId: string | null;
+  deletingChatId: string | null;
+  disabled: boolean;
+  errorMessage: string | null;
+  loading: boolean;
+  onDeleteChat: (chat: RockyChatRecord) => void;
+  onOpenChange: (open: boolean) => void;
+  onSelectChat: (chat: RockyChatRecord) => void;
+  open: boolean;
+}) {
+  const hasChats = chats.length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(80vh,42rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
+          <DialogTitle>이전 대화</DialogTitle>
+          <DialogDescription>
+            저장된 Rocky 대화를 현재 홈 화면에 불러옵니다.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+          {errorMessage ? (
+            <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {errorMessage}
+            </div>
+          ) : null}
+
+          {loading ? (
+            <div className="flex min-h-36 items-center justify-center rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+              이전 대화를 불러오는 중입니다.
+            </div>
+          ) : hasChats ? (
+            <div className="grid gap-2">
+              {chats.map((chat) => {
+                const isCurrentChat = chat.id === currentChatId;
+                const itemDisabled = disabled || isCurrentChat;
+                const deletePending = deletingChatId === chat.id;
+                const deleteDisabled = disabled || Boolean(deletingChatId);
+
+                return (
+                  <div
+                    key={chat.id}
+                    data-testid={`previous-chat-row-${chat.id}`}
+                    className={cn(
+                      "flex w-full items-stretch overflow-hidden rounded-lg border transition",
+                      isCurrentChat
+                        ? "border-primary/35 bg-primary/5"
+                        : "border-border bg-background"
+                    )}
+                  >
+                    <button
+                      type="button"
+                      disabled={itemDisabled}
+                      onClick={() => onSelectChat(chat)}
+                      className={cn(
+                        "min-w-0 flex-1 px-4 py-3 text-left transition",
+                        itemDisabled
+                          ? "cursor-default opacity-70"
+                          : "cursor-pointer hover:bg-muted/50"
+                      )}
+                    >
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-foreground">
+                            {chat.title || "제목 없는 대화"}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                            <span>{chat.messages.length}개 메시지</span>
+                            <span aria-hidden="true">·</span>
+                            <span>마지막 수정 {formatDateTime(chat.updatedAt)}</span>
+                          </div>
+                        </div>
+                        {isCurrentChat ? (
+                          <Badge variant="secondary" className="shrink-0">
+                            현재 대화
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </button>
+                    <div className="flex shrink-0 items-center border-l border-border/70 px-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        data-testid={`previous-chat-delete-${chat.id}`}
+                        disabled={deleteDisabled}
+                        aria-label={`${chat.title || "제목 없는 대화"} 삭제`}
+                        title="대화 삭제"
+                        onClick={() => onDeleteChat(chat)}
+                        className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        {deletePending ? (
+                          <span className="text-[10px] font-medium">삭제중</span>
+                        ) : (
+                          <Trash2 className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : errorMessage ? null : (
+            <div className="flex min-h-36 items-center justify-center rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+              불러올 이전 대화가 없습니다.
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1069,14 +1238,18 @@ export function HomePage() {
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [submitInFlight, setSubmitInFlight] = useState(false);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [previewPanelSource, setPreviewPanelSource] =
     useState<RockyPreviewPanelSource | null>(null);
   const [suppressAutoSelect, setSuppressAutoSelect] = useState(false);
   const submitInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const { data: rockyChats } = useRockyChatsQuery();
+  const rockyChatsQuery = useRockyChatsQuery();
+  const rockyChats = rockyChatsQuery.data;
+  const previousChats = rockyChats ?? [];
   const createChatMutation = useCreateRockyChatMutation();
   const deleteChatMutation = useDeleteRockyChatMutation(chat?.id ?? null);
+  const deleteHistoryChatMutation = useDeleteRockyChatMutation(null);
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
   const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
     chat?.id ?? null
@@ -1151,9 +1324,32 @@ export function HomePage() {
     submitInFlight ||
     createChatMutation.isPending ||
     sendMessageMutation.isPending ||
-    deleteChatMutation.isPending;
+    deleteChatMutation.isPending ||
+    deleteHistoryChatMutation.isPending;
   const canSend = message.trim().length > 0 && !pending;
   const canClearChat = Boolean(chat && messageCount > 0) && !pending;
+  const historyQueryErrorMessage = rockyChatsQuery.error
+    ? getErrorMessage(
+        rockyChatsQuery.error,
+        "이전 대화 목록을 불러오지 못했습니다."
+      )
+    : null;
+  const historyDeleteErrorMessage = deleteHistoryChatMutation.error
+    ? getErrorMessage(
+        deleteHistoryChatMutation.error,
+        "이전 대화를 삭제하지 못했습니다."
+      )
+    : null;
+  const historyErrorMessage =
+    historyDeleteErrorMessage ?? historyQueryErrorMessage;
+  const deletingHistoryChatId = deleteHistoryChatMutation.isPending
+    ? deleteHistoryChatMutation.variables ?? null
+    : null;
+  const canLoadHistory =
+    !pending &&
+    (previousChats.length > 0 ||
+      rockyChatsQuery.isLoading ||
+      Boolean(historyErrorMessage));
   const errorMessage =
     createChatMutation.error?.message ??
     sendMessageMutation.error?.message ??
@@ -1224,12 +1420,48 @@ export function HomePage() {
       return;
     }
 
-    await deleteChatMutation.mutateAsync();
+    await deleteChatMutation.mutateAsync(undefined);
     setSuppressAutoSelect(true);
     setChat(null);
     setMessage("");
     setFiles([]);
     setPreviewPanelSource(null);
+  };
+
+  const loadPreviousChat = (selectedChat: RockyChatRecord) => {
+    if (pending || selectedChat.id === chat?.id) {
+      return;
+    }
+
+    setChat(selectedChat);
+    setSuppressAutoSelect(false);
+    setPreviewPanelSource(null);
+    setMessage("");
+    setFiles([]);
+    setHistoryDialogOpen(false);
+  };
+
+  const deletePreviousChat = async (selectedChat: RockyChatRecord) => {
+    if (pending) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `"${selectedChat.title || "제목 없는 대화"}" 대화를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await deleteHistoryChatMutation.mutateAsync(selectedChat.id);
+
+    if (selectedChat.id === chat?.id) {
+      setSuppressAutoSelect(true);
+      setChat(null);
+      setPreviewPanelSource(null);
+      setMessage("");
+      setFiles([]);
+    }
   };
 
   return (
@@ -1252,6 +1484,7 @@ export function HomePage() {
         <ChatComposer
           canSend={canSend}
           canClearChat={canClearChat}
+          canLoadHistory={canLoadHistory}
           chatStarted={Boolean(chat)}
           isClearingChat={deleteChatMutation.isPending}
           errorMessage={errorMessage}
@@ -1264,10 +1497,26 @@ export function HomePage() {
           onClearChat={() => {
             void clearConversation();
           }}
+          onOpenHistory={() => setHistoryDialogOpen(true)}
           onMessageChange={setMessage}
           onSubmit={submit}
         />
       </section>
+
+      <PreviousChatsDialog
+        chats={previousChats}
+        currentChatId={chat?.id ?? null}
+        deletingChatId={deletingHistoryChatId}
+        disabled={pending}
+        errorMessage={historyErrorMessage}
+        loading={rockyChatsQuery.isLoading}
+        onDeleteChat={(selectedChat) => {
+          void deletePreviousChat(selectedChat);
+        }}
+        onOpenChange={setHistoryDialogOpen}
+        onSelectChat={loadPreviousChat}
+        open={historyDialogOpen}
+      />
 
       {previewPanelSource ? (
         <ArtifactPreviewPanel

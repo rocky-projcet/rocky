@@ -6,11 +6,66 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
   const userPrompt =
     `테스트 ${nonce}: 영양제 이벤트 엑셀을 상품명 기준으로 묶고 원가와 마진은 보호해서 정리해줘.`;
 
+  const existingChatsResponse = await request.get("/api/rocky/chats");
+  expect(existingChatsResponse.ok()).toBeTruthy();
+  for (const existingChat of await existingChatsResponse.json()) {
+    await request.delete(`/api/rocky/chats/${existingChat.id}`);
+  }
+
   await page.goto("/");
 
   await expect(page.getByRole("button", { name: "일반" })).toBeVisible();
   await expect(page.getByRole("button", { name: "디버그" })).toBeVisible();
   await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /PPT 능력/ })).toBeVisible();
+  await page.getByRole("button", { name: /PPT 능력/ }).click();
+  await expect(page.getByText("PPT 능력 사용법")).toBeVisible();
+  await expect(page.getByText("PPT 능력을 어떻게 쓰면 되는지 알려줘")).toHaveCount(0);
+
+  const guideChatsResponse = await request.get("/api/rocky/chats");
+  expect(guideChatsResponse.ok()).toBeTruthy();
+  const guideChats = await guideChatsResponse.json();
+  const guideChat = guideChats.find((candidate: { title?: string }) =>
+    candidate.title === "PPT 능력"
+  );
+  expect(guideChat).toBeTruthy();
+
+  await page.getByRole("button", { name: "대화 정리" }).click();
+  await request.delete(`/api/rocky/chats/${guideChat.id}`);
+
+  await page.getByLabel("자료 파일 선택").setInputFiles({
+    name: `deck-${nonce}.pptx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    buffer: Buffer.from("pptx-placeholder"),
+  });
+  await expect(
+    page.getByRole("button", { name: /^(시작하기|보내기)$/ })
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: /^(시작하기|보내기)$/ })
+    .click();
+  await expect(page.getByText("Please review the attached file.")).toBeVisible();
+
+  const attachmentOnlyChatsResponse = await request.get("/api/rocky/chats");
+  expect(attachmentOnlyChatsResponse.ok()).toBeTruthy();
+  const attachmentOnlyChats = await attachmentOnlyChatsResponse.json();
+  const attachmentOnlyChat = attachmentOnlyChats.find(
+    (candidate: {
+      attachments?: Array<{ workspacePath?: string | null }>;
+      messages?: Array<{ text?: string }>;
+    }) =>
+      candidate.messages?.some(
+        (message) => message.text === "Please review the attached file."
+      )
+  );
+  expect(attachmentOnlyChat).toBeTruthy();
+  expect(attachmentOnlyChat.attachments?.[0]?.workspacePath).toMatch(
+    /^uploads\/rocky\//
+  );
+
+  await page.getByRole("button", { name: "대화 정리" }).click();
+  await request.delete(`/api/rocky/chats/${attachmentOnlyChat.id}`);
 
   await page.getByRole("button", { name: "고급 관리" }).click();
   const advancedMenu = page.locator("#advanced-management-subtree");
@@ -34,6 +89,7 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText(userPrompt)).toBeVisible();
   await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
+  await expect(page.getByText("최근 진행 내용")).toHaveCount(0);
   await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/반복 기준 후보/)).toHaveCount(0);
   await expect(page.getByText(/보호 항목/)).toHaveCount(0);
@@ -45,6 +101,7 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
 
   await expect(page.getByText(userPrompt)).toBeVisible();
   await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
+  await expect(page.getByText("최근 진행 내용")).toHaveCount(0);
   await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
   await expect(page.getByText("세션 열기")).toHaveCount(0);
 

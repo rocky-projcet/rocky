@@ -33,7 +33,10 @@ function formatAttachments(attachments: RockyAttachmentRecord[]): string {
       const size =
         typeof attachment.size === "number" ? `${attachment.size} bytes` : "size unknown";
       const contentType = attachment.contentType ?? "content type unknown";
-      return `- ${attachment.name} (${contentType}, ${size})`;
+      const workspacePath = attachment.workspacePath
+        ? `, workspace path: ${attachment.workspacePath}`
+        : "";
+      return `- ${attachment.name} (${contentType}, ${size}${workspacePath})`;
     })
     .join("\n");
 }

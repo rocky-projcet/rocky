@@ -37,6 +37,7 @@ export interface RockyAttachmentInput {
   name: string;
   contentType?: string | null;
   size?: number | null;
+  contentBase64?: string | null;
 }
 
 export interface RockyAttachmentRecord {
@@ -44,6 +45,7 @@ export interface RockyAttachmentRecord {
   name: string;
   contentType: string | null;
   size: number | null;
+  workspacePath: string | null;
   addedAt: string;
 }
 
@@ -56,6 +58,18 @@ export interface RockySkillCandidateRecord {
   sourceMessageId: string;
   status: "candidate";
   createdAt: string;
+}
+
+export type RockyAbilityIcon = "message-square" | "presentation";
+
+export interface RockyAbilityCardRecord {
+  id: string;
+  skillId: string;
+  title: string;
+  description: string;
+  icon: RockyAbilityIcon;
+  examples: string[];
+  sortOrder: number;
 }
 
 export interface RockyWorkerRecord {
@@ -180,6 +194,8 @@ export interface RockyChatMessageInput {
 }
 
 export interface RockyChatServiceLike {
+  listAbilityCards(): Promise<RockyAbilityCardRecord[]>;
+  startAbilityGuide(abilityId: string): Promise<RockyChatRecord>;
   createChat(input: RockyChatCreateInput): Promise<RockyChatRecord>;
   getChat(chatId: string): Promise<RockyChatRecord>;
   listChats(): Promise<RockyChatRecord[]>;

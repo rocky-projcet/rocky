@@ -1,4 +1,6 @@
 export type {
+  RockyAbilityCardRecord,
+  RockyAbilityIcon,
   RockyAttachmentInput,
   RockyAttachmentRecord,
   RockyChatCreateInput,

@@ -12,6 +12,7 @@ import type {
   RuntimeKind,
   RuntimeOllamaLaunchTarget,
   RuntimeReasoningEffort,
+  RuntimeRunResult,
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type {
@@ -55,6 +56,7 @@ export interface RockySessionServiceLike {
     extraSystemInstructions?: string[];
   }): Promise<AgentRunRecord>;
   getRun?(runId: string): Promise<AgentRunRecord>;
+  getRunResult?(runId: string): Promise<RuntimeRunResult>;
   getTranscript?(sessionId: string): Promise<AgentSessionMessage[]>;
   deleteSession?(sessionId: string): Promise<void>;
   stopSessionRuns?(sessionId: string): Promise<string[]>;
@@ -112,6 +114,23 @@ function errorMessage(error: unknown): string {
 function latestAssistantText(messages: AgentSessionMessage[]): string | null {
   const assistant = [...messages].reverse().find((message) => message.role === "assistant");
   const content = assistant?.content.trim();
+  return content || null;
+}
+
+function resultAssistantText(result: RuntimeRunResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  const lastMessage = result.lastMessage?.trim();
+  if (lastMessage) {
+    return lastMessage;
+  }
+
+  const assistant = [...result.messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  const content = assistant?.text.trim();
   return content || null;
 }
 
@@ -210,10 +229,15 @@ export class RockyOrchestratorService {
         orchestration.sessionId &&
         this.sessionService.getTranscript
     );
-    if (isTerminal && !canHydrateOutput) {
+    const canHydrateResult = Boolean(this.sessionService.getRunResult);
+    if (isTerminal && !canHydrateOutput && !canHydrateResult) {
       return orchestration;
     }
-    if (!this.sessionService.getRun && !canHydrateOutput) {
+    if (
+      !this.sessionService.getRun &&
+      !this.sessionService.getRunResult &&
+      !canHydrateOutput
+    ) {
       return orchestration;
     }
 
@@ -222,10 +246,23 @@ export class RockyOrchestratorService {
         !isTerminal && this.sessionService.getRun
           ? await this.sessionService.getRun(orchestration.runId)
           : null;
-      const output =
+      const result =
+        this.sessionService.getRunResult &&
+        ((run && run.status !== "running") ||
+          isTerminal)
+          ? await this.sessionService.getRunResult(orchestration.runId)
+          : null;
+      const transcriptOutput =
         orchestration.sessionId && this.sessionService.getTranscript
           ? latestAssistantText(await this.sessionService.getTranscript(orchestration.sessionId))
           : orchestration.output;
+      const terminalRunSummary =
+        run && run.status !== "running" ? run.summary?.trim() || null : null;
+      const output =
+        resultAssistantText(result) ??
+        terminalRunSummary ??
+        transcriptOutput ??
+        orchestration.output;
       return {
         ...orchestration,
         status: run ? runStatusToOrchestrationStatus(run.status) : orchestration.status,

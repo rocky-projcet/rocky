@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import {
@@ -18,8 +19,11 @@ import {
 } from "./rocky-chat-store.js";
 import {
   ROCKY_CORE_SKILL,
+  ROCKY_ORCHESTRATION_SKILLS,
   extractRockyProtectionHints,
+  getRockySkillByAbilityId,
   getRockySkillByWorkerId,
+  listRockySkillAbilityCards,
   selectRockySkill,
   type RockyOrchestrationSkill,
 } from "./rocky-skill-registry.js";
@@ -68,6 +72,10 @@ export interface RockyChatServiceOptions {
   sessionService?: RockySessionServiceLike;
 }
 
+type RockyAttachmentDraft = RockyAttachmentRecord & {
+  contentBase64: string | null;
+};
+
 function badRequest(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), {
     statusCode: 400,
@@ -87,6 +95,41 @@ function titleFromMessage(message: string): string {
   }
 
   return compact.length > 32 ? `${compact.slice(0, 32)}...` : compact;
+}
+
+const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
+const ROCKY_UPLOADS_DIRECTORY = "uploads/rocky";
+
+function requestMessageOrAttachmentDefault(input: {
+  message: string;
+  attachments: RockyAttachmentRecord[];
+}): string {
+  const message = input.message.trim();
+  if (message) {
+    return message;
+  }
+  if (input.attachments.length > 0) {
+    return DEFAULT_ATTACHMENT_MESSAGE;
+  }
+
+  throw badRequest("message or attachments are required.");
+}
+
+function sanitizeUploadedFilename(filename: string): string {
+  const basename = path.basename(filename.trim()).normalize("NFKC");
+  const sanitized = basename
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+
+  return sanitized || "upload.bin";
+}
+
+function stripAttachmentContent(
+  attachment: RockyAttachmentDraft
+): RockyAttachmentRecord {
+  const { contentBase64: _contentBase64, ...record } = attachment;
+  return record;
 }
 
 function isUnknownSessionError(error: unknown): boolean {
@@ -171,36 +214,88 @@ export class RockyChatService {
     });
   }
 
-  async createChat(input: RockyChatCreateInput): Promise<RockyChatRecord> {
-    const message = input.message.trim();
-    if (!message) {
-      throw badRequest("message is required.");
+  async listAbilityCards() {
+    return listRockySkillAbilityCards();
+  }
+
+  async startAbilityGuide(abilityId: string): Promise<RockyChatRecord> {
+    const skill = getRockySkillByAbilityId(abilityId);
+    if (!skill?.ability) {
+      throw notFound(`Unknown Rocky ability: ${abilityId}`);
     }
 
     const timestamp = this.now();
     const chatId = `rocky-chat-${this.idGenerator()}`;
-    const attachments = this.normalizeAttachments(input.attachments ?? [], timestamp);
+    const { worker } = await this.ensureCoreWorker({
+      skill,
+      reason: `${skill.displayName} 홈 안내를 열었습니다.`,
+      timestamp,
+    });
+    const rockyMessage: RockyMessageRecord = {
+      id: `message-${this.idGenerator()}`,
+      chatId,
+      role: "rocky",
+      intent: "conversation",
+      text: skill.ability.guideMarkdown,
+      attachmentIds: [],
+      domain: skill.domain,
+      workerId: worker.id,
+      skillCandidateIds: [],
+      dispatchId: null,
+      createdAt: timestamp,
+    };
+    const chat: RockyChatRecord = {
+      id: chatId,
+      title: skill.ability.title,
+      intent: "conversation",
+      domain: skill.domain,
+      worker,
+      attachments: [],
+      messages: [rockyMessage],
+      skillCandidates: [],
+      dispatches: [],
+      orchestration: null,
+      executionStarted: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    await this.writeChat(chat);
+    return chat;
+  }
+
+  async createChat(input: RockyChatCreateInput): Promise<RockyChatRecord> {
+    const timestamp = this.now();
+    const chatId = `rocky-chat-${this.idGenerator()}`;
+    const attachmentDrafts = this.normalizeAttachments(input.attachments ?? [], timestamp);
+    const attachments = attachmentDrafts.map(stripAttachmentContent);
+    const message = requestMessageOrAttachmentDefault({
+      message: input.message,
+      attachments,
+    });
     const selection = selectRockySkill({ message, attachments });
     const { domain, intent, skill } = selection;
-    const userMessage = this.buildUserMessage({
-      chatId,
-      message,
-      attachments,
-      domain,
-      intent,
-      createdAt: timestamp,
-    });
+    const userMessageId = `message-${this.idGenerator()}`;
     const routed = await this.handleRockyCoreMessage({
       chatId,
-      messageId: userMessage.id,
+      messageId: userMessageId,
       message,
-      attachments,
+      attachments: attachmentDrafts,
       domain,
       intent,
       skill,
       selectionReason: selection.reason,
       reuseCoreSessionId: null,
       timestamp,
+    });
+    const userMessage = this.buildUserMessage({
+      id: userMessageId,
+      chatId,
+      message,
+      attachments: routed.attachments,
+      domain,
+      intent,
+      createdAt: timestamp,
     });
 
     const chat: RockyChatRecord = {
@@ -209,7 +304,7 @@ export class RockyChatService {
       intent,
       domain,
       worker: routed.worker,
-      attachments,
+      attachments: routed.attachments,
       messages: [userMessage, routed.rockyMessage],
       skillCandidates: routed.skillCandidates,
       dispatches: routed.dispatch ? [routed.dispatch] : [],
@@ -349,11 +444,14 @@ export class RockyChatService {
   }
 
   async syncCoreSkills(): Promise<RockyCoreManagementRecord> {
-    await this.ensureCoreWorker({
-      skill: ROCKY_CORE_SKILL,
-      reason: "Rocky Core 관리 화면에서 스킬 동기화를 요청했습니다.",
-      timestamp: this.now(),
-    });
+    const timestamp = this.now();
+    for (const skill of ROCKY_ORCHESTRATION_SKILLS) {
+      await this.ensureCoreWorker({
+        skill,
+        reason: "Rocky Core 관리 화면에서 스킬 동기화를 요청했습니다.",
+        timestamp,
+      });
+    }
 
     return this.getCoreManagement();
   }
@@ -362,40 +460,45 @@ export class RockyChatService {
     chatId: string,
     input: RockyChatMessageInput
   ): Promise<RockyChatRecord> {
-    const message = input.message.trim();
-    if (!message) {
-      throw badRequest("message is required.");
-    }
-
     const existing = await this.requireChat(chatId);
     const timestamp = this.now();
-    const attachments = this.normalizeAttachments(input.attachments ?? [], timestamp);
+    const attachmentDrafts = this.normalizeAttachments(input.attachments ?? [], timestamp);
+    const attachments = attachmentDrafts.map(stripAttachmentContent);
+    const message = requestMessageOrAttachmentDefault({
+      message: input.message,
+      attachments,
+    });
     const selection = selectRockySkill({
       message,
       attachments,
       contextDomain: existing.domain,
     });
     const { domain, intent, skill } = selection;
-    const userMessage = this.buildUserMessage({
-      chatId,
-      message,
-      attachments,
-      domain,
-      intent,
-      createdAt: timestamp,
-    });
+    const userMessageId = `message-${this.idGenerator()}`;
     const reuseCoreSessionId = this.findReusableCoreSessionId(existing);
     const routed = await this.handleRockyCoreMessage({
       chatId,
-      messageId: userMessage.id,
+      messageId: userMessageId,
       message,
-      attachments: [...existing.attachments, ...attachments],
+      attachments: [...existing.attachments, ...attachmentDrafts],
       domain,
       intent,
       skill,
       selectionReason: selection.reason,
       reuseCoreSessionId,
       timestamp,
+    });
+    const newAttachments = routed.attachments.filter((attachment) =>
+      attachmentDrafts.some((draft) => draft.id === attachment.id)
+    );
+    const userMessage = this.buildUserMessage({
+      id: userMessageId,
+      chatId,
+      message,
+      attachments: newAttachments,
+      domain,
+      intent,
+      createdAt: timestamp,
     });
     const skillCandidates = this.mergeSkillCandidates(
       existing.skillCandidates,
@@ -408,7 +511,7 @@ export class RockyChatService {
       intent,
       domain,
       worker: routed.worker ?? existing.worker,
-      attachments: [...existing.attachments, ...attachments],
+      attachments: routed.attachments,
       messages: [...existing.messages, userMessage, routed.rockyMessage],
       skillCandidates,
       dispatches: routed.dispatch
@@ -446,7 +549,7 @@ export class RockyChatService {
   private normalizeAttachments(
     attachments: RockyAttachmentInput[],
     addedAt: string
-  ): RockyAttachmentRecord[] {
+  ): RockyAttachmentDraft[] {
     return attachments
       .filter((attachment) => attachment.name.trim())
       .slice(0, 20)
@@ -458,11 +561,14 @@ export class RockyChatService {
           typeof attachment.size === "number" && Number.isFinite(attachment.size)
             ? attachment.size
             : null,
+        workspacePath: null,
+        contentBase64: attachment.contentBase64?.trim() || null,
         addedAt,
       }));
   }
 
   private buildUserMessage(input: {
+    id: string;
     chatId: string;
     message: string;
     attachments: RockyAttachmentRecord[];
@@ -471,7 +577,7 @@ export class RockyChatService {
     createdAt: string;
   }): RockyMessageRecord {
     return {
-      id: `message-${this.idGenerator()}`,
+      id: input.id,
       chatId: input.chatId,
       role: "user",
       intent: input.intent,
@@ -489,7 +595,7 @@ export class RockyChatService {
     chatId: string;
     messageId: string;
     message: string;
-    attachments: RockyAttachmentRecord[];
+    attachments: Array<RockyAttachmentRecord | RockyAttachmentDraft>;
     domain: RockyChatDomain;
     intent: RockyRoutingIntent;
     skill: RockyOrchestrationSkill;
@@ -498,6 +604,7 @@ export class RockyChatService {
     timestamp: string;
   }): Promise<{
     worker: RockyWorkerRecord | null;
+    attachments: RockyAttachmentRecord[];
     skillCandidates: RockySkillCandidateRecord[];
     dispatch: RockyDispatchRecord | null;
     rockyMessage: RockyMessageRecord;
@@ -507,6 +614,10 @@ export class RockyChatService {
       reason: input.selectionReason,
       timestamp: input.timestamp,
     });
+    const attachments = await this.materializeAttachmentUploads({
+      agent,
+      attachments: input.attachments,
+    });
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
@@ -515,7 +626,7 @@ export class RockyChatService {
       intent: input.intent,
       domain: input.domain,
       workerId: worker.id,
-      attachments: input.attachments,
+      attachments,
       message: input.message,
       skillCandidates,
       timestamp: input.timestamp,
@@ -527,7 +638,7 @@ export class RockyChatService {
       domain: input.domain,
       skill: input.skill,
       message: input.message,
-      attachments: input.attachments,
+      attachments,
       skillCandidates,
       timestamp: input.timestamp,
     });
@@ -538,7 +649,7 @@ export class RockyChatService {
       message: input.message,
       worker,
       dispatch,
-      attachments: input.attachments,
+      attachments,
       skillCandidates,
       skill: input.skill,
       protectionHints: dispatch.protectionHints,
@@ -559,6 +670,7 @@ export class RockyChatService {
 
     return {
       worker,
+      attachments,
       skillCandidates,
       dispatch: startedDispatch,
       rockyMessage: this.buildCoreRockyMessage({
@@ -571,6 +683,51 @@ export class RockyChatService {
         timestamp: input.timestamp,
       }),
     };
+  }
+
+  private async materializeAttachmentUploads(input: {
+    agent: AgentRecord | null;
+    attachments: Array<RockyAttachmentRecord | RockyAttachmentDraft>;
+  }): Promise<RockyAttachmentRecord[]> {
+    return Promise.all(
+      input.attachments.map(async (attachment) => {
+        const draft = attachment as Partial<RockyAttachmentDraft>;
+        const contentBase64 = draft.contentBase64?.trim();
+        const existingRecord = {
+          id: attachment.id,
+          name: attachment.name,
+          contentType: attachment.contentType,
+          size: attachment.size,
+          workspacePath: attachment.workspacePath ?? null,
+          addedAt: attachment.addedAt,
+        } satisfies RockyAttachmentRecord;
+
+        if (!input.agent || !contentBase64 || existingRecord.workspacePath) {
+          return existingRecord;
+        }
+
+        const body = Buffer.from(contentBase64, "base64");
+        const safeName = sanitizeUploadedFilename(existingRecord.name);
+        const workspacePath = path.posix.join(
+          ROCKY_UPLOADS_DIRECTORY,
+          this.idGenerator(),
+          safeName
+        );
+        const absolutePath = path.join(
+          input.agent.workspaceRoot,
+          ...workspacePath.split("/")
+        );
+
+        await mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeFile(absolutePath, body);
+
+        return {
+          ...existingRecord,
+          size: existingRecord.size ?? body.byteLength,
+          workspacePath,
+        };
+      })
+    );
   }
 
   private async buildExtraSystemInstructions(input: {
@@ -671,26 +828,26 @@ export class RockyChatService {
   private async buildCoreSkillRecords(
     agent: AgentRecord | null
   ): Promise<RockyCoreSkillRecord[]> {
-    const workspacePath = agent
-      ? `skills/${ROCKY_CORE_SKILL.id}/SKILL.md`
-      : null;
-    const absoluteSkillPath =
-      agent && workspacePath
-        ? `${agent.workspaceRoot}/${workspacePath}`
-        : null;
+    return Promise.all(
+      ROCKY_ORCHESTRATION_SKILLS.map(async (skill) => {
+        const workspacePath = agent ? `skills/${skill.id}/SKILL.md` : null;
+        const absoluteSkillPath =
+          agent && workspacePath
+            ? `${agent.workspaceRoot}/${workspacePath}`
+            : null;
 
-    return [
-      {
-        id: ROCKY_CORE_SKILL.id,
-        version: ROCKY_CORE_SKILL.version,
-        displayName: ROCKY_CORE_SKILL.displayName,
-        description: ROCKY_CORE_SKILL.description,
-        workspacePath,
-        synchronized: absoluteSkillPath
-          ? await this.fileExists(absoluteSkillPath)
-          : false,
-      },
-    ];
+        return {
+          id: skill.id,
+          version: skill.version,
+          displayName: skill.displayName,
+          description: skill.description,
+          workspacePath,
+          synchronized: absoluteSkillPath
+            ? await this.fileExists(absoluteSkillPath)
+            : false,
+        };
+      })
+    );
   }
 
   private async buildCoreManagementRecord(input: {
@@ -916,11 +1073,7 @@ export class RockyChatService {
   private findReusableCoreSessionId(chat: RockyChatRecord): string | null {
     const coreDispatch = [...chat.dispatches]
       .reverse()
-      .find(
-        (dispatch) =>
-          dispatch.skillId === "rocky.core" &&
-          dispatch.orchestration?.sessionId
-      );
+      .find((dispatch) => dispatch.orchestration?.sessionId);
 
     return coreDispatch?.orchestration?.sessionId ?? null;
   }

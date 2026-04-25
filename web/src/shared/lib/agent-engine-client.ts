@@ -587,6 +587,7 @@ export interface RockyAttachmentInput {
   name: string;
   contentType?: string | null;
   size?: number | null;
+  contentBase64?: string | null;
 }
 
 export interface RockyAttachmentRecord {
@@ -594,6 +595,7 @@ export interface RockyAttachmentRecord {
   name: string;
   contentType: string | null;
   size: number | null;
+  workspacePath: string | null;
   addedAt: string;
 }
 
@@ -606,6 +608,18 @@ export interface RockySkillCandidateRecord {
   sourceMessageId: string;
   status: "candidate";
   createdAt: string;
+}
+
+export type RockyAbilityIcon = "message-square" | "presentation";
+
+export interface RockyAbilityCardRecord {
+  id: string;
+  skillId: string;
+  title: string;
+  description: string;
+  icon: RockyAbilityIcon;
+  examples: string[];
+  sortOrder: number;
 }
 
 export interface RockyWorkerRecord {
@@ -1307,6 +1321,19 @@ export class AgentEngineClient {
     return this.request<RockyCoreManagementRecord>("/rocky/core/skills/sync", {
       method: "POST",
     });
+  }
+
+  listRockyAbilities(): Promise<RockyAbilityCardRecord[]> {
+    return this.request<RockyAbilityCardRecord[]>("/rocky/abilities");
+  }
+
+  startRockyAbilityGuide(abilityId: string): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/abilities/${encodeURIComponent(abilityId)}/guide`,
+      {
+        method: "POST",
+      }
+    );
   }
 
   listRockyChats(): Promise<RockyChatRecord[]> {

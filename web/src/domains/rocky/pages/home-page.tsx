@@ -6,7 +6,16 @@ import {
   type RefObject,
 } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { FileText, History, Paperclip, Send, Trash2, X } from "lucide-react";
+import {
+  FileText,
+  History,
+  MessageSquare,
+  Paperclip,
+  Presentation,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -14,11 +23,13 @@ import { toast } from "sonner";
 import { ArtifactPreviewCard } from "@/domains/run/components/artifact-preview-card";
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
 import {
+  useRockyAbilitiesQuery,
   useCreateRockyChatMutation,
   useDeleteRockyChatMutation,
   useRockyChatsQuery,
   useRockyChatQuery,
   useSendRockyMessageMutation,
+  useStartRockyAbilityGuideMutation,
 } from "@/domains/rocky/hooks";
 import type {
   AgentSessionArtifactManifestEntry,
@@ -40,6 +51,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 
 import type {
+  RockyAbilityCardRecord,
   RockyAttachmentRecord,
   RockyChatRecord,
   RockyMessageRecord,
@@ -100,6 +112,28 @@ function encodeUtf8Base64(value: string): string {
   }
 
   return btoa(binary);
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(new Error(`Failed to read file: ${file.name}`));
+    };
+
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error(`Failed to encode file: ${file.name}`));
+        return;
+      }
+
+      const [, payload = ""] = reader.result.split(",", 2);
+      resolve(payload);
+    };
+
+    reader.readAsDataURL(file);
+  });
 }
 
 function openPopupLocation(popup: Window | null, href: string): void {
@@ -343,7 +377,91 @@ async function openRockyWorkspacePath(
   }
 }
 
-function EmptyChatState() {
+function RockyAbilityIcon({ icon }: { icon: RockyAbilityCardRecord["icon"] }) {
+  if (icon === "presentation") {
+    return <Presentation className="size-4" />;
+  }
+
+  return <MessageSquare className="size-4" />;
+}
+
+function AbilityCardGrid({
+  abilities,
+  disabled,
+  loading,
+  onSelectAbility,
+}: {
+  abilities: RockyAbilityCardRecord[];
+  disabled: boolean;
+  loading: boolean;
+  onSelectAbility: (ability: RockyAbilityCardRecord) => void;
+}) {
+  if (loading && abilities.length === 0) {
+    return (
+      <div className="mt-8 grid w-full gap-3 text-left sm:grid-cols-2">
+        {[0, 1].map((index) => (
+          <div
+            key={index}
+            className="h-32 rounded-lg border border-dashed bg-muted/30"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (abilities.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-8 grid w-full gap-3 text-left sm:grid-cols-2">
+      {abilities.map((ability) => (
+        <button
+          key={ability.id}
+          type="button"
+          disabled={disabled}
+          onClick={() => onSelectAbility(ability)}
+          className="group min-h-32 rounded-lg border bg-card px-4 py-4 text-left shadow-sm transition hover:border-primary/40 hover:bg-secondary/50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-foreground">
+              <RockyAbilityIcon icon={ability.icon} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-foreground">
+                {ability.title}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                {ability.description}
+              </span>
+            </span>
+          </div>
+
+          <ul className="mt-3 space-y-1.5 text-xs leading-5 text-muted-foreground">
+            {ability.examples.slice(0, 3).map((example) => (
+              <li key={example} className="flex gap-2">
+                <span aria-hidden="true" className="mt-2 size-1 rounded-full bg-border" />
+                <span>{example}</span>
+              </li>
+            ))}
+          </ul>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EmptyChatState({
+  abilities,
+  abilitiesLoading,
+  disabled,
+  onSelectAbility,
+}: {
+  abilities: RockyAbilityCardRecord[];
+  abilitiesLoading: boolean;
+  disabled: boolean;
+  onSelectAbility: (ability: RockyAbilityCardRecord) => void;
+}) {
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center pb-16 text-center">
       <h1 className="text-2xl font-semibold tracking-normal md:text-3xl">
@@ -352,6 +470,12 @@ function EmptyChatState() {
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
         필요한 일을 편하게 말해 주세요.
       </p>
+      <AbilityCardGrid
+        abilities={abilities}
+        disabled={disabled}
+        loading={abilitiesLoading}
+        onSelectAbility={onSelectAbility}
+      />
     </div>
   );
 }
@@ -400,9 +524,7 @@ function resolveRockyMessageState(
   }
 
   if (orchestration.status === "planned" || orchestration.status === "running") {
-    const progressText =
-      transcriptMessage?.content.trim() || orchestration.output?.trim() || null;
-    return { kind: "pending", text: progressText, artifacts };
+    return { kind: "pending", text: null, artifacts: [] };
   }
 
   if (orchestration.status === "failed") {
@@ -422,8 +544,8 @@ function resolveRockyMessageState(
   }
 
   const finalText =
-    transcriptMessage?.content.trim() ||
     orchestration.output?.trim() ||
+    transcriptMessage?.content.trim() ||
     message.text.trim();
   if (finalText) {
     return { kind: "ready", text: finalText, artifacts };
@@ -727,28 +849,6 @@ function MessageBubble({
               <span className="ia-streaming-dot" />
             </span>
           </div>
-          {rockyMessageState.text ? (
-            <div className="mt-3 rounded-2xl border bg-background/70 px-4 py-3 text-foreground shadow-sm">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                최근 진행 내용
-              </p>
-              <RockyMarkdownViewer
-                agentId={agentId}
-                artifacts={rockyMessageState.artifacts}
-                markdown={rockyMessageState.text}
-                onOpenPreviewPanel={onOpenPreviewPanel}
-                workspaceRoot={workspaceRoot}
-              />
-            </div>
-          ) : (
-            <p className="mt-2 text-xs text-muted-foreground">
-              작업 로그가 들어오면 이 영역에 바로 표시합니다.
-            </p>
-          )}
-          <RockyArtifactGrid
-            artifacts={rockyMessageState.artifacts}
-            onOpenPreviewPanel={onOpenPreviewPanel}
-          />
         </article>
       </div>
     );
@@ -1285,12 +1385,15 @@ export function HomePage() {
   const [suppressAutoSelect, setSuppressAutoSelect] = useState(false);
   const submitInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const abilitiesQuery = useRockyAbilitiesQuery();
+  const abilities = abilitiesQuery.data ?? [];
   const rockyChatsQuery = useRockyChatsQuery();
   const rockyChats = rockyChatsQuery.data;
   const previousChats = rockyChats ?? [];
   const createChatMutation = useCreateRockyChatMutation();
   const deleteHistoryChatMutation = useDeleteRockyChatMutation(null);
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
+  const startAbilityGuideMutation = useStartRockyAbilityGuideMutation();
   const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
     chat?.id ?? null
   );
@@ -1364,8 +1467,9 @@ export function HomePage() {
     submitInFlight ||
     createChatMutation.isPending ||
     sendMessageMutation.isPending ||
+    startAbilityGuideMutation.isPending ||
     deleteHistoryChatMutation.isPending;
-  const canSend = message.trim().length > 0 && !pending;
+  const canSend = (message.trim().length > 0 || files.length > 0) && !pending;
   const canClearChat = Boolean(chat && messageCount > 0) && !pending;
   const historyQueryErrorMessage = rockyChatsQuery.error
     ? getErrorMessage(
@@ -1391,7 +1495,8 @@ export function HomePage() {
       Boolean(historyErrorMessage));
   const errorMessage =
     createChatMutation.error?.message ??
-    sendMessageMutation.error?.message;
+    sendMessageMutation.error?.message ??
+    startAbilityGuideMutation.error?.message;
 
   useEffect(() => {
     if (refreshedChat) {
@@ -1432,17 +1537,40 @@ export function HomePage() {
     submitInFlightRef.current = true;
     setSubmitInFlight(true);
     try {
-      const input = {
-        message: message.trim(),
-        attachments: files.map((file) => ({
+      const attachments = await Promise.all(
+        files.map(async (file) => ({
           name: file.name,
           contentType: file.type || null,
           size: file.size,
-        })),
+          contentBase64: await fileToBase64(file),
+        }))
+      );
+      const input = {
+        message: message.trim(),
+        attachments,
       };
       const nextChat = chat
         ? await sendMessageMutation.mutateAsync(input)
         : await createChatMutation.mutateAsync(input);
+
+      setChat(nextChat);
+      setMessage("");
+      setFiles([]);
+    } finally {
+      submitInFlightRef.current = false;
+      setSubmitInFlight(false);
+    }
+  };
+
+  const startAbilityGuide = async (ability: RockyAbilityCardRecord) => {
+    if (pending || submitInFlightRef.current) {
+      return;
+    }
+
+    submitInFlightRef.current = true;
+    setSubmitInFlight(true);
+    try {
+      const nextChat = await startAbilityGuideMutation.mutateAsync(ability.id);
 
       setChat(nextChat);
       setMessage("");
@@ -1514,7 +1642,14 @@ export function HomePage() {
               transcriptsBySessionId={transcriptsBySessionId}
             />
           ) : (
-            <EmptyChatState />
+            <EmptyChatState
+              abilities={abilities}
+              abilitiesLoading={abilitiesQuery.isLoading}
+              disabled={pending}
+              onSelectAbility={(ability) => {
+                void startAbilityGuide(ability);
+              }}
+            />
           )}
         </main>
 

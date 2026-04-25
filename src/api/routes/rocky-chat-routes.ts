@@ -22,6 +22,8 @@ interface RockyChatRoutesOptions extends FastifyPluginOptions {
   rockyChatService: RockyChatServiceLike;
 }
 
+const ROCKY_CHAT_BODY_LIMIT = Number.MAX_SAFE_INTEGER;
+
 function badRequest(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), {
     statusCode: 400,
@@ -139,6 +141,10 @@ function parseAttachments(value: unknown): RockyAttachmentInput[] {
         typeof record.size === "number" && Number.isFinite(record.size)
           ? record.size
           : null,
+      contentBase64:
+        typeof record.contentBase64 === "string" && record.contentBase64.trim()
+          ? record.contentBase64.trim()
+          : null,
     };
   });
 }
@@ -152,13 +158,15 @@ function parseMessageBody(body: unknown): {
   }
 
   const input = body as Record<string, unknown>;
-  if (typeof input.message !== "string" || !input.message.trim()) {
-    throw badRequest("message is required.");
+  const attachments = parseAttachments(input.attachments);
+  const message = typeof input.message === "string" ? input.message.trim() : "";
+  if (!message && attachments.length === 0) {
+    throw badRequest("message or attachments are required.");
   }
 
   return {
-    message: input.message.trim(),
-    attachments: parseAttachments(input.attachments),
+    message,
+    attachments,
   };
 }
 
@@ -216,6 +224,20 @@ function parseCoreSettingsPatchBody(body: unknown): RockyCoreSettingsUpdateInput
 export const registerRockyChatRoutes: FastifyPluginAsync<
   RockyChatRoutesOptions
 > = async (server, options) => {
+  server.get("/rocky/abilities", async (_request, reply) => {
+    sendJson(reply, 200, await options.rockyChatService.listAbilityCards());
+  });
+
+  server.post<{ Params: { abilityId: string } }>(
+    "/rocky/abilities/:abilityId/guide",
+    async (request, reply) => {
+      const chat = await options.rockyChatService.startAbilityGuide(
+        request.params.abilityId
+      );
+      sendJson(reply, 201, chat);
+    }
+  );
+
   server.get("/rocky/core", async (_request, reply) => {
     sendJson(reply, 200, await options.rockyChatService.getCoreManagement());
   });
@@ -236,12 +258,20 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
     sendJson(reply, 200, chats);
   });
 
-  server.post("/rocky/chats", async (request, reply) => {
-    const chat = await options.rockyChatService.createChat(
-      parseMessageBody(request.body)
-    );
-    sendJson(reply, 201, chat);
-  });
+  server.post(
+    "/rocky/chats",
+    {
+      // Rocky home can send uploaded files as base64 attachment payloads.
+      // Practical limits are still constrained by process memory and transport.
+      bodyLimit: ROCKY_CHAT_BODY_LIMIT,
+    },
+    async (request, reply) => {
+      const chat = await options.rockyChatService.createChat(
+        parseMessageBody(request.body)
+      );
+      sendJson(reply, 201, chat);
+    }
+  );
 
   server.get<{ Params: { chatId: string } }>(
     "/rocky/chats/:chatId",
@@ -253,6 +283,10 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
 
   server.post<{ Params: { chatId: string } }>(
     "/rocky/chats/:chatId/messages",
+    {
+      // Follow-up turns can include new uploaded files as base64 attachments.
+      bodyLimit: ROCKY_CHAT_BODY_LIMIT,
+    },
     async (request, reply) => {
       const chat = await options.rockyChatService.addMessage(
         request.params.chatId,

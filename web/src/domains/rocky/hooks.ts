@@ -9,6 +9,7 @@ import type {
 } from "@/domains/rocky/types";
 
 export const rockyQueryKeys = {
+  abilities: ["rocky-abilities"] as const,
   chats: ["rocky-chats"] as const,
   chat: (chatId: string) => ["rocky-chat", chatId] as const,
   coreManagement: ["rocky-core-management"] as const,
@@ -25,6 +26,14 @@ export function useRockyChatsQuery() {
   return useQuery({
     queryKey: rockyQueryKeys.chats,
     queryFn: () => agentEngineClient.listRockyChats(),
+  });
+}
+
+export function useRockyAbilitiesQuery() {
+  return useQuery({
+    queryKey: rockyQueryKeys.abilities,
+    queryFn: () => agentEngineClient.listRockyAbilities(),
+    staleTime: 60_000,
   });
 }
 
@@ -74,6 +83,19 @@ export function useCreateRockyChatMutation() {
   return useMutation({
     mutationFn: (input: RockyChatCreateInput) =>
       agentEngineClient.createRockyChat(input),
+    onSuccess: async (chat: RockyChatRecord) => {
+      queryClient.setQueryData(rockyQueryKeys.chat(chat.id), chat);
+      await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats });
+    },
+  });
+}
+
+export function useStartRockyAbilityGuideMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (abilityId: string) =>
+      agentEngineClient.startRockyAbilityGuide(abilityId),
     onSuccess: async (chat: RockyChatRecord) => {
       queryClient.setQueryData(rockyQueryKeys.chat(chat.id), chat);
       await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats });

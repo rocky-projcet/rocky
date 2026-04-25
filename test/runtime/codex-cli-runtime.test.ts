@@ -918,6 +918,59 @@ test("CodexCliRuntime captures stderr, non-json stdout, and output-last-message"
   assert.match(result.stderr[0] ?? "", /ERROR websocket disconnected/);
 });
 
+test("CodexCliRuntime keeps output-last-message after interim assistant events", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "codex-runtime-final-"));
+  const lastMessagePath = path.join(tempRoot, "last-message.txt");
+
+  const fakeSpawn = () => {
+    const child = createFakeChild();
+
+    queueMicrotask(async () => {
+      await writeFile(lastMessagePath, "final assistant message");
+      child.stdout.write(
+        `${JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            content: [{ text: "I'll inspect the request first." }],
+          },
+        })}\n`
+      );
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("close", 0, null);
+    });
+
+    return child;
+  };
+
+  const runtime = new CodexCliRuntime({
+    spawn: fakeSpawn,
+    idGenerator: (() => {
+      const ids = ["session-4", "run-4"];
+      return () => ids.shift() ?? "";
+    })(),
+  });
+
+  const session = await runtime.createSession({
+    workspaceRoot: tempRoot,
+    runtimeHome: path.join(tempRoot, "runtime-home"),
+  });
+  const run = await runtime.sendTurn({
+    sessionId: session.id,
+    prompt: "hello",
+    outputLastMessagePath: lastMessagePath,
+  });
+  const result = await runtime.getRunResult(run.runId);
+
+  assert.deepEqual(
+    result.messages.map((message) => message.text),
+    ["I'll inspect the request first.", "final assistant message"]
+  );
+  assert.equal(result.messages.at(-1)?.itemType, "output-last-message");
+  assert.equal(result.lastMessage, "final assistant message");
+});
+
 test("CodexCliRuntime shares HOME for writable runs and records the fallback warning", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "codex-runtime-home-fallback-"));
   const workspaceRoot = path.join(tempRoot, "workspace");

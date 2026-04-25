@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 import { ROCKY_AGENT_REQUEST_CONTEXT_DIR } from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
@@ -14,6 +14,7 @@ import type {
   AgentSessionMessage,
   AgentSessionRecord,
 } from "../../src/sessions/session-types.js";
+import type { RuntimeRunResult } from "../../src/runtime/runtime-types.js";
 
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
@@ -136,6 +137,7 @@ function createRockyChatTestServer(stateRoot: string) {
   const agents: AgentRecord[] = [];
   const sessions: AgentSessionRecord[] = [];
   const runs: AgentRunRecord[] = [];
+  const transcriptOverrides = new Map<string, AgentSessionMessage[]>();
   const deletedSessionIds: string[] = [];
   const createSessionCalls: Array<{
     agentId: string;
@@ -224,7 +226,11 @@ function createRockyChatTestServer(stateRoot: string) {
       async getSession() {
         throw new Error("not used");
       },
-      async getTranscript() {
+      async getTranscript(sessionId) {
+        const override = transcriptOverrides.get(sessionId);
+        if (override) {
+          return override;
+        }
         const completedRun = [...runs].reverse().find((run) => run.status === "completed");
         if (!completedRun) {
           return [];
@@ -240,6 +246,44 @@ function createRockyChatTestServer(stateRoot: string) {
             createdAt: completedRun.endedAt ?? completedRun.startedAt,
           } satisfies AgentSessionMessage,
         ];
+      },
+      async getRunResult(runId) {
+        const run = runs.find((entry) => entry.id === runId);
+        if (!run) {
+          throw new Error(`Unknown run: ${runId}`);
+        }
+        const lastMessage = run.summary?.trim() || null;
+        return {
+          runId: run.id,
+          sessionId: run.sessionId,
+          runtimeSessionId: run.runtimeSessionId,
+          sessionBinding: null,
+          status: run.status,
+          startedAt: run.startedAt,
+          endedAt: run.endedAt,
+          exitCode: run.status === "completed" ? 0 : null,
+          signal: null,
+          command: "fake-codex",
+          args: [],
+          messages: lastMessage
+            ? [
+                {
+                  role: "assistant",
+                  text: lastMessage,
+                  itemType: "output-last-message",
+                  occurredAt: run.endedAt ?? run.startedAt,
+                  source: "output-last-message",
+                },
+              ]
+            : [],
+          warnings: [],
+          errors: run.status === "failed" && run.summary ? [run.summary] : [],
+          stderr: [],
+          artifactRefs: [],
+          lastMessage,
+          outputLastMessagePath: run.outputLastMessagePath,
+          rawEvents: [],
+        } satisfies RuntimeRunResult;
       },
       async deleteSession(sessionId) {
         deletedSessionIds.push(sessionId);
@@ -296,9 +340,6 @@ function createRockyChatTestServer(stateRoot: string) {
         }
         return run;
       },
-      async getRunResult() {
-        throw new Error("not used");
-      },
       async cancelRun() {},
       async stopAgentRuns() {
         return [];
@@ -315,8 +356,120 @@ function createRockyChatTestServer(stateRoot: string) {
     server,
     sessions,
     stoppedSessionIds,
+    transcriptOverrides,
   };
 }
+
+test("rocky abilities expose skill-backed home cards", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { server } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "GET",
+      url: "/rocky/abilities",
+    });
+    assert.equal(response.statusCode, 200);
+    const abilities = response.json<Array<{
+      skillId: string;
+      title: string;
+      examples: string[];
+    }>>();
+    const pptAbility = abilities.find(
+      (ability) => ability.skillId === "rocky.presentation"
+    );
+    assert.ok(pptAbility);
+    assert.equal(pptAbility.title, "PPT 능력");
+    assert.ok(pptAbility.examples.some((example) => /번역/u.test(example)));
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky ability guide starts with a Rocky answer, not a user prompt", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { server } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/abilities/rocky.presentation/guide",
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.title, "PPT 능력");
+    assert.equal(chat.messages.length, 1);
+    assert.equal(chat.messages[0]?.role, "rocky");
+    assert.match(chat.messages[0]?.text ?? "", /PPT 능력 사용법/u);
+    assert.match(chat.messages[0]?.text ?? "", /PPT 텍스트 번역/u);
+    assert.equal(
+      chat.messages.some((message) =>
+        /PPT 능력을 어떻게 쓰면 되는지 알려줘/u.test(message.text)
+      ),
+      false
+    );
+    assert.equal(chat.dispatches.length, 0);
+    assert.equal(chat.executionStarted, false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat accepts attachment-only PPT requests with a default prompt", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, sendTurnCalls, server } = createRockyChatTestServer(stateRoot);
+  const pptBody = Buffer.alloc(1_100_000, "p");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "",
+        attachments: [
+          {
+            name: "deck.pptx",
+            contentType:
+              "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            size: 2048,
+            contentBase64: pptBody.toString("base64"),
+          },
+        ],
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.worker?.skillId, "rocky.presentation");
+    assert.equal(chat.messages[0]?.role, "user");
+    assert.equal(chat.messages[0]?.text, "Please review the attached file.");
+    assert.match(chat.attachments[0]?.workspacePath ?? "", /^uploads\/rocky\//u);
+    const uploadedBody = await readFile(
+      path.join(agents[0]!.workspaceRoot, chat.attachments[0]!.workspacePath!)
+    );
+    assert.equal(uploadedBody.byteLength, pptBody.byteLength);
+    assert.equal(chat.dispatches[0]?.skillId, "rocky.presentation");
+    assert.equal(
+      chat.dispatches[0]?.originalRequest,
+      "Please review the attached file."
+    );
+    assert.equal(sendTurnCalls.length, 1);
+    assert.equal(sendTurnCalls[0]?.prompt, "Please review the attached file.");
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions[1] ?? "",
+      /\.agents\/rocky\/requests\//u
+    );
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions[1]?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${chat.dispatches[0]!.id}.md`;
+    const requestContext = await readFile(
+      path.join(agents[0]!.workspaceRoot, contextPath),
+      "utf8"
+    );
+    assert.match(requestContext, /workspace path: uploads\/rocky\//u);
+  } finally {
+    await server.close();
+  }
+});
 
 test("rocky chat keeps task requests on Rocky Core", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
@@ -463,6 +616,14 @@ test("rocky core management stores default model settings for new home sessions"
     });
     assert.equal(syncResponse.statusCode, 200);
     assert.equal(syncResponse.json().skills[0]?.synchronized, true);
+    assert.ok(
+      syncResponse
+        .json()
+        .skills.some(
+          (skill: { id: string; synchronized: boolean }) =>
+            skill.id === "rocky.presentation" && skill.synchronized
+        )
+    );
   } finally {
     await server.close();
   }
@@ -732,6 +893,148 @@ test("rocky chat refreshes Rocky Core status from the backing run", async () => 
     assert.equal(refreshed.messages[1]?.text, "Rocky Core가 작업을 정리했습니다.");
     assert.equal(refreshed.dispatches[0]?.orchestration?.status, "completed");
     assert.equal(refreshed.dispatches[0]?.orchestration?.endedAt, "2026-04-21T00:01:00.000Z");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat refresh prefers final run result over interim assistant transcript", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { runs, server, transcriptOverrides } =
+    createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "요청 파일을 확인해서 최종 답변해줘.",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    const runId = chat.dispatches[0]?.orchestration?.runId;
+    const sessionId = chat.dispatches[0]?.orchestration?.sessionId;
+    assert.ok(runId);
+    assert.ok(sessionId);
+
+    transcriptOverrides.set(sessionId, [
+      {
+        id: "assistant-interim",
+        sessionId,
+        runId,
+        role: "assistant",
+        content:
+          "요청 파일만 확인해서 이 턴의 메타데이터와 원문 요청을 맞춘 뒤 답하겠습니다.",
+        source: "item.completed",
+        createdAt: "2026-04-21T00:00:30.000Z",
+      },
+    ]);
+    runs[0] = {
+      ...runs[0]!,
+      status: "completed",
+      endedAt: "2026-04-21T00:01:00.000Z",
+      summary: "최종 답변입니다.",
+    };
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+    assert.equal(refreshed.orchestration?.status, "completed");
+    assert.equal(refreshed.orchestration?.output, "최종 답변입니다.");
+    assert.equal(refreshed.messages[1]?.text, "최종 답변입니다.");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat refresh repairs terminal interim output from the run result", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { runs, server, transcriptOverrides } =
+    createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "최종 답변을 저장해줘.",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    const runId = chat.dispatches[0]?.orchestration?.runId;
+    const sessionId = chat.dispatches[0]?.orchestration?.sessionId;
+    assert.ok(runId);
+    assert.ok(sessionId);
+
+    transcriptOverrides.set(sessionId, [
+      {
+        id: "assistant-interim",
+        sessionId,
+        runId,
+        role: "assistant",
+        content: "중간 진행 내용입니다.",
+        source: "item.completed",
+        createdAt: "2026-04-21T00:00:30.000Z",
+      },
+    ]);
+    runs[0] = {
+      ...runs[0]!,
+      status: "completed",
+      endedAt: "2026-04-21T00:01:00.000Z",
+      summary: "진짜 최종 답변입니다.",
+    };
+
+    const staleChat: RockyChatRecord = {
+      ...chat,
+      messages: chat.messages.map((message) =>
+        message.role === "rocky"
+          ? { ...message, text: "중간 진행 내용입니다." }
+          : message
+      ),
+      dispatches: chat.dispatches.map((dispatch) =>
+        dispatch.orchestration
+          ? {
+              ...dispatch,
+              orchestration: {
+                ...dispatch.orchestration,
+                status: "completed",
+                output: "중간 진행 내용입니다.",
+                endedAt: "2026-04-21T00:01:00.000Z",
+                updatedAt: "2026-04-21T00:01:00.000Z",
+              },
+            }
+          : dispatch
+      ),
+      orchestration: chat.orchestration
+        ? {
+            ...chat.orchestration,
+            status: "completed",
+            output: "중간 진행 내용입니다.",
+            endedAt: "2026-04-21T00:01:00.000Z",
+            updatedAt: "2026-04-21T00:01:00.000Z",
+          }
+        : null,
+    };
+    await writeFile(
+      path.join(stateRoot, "rocky-chat", "chats", chat.id, "chat.json"),
+      JSON.stringify(staleChat, null, 2),
+      "utf8"
+    );
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+    assert.equal(refreshed.orchestration?.status, "completed");
+    assert.equal(refreshed.orchestration?.output, "진짜 최종 답변입니다.");
+    assert.equal(refreshed.messages[1]?.text, "진짜 최종 답변입니다.");
   } finally {
     await server.close();
   }

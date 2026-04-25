@@ -667,6 +667,58 @@ export interface RockyChatRecord {
   updatedAt: string;
 }
 
+export interface RockyCoreSettingsRecord {
+  defaultRuntimeKind: RuntimeKind;
+  defaultModel: string | null;
+  defaultReasoningEffort: RuntimeReasoningEffort | null;
+  defaultServiceTier: RuntimeServiceTier | null;
+  defaultOllamaLaunchTarget: RuntimeOllamaLaunchTarget | null;
+  updatedAt: string | null;
+}
+
+export interface RockyCoreSettingsUpdateInput {
+  defaultRuntimeKind?: RuntimeKind;
+  defaultModel?: string | null;
+  defaultReasoningEffort?: RuntimeReasoningEffort | null;
+  defaultServiceTier?: RuntimeServiceTier | null;
+  defaultOllamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
+}
+
+export interface RockyCoreSkillRecord {
+  id: string;
+  version: string;
+  displayName: string;
+  description: string;
+  workspacePath: string | null;
+  synchronized: boolean;
+}
+
+export interface RockyCoreSessionHealthRecord {
+  homeChatCount: number;
+  chatsWithDispatches: number;
+  chatsWithoutSessionIds: number;
+  chatsWithMissingSessions: number;
+  existingSessionCount: number;
+  runningSessionCount: number;
+  danglingSessionIds: string[];
+}
+
+export interface RockyCoreManagementRecord {
+  agent: {
+    id: string;
+    name: string;
+    description: string;
+    workspaceRoot: string;
+    runtimeHome: string;
+    defaultRuntime: RuntimeKind;
+    lifecycle: "active" | "archived";
+    updatedAt: string;
+  } | null;
+  settings: RockyCoreSettingsRecord;
+  skills: RockyCoreSkillRecord[];
+  sessionHealth: RockyCoreSessionHealthRecord;
+}
+
 export interface RockyChatCreateInput {
   message: string;
   attachments?: RockyAttachmentInput[];
@@ -809,6 +861,13 @@ export interface RunArtifactRecord {
   previewUrl: string | null;
   downloadUrl: string;
   preferredAction: "preview" | "download";
+}
+
+export interface NativeFileOpenRecord {
+  status: "opened";
+  application: string;
+  fileName: string;
+  platform: string;
 }
 
 export type AgentWorkspacePreviewKind =
@@ -1231,6 +1290,25 @@ export class AgentEngineClient {
     );
   }
 
+  getRockyCoreManagement(): Promise<RockyCoreManagementRecord> {
+    return this.request<RockyCoreManagementRecord>("/rocky/core");
+  }
+
+  updateRockyCoreSettings(
+    input: RockyCoreSettingsUpdateInput
+  ): Promise<RockyCoreManagementRecord> {
+    return this.request<RockyCoreManagementRecord>("/rocky/core/settings", {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  syncRockyCoreSkills(): Promise<RockyCoreManagementRecord> {
+    return this.request<RockyCoreManagementRecord>("/rocky/core/skills/sync", {
+      method: "POST",
+    });
+  }
+
   listRockyChats(): Promise<RockyChatRecord[]> {
     return this.request<RockyChatRecord[]>("/rocky/chats");
   }
@@ -1479,6 +1557,12 @@ export class AgentEngineClient {
     return this.request<RunArtifactRecord[]>(`/runs/${encodeURIComponent(runId)}/artifacts`);
   }
 
+  openNativeFile(pathname: string): Promise<NativeFileOpenRecord> {
+    return this.request<NativeFileOpenRecord>(pathname, {
+      method: "POST",
+    });
+  }
+
   cancelRun(runId: string): Promise<RuntimeRunResult> {
     return this.request<RuntimeRunResult>(`/runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -1515,6 +1599,13 @@ export class AgentEngineClient {
     return this.resolveApiPath(
       `/agents/${encodeURIComponent(agentId)}/workspace/file/preview?${search.toString()}`
     );
+  }
+
+  agentWorkspaceFileNativeOpenPath(agentId: string, searchPath: string): string {
+    const search = new URLSearchParams();
+    search.set("path", searchPath);
+
+    return `/agents/${encodeURIComponent(agentId)}/workspace/file/open-native?${search.toString()}`;
   }
 
   resolveApiPath(pathname: string): string {

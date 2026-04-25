@@ -1475,7 +1475,6 @@ test("Agent engine server exposes browser-safe inline preview metadata for previ
       throw new Error("not used");
     },
   };
-
   const server = createAgentEngineServer({
     stateRoot,
     sessionService,
@@ -1702,11 +1701,21 @@ test("Agent engine server converts PowerPoint artifacts to PDF previews", async 
       throw new Error("not used");
     },
   };
+  const nativeOpenPaths: string[] = [];
 
   const server = createAgentEngineServer({
     stateRoot,
     sessionService,
     agentService,
+    nativeFileOpener: async (filePath) => {
+      nativeOpenPaths.push(filePath);
+      return {
+        status: "opened",
+        application: "Microsoft PowerPoint",
+        fileName: path.basename(filePath),
+        platform: "test",
+      };
+    },
   });
 
   await server.listen({
@@ -1748,6 +1757,21 @@ test("Agent engine server converts PowerPoint artifacts to PDF previews", async 
       Buffer.from(await previewResponse.arrayBuffer()).toString("utf8"),
       "%PDF-fake-converted"
     );
+
+    const nativeOpenResponse = await fetch(
+      `${baseUrl}/runs/run-ppt/artifacts/proposal-deck/open-native`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(nativeOpenResponse.status, 200);
+    assert.deepEqual(await nativeOpenResponse.json(), {
+      status: "opened",
+      application: "Microsoft PowerPoint",
+      fileName: "project-proposal.pptx",
+      platform: "test",
+    });
+    assert.deepEqual(nativeOpenPaths, [deckPath]);
   } finally {
     await server.close();
     if (previousConverter === undefined) {
@@ -1793,10 +1817,20 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
   await writeFile(audioPath, Buffer.from("fake-mp3-binary"), "utf8");
   await writeFile(videoPath, Buffer.from("fake-mp4-binary"), "utf8");
 
+  const workspaceNativeOpenPaths: string[] = [];
   const server = createAgentEngineServer({
     stateRoot,
     manager,
     sessionService,
+    nativeFileOpener: async (filePath) => {
+      workspaceNativeOpenPaths.push(filePath);
+      return {
+        status: "opened",
+        application: "Microsoft PowerPoint",
+        fileName: path.basename(filePath),
+        platform: "test",
+      };
+    },
   });
 
   await server.listen({
@@ -2014,6 +2048,21 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
       pptxPreviewMetadata.inlinePreviewUrl,
       `/agents/${agent.id}/workspace/file/preview?path=proposal.pptx`
     );
+
+    const pptxNativeOpenResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/file/open-native?path=proposal.pptx`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(pptxNativeOpenResponse.status, 200);
+    assert.deepEqual(await pptxNativeOpenResponse.json(), {
+      status: "opened",
+      application: "Microsoft PowerPoint",
+      fileName: "proposal.pptx",
+      platform: "test",
+    });
+    assert.deepEqual(workspaceNativeOpenPaths, [pptxPath]);
 
     const audioPreviewMetadataResponse = await fetch(
       `${baseUrl}/agents/${agent.id}/workspace/file?path=voice.mp3`

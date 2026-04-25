@@ -5,6 +5,7 @@ import { constants as fsConstants } from "node:fs";
 import { readJsonFile, serializeJson } from "../sessions/session-store.js";
 
 import type {
+  RockyCoreSettingsRecord,
   RockyChatRecord,
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
@@ -35,6 +36,11 @@ export interface RockyWorkerPaths {
   root: string;
   workersRoot: string;
   workerPath: string;
+}
+
+export interface RockyCoreSettingsPaths {
+  root: string;
+  settingsPath: string;
 }
 
 export function resolveRockyChatPaths({
@@ -70,6 +76,15 @@ export function resolveRockyWorkerPaths({
     root,
     workersRoot,
     workerPath: path.join(workersRoot, `${workerId}.json`),
+  };
+}
+
+export function resolveRockyCoreSettingsPaths(stateRoot?: string): RockyCoreSettingsPaths {
+  const root = path.join(resolveRockyStateRoot(stateRoot), "rocky-chat");
+
+  return {
+    root,
+    settingsPath: path.join(root, "core-settings.json"),
   };
 }
 
@@ -139,4 +154,22 @@ export async function readRockyWorkerRecord(
   }
 
   return readJsonFile<RockyWorkerRecord>(paths.workerPath);
+}
+
+export async function writeRockyCoreSettingsRecord(
+  paths: RockyCoreSettingsPaths,
+  settings: RockyCoreSettingsRecord
+): Promise<void> {
+  await mkdir(paths.root, { recursive: true });
+  await writeFile(paths.settingsPath, serializeJson(settings), "utf8");
+}
+
+export async function readRockyCoreSettingsRecord(
+  paths: RockyCoreSettingsPaths
+): Promise<RockyCoreSettingsRecord | null> {
+  if (!(await pathExists(paths.settingsPath))) {
+    return null;
+  }
+
+  return readJsonFile<RockyCoreSettingsRecord>(paths.settingsPath);
 }

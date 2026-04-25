@@ -25,6 +25,11 @@ import {
   isPresentationPreviewAllowed,
   isPreviewAllowed,
 } from "../../runtime/runtime-artifact-metadata.js";
+import {
+  openPowerPointFile,
+  type NativeFileOpener,
+  type NativeFileOpenRecord,
+} from "./native-open.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 const MAX_TEXT_PREVIEW_BYTES = 64 * 1024;
@@ -339,6 +344,10 @@ export function workspaceFilePreviewPath(agentId: string, searchPath: string): s
   return `/agents/${encodeURIComponent(agentId)}/workspace/file/preview?${workspaceQuery(searchPath)}`;
 }
 
+export function workspaceFileNativeOpenPath(agentId: string, searchPath: string): string {
+  return `/agents/${encodeURIComponent(agentId)}/workspace/file/open-native?${workspaceQuery(searchPath)}`;
+}
+
 async function readTextPreview(filePath: string): Promise<{
   text: string;
   lineCount: number;
@@ -523,6 +532,31 @@ export async function sendWorkspaceFileDownload(
   );
   reply.header("Content-Length", String(body.byteLength));
   reply.send(body);
+}
+
+export async function openWorkspaceFileInPowerPoint(
+  agent: AgentRecord,
+  requestedPath: string,
+  nativeFileOpener: NativeFileOpener = openPowerPointFile
+): Promise<NativeFileOpenRecord> {
+  const { absolutePath, relativePath, metadata } = await statWorkspacePath(
+    agent,
+    requestedPath
+  );
+  if (!metadata.isFile()) {
+    throw badRequest(`Workspace path is not a file: ${relativePath || requestedPath}`);
+  }
+
+  const contentType = contentTypeForArtifactPath(absolutePath);
+  if (!isPresentationPreviewAllowed(contentType)) {
+    const error = new Error(
+      `PowerPoint 직접 열기는 PPT/PPTX 워크스페이스 파일만 지원합니다: ${relativePath || requestedPath}`
+    ) as Error & { statusCode: number };
+    error.statusCode = 415;
+    throw error;
+  }
+
+  return nativeFileOpener(absolutePath);
 }
 
 export async function sendWorkspaceFilePreview(

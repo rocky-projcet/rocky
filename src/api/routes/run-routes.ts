@@ -3,14 +3,17 @@ import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 import type { SessionServiceLike } from "../api-types.js";
 import {
   buildArtifactRecords,
+  openArtifactInPowerPoint,
   sendArtifactDownload,
   sendArtifactPreview,
 } from "../http/artifacts.js";
+import type { NativeFileOpener } from "../http/native-open.js";
 import { sendJson } from "../http/reply.js";
 import { streamRunEventsAsSse } from "../http/sse.js";
 
 interface RunRoutesOptions extends FastifyPluginOptions {
   sessionService: SessionServiceLike;
+  nativeFileOpener?: NativeFileOpener;
 }
 
 export const registerRunRoutes: FastifyPluginAsync<RunRoutesOptions> = async (
@@ -47,6 +50,25 @@ export const registerRunRoutes: FastifyPluginAsync<RunRoutesOptions> = async (
     const run = await options.sessionService.getRun(runId);
     const result = await options.sessionService.getRunResult(runId);
     await sendArtifactPreview(reply, run, result, artifactRole);
+  });
+
+  server.post("/runs/:runId/artifacts/:artifactRole/open-native", async (request, reply) => {
+    const { runId, artifactRole } = request.params as {
+      runId: string;
+      artifactRole: string;
+    };
+    const run = await options.sessionService.getRun(runId);
+    const result = await options.sessionService.getRunResult(runId);
+    sendJson(
+      reply,
+      200,
+      await openArtifactInPowerPoint(
+        run,
+        result,
+        artifactRole,
+        options.nativeFileOpener
+      )
+    );
   });
 
   server.get("/runs/:runId/result", async (request, reply) => {

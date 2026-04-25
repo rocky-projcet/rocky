@@ -12,6 +12,11 @@ import {
   isInlinePreviewAllowed,
   isPresentationPreviewAllowed,
 } from "../../runtime/runtime-artifact-metadata.js";
+import {
+  openPowerPointFile,
+  type NativeFileOpener,
+  type NativeFileOpenRecord,
+} from "./native-open.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 function ensureArtifactPathInRun(run: AgentRunRecord, artifactPath: string): string {
@@ -98,6 +103,60 @@ export async function sendArtifactDownload(
   );
   reply.header("Content-Length", String(body.byteLength));
   reply.send(body);
+}
+
+async function resolveArtifactFile(
+  run: AgentRunRecord,
+  result: RuntimeRunResult,
+  artifactRole: string
+): Promise<string> {
+  const artifactRef = result.artifactRefs.find((entry) => entry.role === artifactRole);
+  if (!artifactRef) {
+    throw new Error(`Unknown artifact role: ${artifactRole}`);
+  }
+
+  const artifactPath = ensureArtifactPathInRun(run, artifactRef.path);
+  try {
+    const metadata = await stat(artifactPath);
+    if (!metadata.isFile()) {
+      const error = new Error(`Artifact path is not a file: ${artifactRole}`) as Error & {
+        statusCode: number;
+      };
+      error.statusCode = 400;
+      throw error;
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      const notFound = new Error(`Artifact file not found: ${artifactRole}`) as Error & {
+        statusCode: number;
+      };
+      notFound.statusCode = 404;
+      throw notFound;
+    }
+    throw err;
+  }
+
+  return artifactPath;
+}
+
+export async function openArtifactInPowerPoint(
+  run: AgentRunRecord,
+  result: RuntimeRunResult,
+  artifactRole: string,
+  nativeFileOpener: NativeFileOpener = openPowerPointFile
+): Promise<NativeFileOpenRecord> {
+  const artifactPath = await resolveArtifactFile(run, result, artifactRole);
+  const contentType = contentTypeForArtifactPath(artifactPath);
+
+  if (!isPresentationPreviewAllowed(contentType)) {
+    const error = new Error(
+      `PowerPoint 직접 열기는 PPT/PPTX 아티팩트만 지원합니다: ${artifactRole}`
+    ) as Error & { statusCode: number };
+    error.statusCode = 415;
+    throw error;
+  }
+
+  return nativeFileOpener(artifactPath);
 }
 
 export async function sendArtifactPreview(

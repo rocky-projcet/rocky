@@ -56,9 +56,21 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
   );
   expect(createdChat).toBeTruthy();
 
+  await page.getByRole("button", { name: "대화 정리" }).click();
+  await expect(page.getByRole("heading", { name: "무엇을 도와드릴까요?" })).toBeVisible();
+  await expect(page.getByText(userPrompt)).toHaveCount(0);
+
+  const afterClearResponse = await request.get("/api/rocky/chats");
+  expect(afterClearResponse.ok()).toBeTruthy();
+  const chatsAfterClear = await afterClearResponse.json();
+  expect(
+    chatsAfterClear.some((candidate: { id?: string }) => candidate.id === createdChat.id)
+  ).toBe(true);
+
   await page.getByRole("button", { name: "이전 대화" }).click();
   const historyDialog = page.getByRole("dialog", { name: "이전 대화" });
   await expect(historyDialog).toBeVisible();
+  await expect(historyDialog.getByTestId(`previous-chat-delete-${createdChat.id}`)).toBeVisible();
 
   page.once("dialog", async (dialog) => {
     await dialog.accept();
@@ -72,6 +84,6 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
       const refreshedResponse = await request.get("/api/rocky/chats");
       const refreshedChats = await refreshedResponse.json();
       return refreshedChats.some((candidate: { id?: string }) => candidate.id === createdChat.id);
-    })
+    }, { timeout: 20_000 })
     .toBe(false);
 });

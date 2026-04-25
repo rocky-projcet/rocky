@@ -36,6 +36,7 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
+import type { NativeFileOpener } from "./http/native-open.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -227,4 +228,5 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
   hardwareStatusService?: HardwareStatusServiceLike;
+  nativeFileOpener?: NativeFileOpener;
 }

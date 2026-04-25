@@ -5,17 +5,58 @@ import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
   RockyChatCreateInput,
   RockyChatRecord,
+  RockyCoreSettingsUpdateInput,
 } from "@/domains/rocky/types";
 
 export const rockyQueryKeys = {
   chats: ["rocky-chats"] as const,
   chat: (chatId: string) => ["rocky-chat", chatId] as const,
+  coreManagement: ["rocky-core-management"] as const,
 };
+
+async function invalidateRockyCore(queryClient: ReturnType<typeof useQueryClient>) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: rockyQueryKeys.coreManagement }),
+    queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats }),
+  ]);
+}
 
 export function useRockyChatsQuery() {
   return useQuery({
     queryKey: rockyQueryKeys.chats,
     queryFn: () => agentEngineClient.listRockyChats(),
+  });
+}
+
+export function useRockyCoreManagementQuery() {
+  return useQuery({
+    queryKey: rockyQueryKeys.coreManagement,
+    queryFn: () => agentEngineClient.getRockyCoreManagement(),
+  });
+}
+
+export function useUpdateRockyCoreSettingsMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: RockyCoreSettingsUpdateInput) =>
+      agentEngineClient.updateRockyCoreSettings(input),
+    onSuccess: async (management) => {
+      queryClient.setQueryData(rockyQueryKeys.coreManagement, management);
+      await invalidateRockyCore(queryClient);
+    },
+  });
+}
+
+export function useSyncRockyCoreSkillsMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => agentEngineClient.syncRockyCoreSkills(),
+    onSuccess: async (management) => {
+      queryClient.setQueryData(rockyQueryKeys.coreManagement, management);
+      await invalidateRockyCore(queryClient);
+    },
   });
 }
 

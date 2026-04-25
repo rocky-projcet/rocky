@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import {
   AudioLines,
   BarChart3,
@@ -90,6 +91,7 @@ function isPowerPointPreviewSupported(artifact: ArtifactLike): boolean {
 
 function ArtifactActionIconButton(props: {
   label: string;
+  disabled?: boolean;
   href?: string;
   onClick?: () => void;
   children: React.ReactNode;
@@ -108,8 +110,9 @@ function ArtifactActionIconButton(props: {
     <button
       type="button"
       aria-label={props.label}
+      disabled={props.disabled}
       onClick={props.onClick}
-      className={ACTION_ICON_BUTTON_BASE}
+      className={cn(ACTION_ICON_BUTTON_BASE, "disabled:cursor-not-allowed disabled:opacity-50")}
     >
       {props.children}
     </button>
@@ -328,6 +331,11 @@ export function ArtifactPreviewCard(props: {
     supportsHtmlPreview ||
     supportsPowerPointPreview;
   const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [nativeOpenPending, setNativeOpenPending] = React.useState(false);
+  const nativeOpenPath = `${props.artifact.downloadUrl}/open-native`;
+  const nativeOpenLabel = nativeOpenPending
+    ? "PowerPoint 여는 중"
+    : "PowerPoint에서 열기";
 
   const handlePreview = React.useCallback(() => {
     void (async () => {
@@ -343,6 +351,32 @@ export function ArtifactPreviewCard(props: {
       }
     })();
   }, [props.onPreview, supportsDialogPreview]);
+
+  const handleNativeOpen = React.useCallback(() => {
+    if (!supportsPowerPointPreview || nativeOpenPending) {
+      return;
+    }
+
+    setNativeOpenPending(true);
+    agentEngineClient
+      .openNativeFile(nativeOpenPath)
+      .then(() => {
+        toast.success(`${props.artifact.name} 파일을 PowerPoint에서 열었습니다.`);
+      })
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "PowerPoint에서 파일을 열지 못했습니다."
+        );
+      })
+      .finally(() => setNativeOpenPending(false));
+  }, [
+    nativeOpenPath,
+    nativeOpenPending,
+    props.artifact.name,
+    supportsPowerPointPreview,
+  ]);
 
   if (variant === "compact") {
     const supportsCompactPreview = Boolean(props.onPreview) || supportsDialogPreview;
@@ -376,6 +410,15 @@ export function ArtifactPreviewCard(props: {
             {supportsCompactPreview ? (
               <ArtifactActionIconButton label="미리보기" onClick={handlePreview}>
                 <Eye size={14} />
+              </ArtifactActionIconButton>
+            ) : null}
+            {supportsPowerPointPreview ? (
+              <ArtifactActionIconButton
+                label={nativeOpenLabel}
+                disabled={nativeOpenPending}
+                onClick={handleNativeOpen}
+              >
+                <ExternalLink size={14} />
               </ArtifactActionIconButton>
             ) : null}
             {previewHref ? (
@@ -421,6 +464,15 @@ export function ArtifactPreviewCard(props: {
                   </div>
 
                   <div className="flex items-center gap-1.5">
+                    {supportsPowerPointPreview ? (
+                      <ArtifactActionIconButton
+                        label={nativeOpenLabel}
+                        disabled={nativeOpenPending}
+                        onClick={handleNativeOpen}
+                      >
+                        <ExternalLink size={14} />
+                      </ArtifactActionIconButton>
+                    ) : null}
                     {previewHref ? (
                       <ArtifactActionIconButton label="새 탭에서 열기" href={previewHref}>
                         <ExternalLink size={14} />
@@ -564,6 +616,16 @@ export function ArtifactPreviewCard(props: {
             >
               {props.artifact.previewable ? "미리보기 열기" : "미리보기 라우트"}
             </a>
+          ) : null}
+          {supportsPowerPointPreview ? (
+            <button
+              type="button"
+              disabled={nativeOpenPending}
+              onClick={handleNativeOpen}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-foreground visited:!text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              {nativeOpenLabel}
+            </button>
           ) : null}
           <a
             href={downloadHref}

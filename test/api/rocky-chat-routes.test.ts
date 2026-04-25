@@ -137,6 +137,15 @@ function createRockyChatTestServer(stateRoot: string) {
   const sessions: AgentSessionRecord[] = [];
   const runs: AgentRunRecord[] = [];
   const deletedSessionIds: string[] = [];
+  const createSessionCalls: Array<{
+    agentId: string;
+    title?: string | null;
+    kind?: AgentSessionRecord["kind"];
+    runtimeKind?: string;
+    model?: string | null;
+    reasoningEffort?: string | null;
+    serviceTier?: string | null;
+  }> = [];
   const sendTurnCalls: Array<{
     sessionId: string;
     prompt: string;
@@ -188,6 +197,15 @@ function createRockyChatTestServer(stateRoot: string) {
     },
     sessionService: {
       async createSession(input) {
+        createSessionCalls.push({
+          agentId: input.agentId,
+          title: input.title,
+          kind: input.kind,
+          runtimeKind: input.runtimeKind,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+          serviceTier: input.serviceTier,
+        });
         const session = buildSession({
           id: `session-${sessions.length + 1}`,
           agentId: input.agentId,
@@ -290,6 +308,7 @@ function createRockyChatTestServer(stateRoot: string) {
 
   return {
     agents,
+    createSessionCalls,
     deletedSessionIds,
     runs,
     sendTurnCalls,
@@ -391,6 +410,59 @@ test("rocky chat keeps task requests on Rocky Core", async () => {
     assert.equal(sendTurnCalls[1]?.sessionId, "session-1");
     assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");
     assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-1");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky core management stores default model settings for new home sessions", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { createSessionCalls, server } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const initialResponse = await server.inject({
+      method: "GET",
+      url: "/rocky/core",
+    });
+    assert.equal(initialResponse.statusCode, 200);
+    assert.equal(initialResponse.json().settings.defaultRuntimeKind, "codex-cli");
+    assert.equal(initialResponse.json().settings.defaultModel, null);
+
+    const settingsResponse = await server.inject({
+      method: "PATCH",
+      url: "/rocky/core/settings",
+      payload: {
+        defaultRuntimeKind: "codex-cli",
+        defaultModel: "gpt-5.5",
+        defaultReasoningEffort: "xhigh",
+        defaultServiceTier: "fast",
+      },
+    });
+    assert.equal(settingsResponse.statusCode, 200);
+    assert.equal(settingsResponse.json().settings.defaultModel, "gpt-5.5");
+    assert.equal(settingsResponse.json().settings.defaultReasoningEffort, "xhigh");
+    assert.equal(settingsResponse.json().settings.defaultServiceTier, "fast");
+
+    const chatResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "새 기본 모델로 답해줘.",
+      },
+    });
+    assert.equal(chatResponse.statusCode, 201);
+    assert.equal(createSessionCalls.length, 1);
+    assert.equal(createSessionCalls[0]?.runtimeKind, "codex-cli");
+    assert.equal(createSessionCalls[0]?.model, "gpt-5.5");
+    assert.equal(createSessionCalls[0]?.reasoningEffort, "xhigh");
+    assert.equal(createSessionCalls[0]?.serviceTier, "fast");
+
+    const syncResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/core/skills/sync",
+    });
+    assert.equal(syncResponse.statusCode, 200);
+    assert.equal(syncResponse.json().skills[0]?.synchronized, true);
   } finally {
     await server.close();
   }

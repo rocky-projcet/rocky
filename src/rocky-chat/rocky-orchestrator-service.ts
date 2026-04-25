@@ -9,6 +9,12 @@ import type {
   AgentSessionRecord,
 } from "../sessions/session-types.js";
 import type {
+  RuntimeKind,
+  RuntimeOllamaLaunchTarget,
+  RuntimeReasoningEffort,
+  RuntimeServiceTier,
+} from "../runtime/runtime-types.js";
+import type {
   RockyAttachmentRecord,
   RockyChatDomain,
   RockyDispatchRecord,
@@ -29,7 +35,19 @@ export interface RockySessionServiceLike {
     agentId: string;
     title?: string | null;
     kind?: AgentSessionKind;
+    runtimeKind?: RuntimeKind;
+    ollamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
+    model?: string | null;
+    reasoningEffort?: RuntimeReasoningEffort | null;
+    serviceTier?: RuntimeServiceTier | null;
   }): Promise<AgentSessionRecord>;
+  listAgentSessions?(
+    agentId: string,
+    options?: {
+      includeArchived?: boolean;
+      kinds?: AgentSessionKind[];
+    }
+  ): Promise<AgentSessionRecord[]>;
   sendTurn(input: {
     sessionId: string;
     prompt: string;
@@ -59,6 +77,11 @@ export interface RockyOrchestrationStartInput {
   skill: RockyOrchestrationSkill;
   protectionHints: string[];
   reuseSessionId?: string | null;
+  defaultRuntimeKind?: RuntimeKind;
+  defaultOllamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
+  defaultModel?: string | null;
+  defaultReasoningEffort?: RuntimeReasoningEffort | null;
+  defaultServiceTier?: RuntimeServiceTier | null;
   timestamp: string;
   extraSystemInstructions?: string[];
 }
@@ -131,6 +154,11 @@ export class RockyOrchestratorService {
             agentId,
             title: input.message.slice(0, 80),
             kind: "task-request",
+            runtimeKind: input.defaultRuntimeKind,
+            ollamaLaunchTarget: input.defaultOllamaLaunchTarget,
+            model: input.defaultModel,
+            reasoningEffort: input.defaultReasoningEffort,
+            serviceTier: input.defaultServiceTier,
           });
       const run = await this.sessionService.sendTurn({
         sessionId: session?.id ?? sessionId!,

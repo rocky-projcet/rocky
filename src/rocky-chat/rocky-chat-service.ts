@@ -1,17 +1,23 @@
 import { randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { access } from "node:fs/promises";
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import {
   deleteRockyChatRecord,
   listRockyChatPaths,
+  readRockyCoreSettingsRecord,
   readRockyChatRecord,
   readRockyWorkerRecord,
+  resolveRockyCoreSettingsPaths,
   resolveRockyChatPaths,
   resolveRockyWorkerPaths,
+  writeRockyCoreSettingsRecord,
   writeRockyChatRecord,
   writeRockyWorkerRecord,
 } from "./rocky-chat-store.js";
 import {
+  ROCKY_CORE_SKILL,
   extractRockyProtectionHints,
   getRockySkillByWorkerId,
   selectRockySkill,
@@ -35,6 +41,10 @@ import type {
   RockyChatDomain,
   RockyChatMessageInput,
   RockyChatRecord,
+  RockyCoreManagementRecord,
+  RockyCoreSettingsRecord,
+  RockyCoreSettingsUpdateInput,
+  RockyCoreSkillRecord,
   RockyDispatchRecord,
   RockyMessageRecord,
   RockyOrchestrationRecord,
@@ -42,6 +52,13 @@ import type {
   RockySkillCandidateRecord,
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
+import type {
+  RuntimeKind,
+  RuntimeOllamaLaunchTarget,
+  RuntimeReasoningEffort,
+  RuntimeServiceTier,
+} from "../runtime/runtime-types.js";
+import type { AgentSessionRecord } from "../sessions/session-types.js";
 
 export interface RockyChatServiceOptions {
   stateRoot?: string;
@@ -74,6 +91,63 @@ function titleFromMessage(message: string): string {
 
 function isUnknownSessionError(error: unknown): boolean {
   return error instanceof Error && /^Unknown session: /u.test(error.message);
+}
+
+function isRuntimeKind(value: unknown): value is RuntimeKind {
+  return value === "codex-cli" || value === "claude-code" || value === "ollama";
+}
+
+function normalizeReasoningEffort(
+  value: unknown
+): RuntimeReasoningEffort | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || value === "") {
+    return null;
+  }
+  return value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max"
+    ? value
+    : null;
+}
+
+function normalizeServiceTier(
+  value: unknown
+): RuntimeServiceTier | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || value === "" || value === "default" || value === "flex") {
+    return null;
+  }
+  return value === "fast" ? value : null;
+}
+
+function normalizeOllamaLaunchTarget(
+  value: unknown
+): RuntimeOllamaLaunchTarget | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || value === "") {
+    return null;
+  }
+  return value === "codex" || value === "claude" ? value : null;
+}
+
+function defaultCoreSettings(): RockyCoreSettingsRecord {
+  return {
+    defaultRuntimeKind: "codex-cli",
+    defaultModel: null,
+    defaultReasoningEffort: null,
+    defaultServiceTier: null,
+    defaultOllamaLaunchTarget: null,
+    updatedAt: null,
+  };
 }
 
 export class RockyChatService {
@@ -169,6 +243,119 @@ export class RockyChatService {
         right.createdAt.localeCompare(left.createdAt) ||
         left.id.localeCompare(right.id)
     );
+  }
+
+  async getCoreManagement(): Promise<RockyCoreManagementRecord> {
+    const [settings, rawChats, agent] = await Promise.all([
+      this.readCoreSettings(),
+      this.readAllChats(),
+      this.findCoreAgent(),
+    ]);
+    const sessions = await this.listCoreSessions();
+
+    return this.buildCoreManagementRecord({
+      agent,
+      settings,
+      chats: rawChats.map((chat) => this.hydrateChat(chat)),
+      sessions,
+    });
+  }
+
+  async updateCoreSettings(
+    input: RockyCoreSettingsUpdateInput
+  ): Promise<RockyCoreManagementRecord> {
+    const current = await this.readCoreSettings();
+    const next: RockyCoreSettingsRecord = {
+      ...current,
+      updatedAt: this.now(),
+    };
+
+    if (Object.prototype.hasOwnProperty.call(input, "defaultRuntimeKind")) {
+      if (!isRuntimeKind(input.defaultRuntimeKind)) {
+        throw badRequest(
+          "defaultRuntimeKind must be codex-cli, claude-code, or ollama."
+        );
+      }
+      next.defaultRuntimeKind = input.defaultRuntimeKind;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "defaultModel")) {
+      if (input.defaultModel === null || input.defaultModel === undefined) {
+        next.defaultModel = null;
+      } else if (typeof input.defaultModel === "string") {
+        const trimmed = input.defaultModel.trim();
+        next.defaultModel = trimmed.length > 0 ? trimmed : null;
+      } else {
+        throw badRequest("defaultModel must be a string or null.");
+      }
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(input, "defaultReasoningEffort")
+    ) {
+      const normalized = normalizeReasoningEffort(input.defaultReasoningEffort);
+      if (
+        normalized === null &&
+        input.defaultReasoningEffort !== null &&
+        input.defaultReasoningEffort !== undefined
+      ) {
+        throw badRequest(
+          "defaultReasoningEffort must be low, medium, high, xhigh, max, or null."
+        );
+      }
+      next.defaultReasoningEffort = normalized ?? null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, "defaultServiceTier")) {
+      const normalized = normalizeServiceTier(input.defaultServiceTier);
+      if (
+        normalized === null &&
+        input.defaultServiceTier !== null &&
+        input.defaultServiceTier !== undefined
+      ) {
+        throw badRequest("defaultServiceTier must be fast or null.");
+      }
+      next.defaultServiceTier = normalized ?? null;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(input, "defaultOllamaLaunchTarget")
+    ) {
+      const normalized = normalizeOllamaLaunchTarget(
+        input.defaultOllamaLaunchTarget
+      );
+      if (
+        normalized === null &&
+        input.defaultOllamaLaunchTarget !== null &&
+        input.defaultOllamaLaunchTarget !== undefined
+      ) {
+        throw badRequest(
+          "defaultOllamaLaunchTarget must be codex, claude, or null."
+        );
+      }
+      next.defaultOllamaLaunchTarget = normalized ?? null;
+    }
+
+    if (next.defaultRuntimeKind !== "ollama") {
+      next.defaultOllamaLaunchTarget = null;
+    }
+
+    await writeRockyCoreSettingsRecord(
+      resolveRockyCoreSettingsPaths(this.stateRoot),
+      next
+    );
+
+    return this.getCoreManagement();
+  }
+
+  async syncCoreSkills(): Promise<RockyCoreManagementRecord> {
+    await this.ensureCoreWorker({
+      skill: ROCKY_CORE_SKILL,
+      reason: "Rocky Core 관리 화면에서 스킬 동기화를 요청했습니다.",
+      timestamp: this.now(),
+    });
+
+    return this.getCoreManagement();
   }
 
   async addMessage(
@@ -344,6 +531,7 @@ export class RockyChatService {
       skillCandidates,
       timestamp: input.timestamp,
     });
+    const settings = await this.readCoreSettings();
     const orchestration = await this.orchestrator.start({
       chatId: input.chatId,
       domain: input.domain,
@@ -355,6 +543,11 @@ export class RockyChatService {
       skill: input.skill,
       protectionHints: dispatch.protectionHints,
       reuseSessionId: input.reuseCoreSessionId,
+      defaultRuntimeKind: settings.defaultRuntimeKind,
+      defaultOllamaLaunchTarget: settings.defaultOllamaLaunchTarget,
+      defaultModel: settings.defaultModel,
+      defaultReasoningEffort: settings.defaultReasoningEffort,
+      defaultServiceTier: settings.defaultServiceTier,
       timestamp: input.timestamp,
       extraSystemInstructions,
     });
@@ -411,6 +604,148 @@ export class RockyChatService {
     });
 
     return extraSystemInstructions;
+  }
+
+  private async readCoreSettings(): Promise<RockyCoreSettingsRecord> {
+    const persisted = await readRockyCoreSettingsRecord(
+      resolveRockyCoreSettingsPaths(this.stateRoot)
+    );
+
+    return {
+      ...defaultCoreSettings(),
+      ...(persisted ?? {}),
+      defaultRuntimeKind: isRuntimeKind(persisted?.defaultRuntimeKind)
+        ? persisted.defaultRuntimeKind
+        : "codex-cli",
+      defaultReasoningEffort:
+        normalizeReasoningEffort(persisted?.defaultReasoningEffort) ?? null,
+      defaultServiceTier: normalizeServiceTier(persisted?.defaultServiceTier) ?? null,
+      defaultOllamaLaunchTarget:
+        normalizeOllamaLaunchTarget(persisted?.defaultOllamaLaunchTarget) ?? null,
+    };
+  }
+
+  private async readAllChats(): Promise<RockyChatRecord[]> {
+    const paths = await listRockyChatPaths(this.stateRoot);
+    return (
+      await Promise.all(paths.map((entry) => readRockyChatRecord(entry)))
+    ).filter((chat): chat is RockyChatRecord => Boolean(chat));
+  }
+
+  private async findCoreAgent(): Promise<AgentRecord | null> {
+    if (!this.agentService) {
+      return null;
+    }
+
+    const agents = await this.agentService.listAgents();
+    return agents.find((agent) => agent.id === ROCKY_CORE_SKILL.agent.id) ?? null;
+  }
+
+  private async listCoreSessions(): Promise<AgentSessionRecord[]> {
+    if (!this.sessionService?.listAgentSessions) {
+      return [];
+    }
+
+    try {
+      return await this.sessionService.listAgentSessions(ROCKY_CORE_SKILL.agent.id, {
+        includeArchived: true,
+        kinds: ["task-request"],
+      });
+    } catch (error) {
+      if (error instanceof Error && /^Unknown agent: /u.test(error.message)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async fileExists(targetPath: string): Promise<boolean> {
+    try {
+      await access(targetPath, fsConstants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async buildCoreSkillRecords(
+    agent: AgentRecord | null
+  ): Promise<RockyCoreSkillRecord[]> {
+    const workspacePath = agent
+      ? `skills/${ROCKY_CORE_SKILL.id}/SKILL.md`
+      : null;
+    const absoluteSkillPath =
+      agent && workspacePath
+        ? `${agent.workspaceRoot}/${workspacePath}`
+        : null;
+
+    return [
+      {
+        id: ROCKY_CORE_SKILL.id,
+        version: ROCKY_CORE_SKILL.version,
+        displayName: ROCKY_CORE_SKILL.displayName,
+        description: ROCKY_CORE_SKILL.description,
+        workspacePath,
+        synchronized: absoluteSkillPath
+          ? await this.fileExists(absoluteSkillPath)
+          : false,
+      },
+    ];
+  }
+
+  private async buildCoreManagementRecord(input: {
+    agent: AgentRecord | null;
+    settings: RockyCoreSettingsRecord;
+    chats: RockyChatRecord[];
+    sessions: AgentSessionRecord[];
+  }): Promise<RockyCoreManagementRecord> {
+    const existingSessionIds = new Set(input.sessions.map((session) => session.id));
+    const chatSessionIds = input.chats.map((chat) => [
+      ...new Set(
+        chat.dispatches
+          .map((dispatch) => dispatch.orchestration?.sessionId)
+          .filter((sessionId): sessionId is string => Boolean(sessionId))
+      ),
+    ]);
+    const danglingSessionIds = [
+      ...new Set(
+        chatSessionIds.flat().filter((sessionId) => !existingSessionIds.has(sessionId))
+      ),
+    ].sort();
+
+    return {
+      agent: input.agent
+        ? {
+            id: input.agent.id,
+            name: input.agent.name,
+            description: input.agent.description,
+            workspaceRoot: input.agent.workspaceRoot,
+            runtimeHome: input.agent.runtimeHome,
+            defaultRuntime: input.agent.defaultRuntime,
+            lifecycle: input.agent.lifecycle,
+            updatedAt: input.agent.updatedAt,
+          }
+        : null,
+      settings: input.settings,
+      skills: await this.buildCoreSkillRecords(input.agent),
+      sessionHealth: {
+        homeChatCount: input.chats.length,
+        chatsWithDispatches: input.chats.filter(
+          (chat) => chat.dispatches.length > 0
+        ).length,
+        chatsWithoutSessionIds: chatSessionIds.filter(
+          (sessionIds) => sessionIds.length === 0
+        ).length,
+        chatsWithMissingSessions: chatSessionIds.filter((sessionIds) =>
+          sessionIds.some((sessionId) => !existingSessionIds.has(sessionId))
+        ).length,
+        existingSessionCount: input.sessions.length,
+        runningSessionCount: input.sessions.filter(
+          (session) => session.status === "running"
+        ).length,
+        danglingSessionIds,
+      },
+    };
   }
 
   private async deleteSessionIfPresent(sessionId: string): Promise<void> {

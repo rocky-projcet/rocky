@@ -15,14 +15,17 @@ import { sendJson } from "../http/reply.js";
 import {
   buildWorkspaceDirectoryRecord,
   buildWorkspaceFilePreviewRecord,
+  openWorkspaceFileInPowerPoint,
   sendWorkspaceFileDownload,
   sendWorkspaceFilePreview,
   writeWorkspaceUploadFile,
 } from "../http/workspace.js";
+import type { NativeFileOpener } from "../http/native-open.js";
 
 interface AgentRoutesOptions extends FastifyPluginOptions {
   agentService: AgentServiceLike;
   sessionService: SessionServiceLike;
+  nativeFileOpener?: NativeFileOpener;
 }
 
 function isRuntimeKind(value: unknown): value is RuntimeKind {
@@ -489,6 +492,24 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
     });
 
     await sendWorkspaceFilePreview(reply, agent, requestedPath!);
+  });
+
+  server.post("/agents/:agentId/workspace/file/open-native", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    const requestedPath = parseWorkspaceQuery(request.query, {
+      required: true,
+    });
+
+    sendJson(
+      reply,
+      200,
+      await openWorkspaceFileInPowerPoint(
+        agent,
+        requestedPath!,
+        options.nativeFileOpener
+      )
+    );
   });
 
   server.get("/agents/:agentId/sessions", async (request, reply) => {

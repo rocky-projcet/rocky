@@ -93,7 +93,7 @@ test("task request model options stay engine-scoped for agent runtime selection"
   await expect(page.getByText("Sonnet (1M context) · Sonnet 4.6")).toBeVisible();
   await expect(page.getByText("Opus (1M context) · Opus 4.6")).toBeVisible();
   await expect(page.getByText("Haiku · Haiku 4.5")).toBeVisible();
-  await expect(page.getByText("GPT-5.4")).toHaveCount(0);
+  await expect(page.getByText("GPT-5.5")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(requestDialog.getByRole("combobox", { name: "추론 수준" })).toBeVisible();
   await expect(requestDialog.getByText("응답 속도")).toHaveCount(0);
@@ -102,9 +102,9 @@ test("task request model options stay engine-scoped for agent runtime selection"
   await page.getByText("Codex CLI").last().click();
   await expect(
     requestDialog.getByRole("combobox", { name: /실행 모델/i })
-  ).toContainText("GPT-5.4");
+  ).toContainText("GPT-5.5");
   await requestDialog.getByRole("combobox", { name: /실행 모델/i }).click();
-  await expect(page.getByText("GPT-5.4 mini")).toBeVisible();
+  await expect(page.getByText("GPT-5.4-Mini")).toBeVisible();
   await expect(page.getByText("Default (recommended) · Sonnet 4.6")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(requestDialog.getByRole("combobox", { name: "추론 수준" })).toBeVisible();
@@ -216,7 +216,7 @@ test("task request runtime selections persist into the session workspace and sur
 
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("combobox", { name: "실행 모델" }).click();
-  await page.getByText("GPT-5.4 mini").last().click();
+  await page.getByText(/^GPT-5\.4$/i).last().click();
   await dialog.getByRole("combobox", { name: "추론 수준" }).click();
   await page.getByText("매우 높음").last().click();
   await dialog.getByRole("combobox", { name: "응답 속도" }).click();
@@ -234,15 +234,15 @@ test("task request runtime selections persist into the session workspace and sur
   expect(sessionResponse.ok()).toBeTruthy();
   const sessionRecord = await sessionResponse.json();
 
-  expect(sessionRecord.runtimeConfig.model).toBe("gpt-5.4-mini");
+  expect(sessionRecord.runtimeConfig.model).toBe("gpt-5.4");
   expect(sessionRecord.runtimeConfig.reasoningEffort).toBe("xhigh");
   expect(sessionRecord.runtimeConfig.serviceTier).toBe("fast");
 
-  await expect(page.getByRole("button", { name: /GPT-5\.4 mini.*매우 높음.*Fast/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /gpt-5\.4.*매우 높음.*Fast/i })).toBeVisible();
 
   await page.reload();
 
-  await expect(page.getByRole("button", { name: /GPT-5\.4 mini.*매우 높음.*Fast/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /gpt-5\.4.*매우 높음.*Fast/i })).toBeVisible();
 });
 
 test("session workspace keeps the last runtime selections across refresh", async ({
@@ -264,7 +264,7 @@ test("session workspace keeps the last runtime selections across refresh", async
     data: {
       title: "sticky session test",
       runtimeKind: "codex-cli",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.4",
       reasoningEffort: "xhigh",
       serviceTier: "fast",
     },
@@ -275,7 +275,7 @@ test("session workspace keeps the last runtime selections across refresh", async
   await page.goto(`/agents/${agentId}/sessions/${createdSession.id}`);
 
   const modelSettingsButton = page.getByRole("button", {
-    name: /GPT-5\.4 mini.*매우 높음.*Fast/,
+    name: /gpt-5\.4.*매우 높음.*Fast/i,
   });
   await expect(modelSettingsButton).toBeVisible();
   await modelSettingsButton.click();
@@ -284,26 +284,26 @@ test("session workspace keeps the last runtime selections across refresh", async
   const reasoningSelect = page.getByRole("combobox", { name: "추론 수준" });
   const serviceTierSelect = page.getByRole("combobox", { name: "응답 속도" });
 
-  await expect(modelSelect).toContainText("GPT-5.4 mini");
+  await expect(modelSelect).toContainText(/gpt-5\.4/i);
   await expect(reasoningSelect).toContainText("매우 높음");
   await expect(serviceTierSelect).toContainText("Fast");
 
   await modelSelect.click();
-  await page.getByText("GPT-5.4", { exact: true }).last().click();
+  await page.getByText("GPT-5.5", { exact: true }).last().click();
   await reasoningSelect.click();
   await page.getByText("높음", { exact: true }).last().click();
   await serviceTierSelect.click();
   await page.getByText("기본", { exact: true }).last().click();
 
-  await expect(modelSelect).toContainText("GPT-5.4");
+  await expect(modelSelect).toContainText("GPT-5.5");
   await expect(reasoningSelect).toContainText("높음");
   await expect(serviceTierSelect).toContainText("기본");
 
   await page.reload();
 
-  await expect(page.getByRole("button", { name: /GPT-5\.4.*높음/ })).toBeVisible();
-  await page.getByRole("button", { name: /GPT-5\.4.*높음/ }).click();
-  await expect(page.getByRole("combobox", { name: "모델" })).toContainText("GPT-5.4");
+  await expect(page.getByRole("button", { name: /GPT-5\.5.*높음/ })).toBeVisible();
+  await page.getByRole("button", { name: /GPT-5\.5.*높음/ }).click();
+  await expect(page.getByRole("combobox", { name: "모델" })).toContainText("GPT-5.5");
   await expect(page.getByRole("combobox", { name: "추론 수준" })).toContainText("높음");
   await expect(page.getByRole("combobox", { name: "응답 속도" })).toContainText("기본");
 });

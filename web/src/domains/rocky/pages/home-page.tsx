@@ -9,6 +9,7 @@ import { useQueries } from "@tanstack/react-query";
 import { FileText, History, Paperclip, Send, Trash2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 
 import { ArtifactPreviewCard } from "@/domains/run/components/artifact-preview-card";
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
@@ -55,6 +56,7 @@ type RockyPreviewPanelSource = {
   downloadHref: string;
   kind: "html" | "powerpoint";
   name: string;
+  nativeOpenPath: string | null;
   previewHref?: string | null;
 };
 
@@ -145,6 +147,7 @@ function buildArtifactPreviewPanelSource(
       downloadHref,
       kind: "html",
       name: artifact.name,
+      nativeOpenPath: null,
     };
   }
 
@@ -155,6 +158,7 @@ function buildArtifactPreviewPanelSource(
       downloadHref,
       kind: "powerpoint",
       name: artifact.name,
+      nativeOpenPath: `${artifact.downloadUrl}/open-native`,
       previewHref: artifact.previewUrl
         ? agentEngineClient.resolveApiPath(artifact.previewUrl)
         : null,
@@ -303,6 +307,10 @@ async function openRockyWorkspacePath(
         downloadHref: agentEngineClient.resolveApiPath(preview.downloadUrl),
         kind: previewPanelKind,
         name: preview.name,
+        nativeOpenPath:
+          previewPanelKind === "powerpoint"
+            ? agentEngineClient.agentWorkspaceFileNativeOpenPath(agentId, normalizedPath)
+            : null,
         previewHref: preview.inlinePreviewUrl
           ? agentEngineClient.resolveApiPath(preview.inlinePreviewUrl)
           : null,
@@ -875,7 +883,6 @@ function ChatComposer({
   canClearChat,
   canLoadHistory,
   chatStarted,
-  isClearingChat,
   errorMessage,
   files,
   message,
@@ -890,7 +897,6 @@ function ChatComposer({
   canClearChat: boolean;
   canLoadHistory: boolean;
   chatStarted: boolean;
-  isClearingChat: boolean;
   errorMessage: string | undefined;
   files: File[];
   message: string;
@@ -922,7 +928,7 @@ function ChatComposer({
             disabled={!canClearChat}
             onClick={onClearChat}
           >
-            {isClearingChat ? "정리중" : "대화 정리"}
+            대화 정리
           </Button>
         ) : null}
       </div>
@@ -1128,6 +1134,7 @@ function ArtifactPreviewPanel({
     | { kind: "ready"; html: string }
     | { kind: "error"; message: string }
   >({ kind: "loading" });
+  const [nativeOpenPending, setNativeOpenPending] = useState(false);
 
   useEffect(() => {
     if (source.kind !== "html") {
@@ -1165,6 +1172,30 @@ function ArtifactPreviewPanel({
   const panelLabel = source.kind === "powerpoint" ? "PPT 뷰어" : "HTML 리포트";
   const closeLabel =
     source.kind === "powerpoint" ? "PPT 뷰어 닫기" : "HTML 리포트 닫기";
+  const nativeOpenLabel = nativeOpenPending
+    ? "PowerPoint 여는 중"
+    : "PowerPoint에서 열기";
+
+  function openNativePowerPoint(): void {
+    if (!source.nativeOpenPath || nativeOpenPending) {
+      return;
+    }
+
+    setNativeOpenPending(true);
+    agentEngineClient
+      .openNativeFile(source.nativeOpenPath)
+      .then(() => {
+        toast.success(`${source.name} 파일을 PowerPoint에서 열었습니다.`);
+      })
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "PowerPoint에서 파일을 열지 못했습니다."
+        );
+      })
+      .finally(() => setNativeOpenPending(false));
+  }
 
   return (
     <aside className="flex h-[42vh] min-h-0 shrink-0 flex-col border-t border-border bg-card shadow-sm lg:h-auto lg:w-[min(42vw,44rem)] lg:border-l lg:border-t-0">
@@ -1182,6 +1213,16 @@ function ArtifactPreviewPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {source.nativeOpenPath ? (
+            <button
+              type="button"
+              disabled={nativeOpenPending}
+              onClick={openNativePowerPoint}
+              className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground no-underline transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {nativeOpenLabel}
+            </button>
+          ) : null}
           <a
             href={source.downloadHref}
             target="_blank"
@@ -1248,7 +1289,6 @@ export function HomePage() {
   const rockyChats = rockyChatsQuery.data;
   const previousChats = rockyChats ?? [];
   const createChatMutation = useCreateRockyChatMutation();
-  const deleteChatMutation = useDeleteRockyChatMutation(chat?.id ?? null);
   const deleteHistoryChatMutation = useDeleteRockyChatMutation(null);
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
   const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
@@ -1324,7 +1364,6 @@ export function HomePage() {
     submitInFlight ||
     createChatMutation.isPending ||
     sendMessageMutation.isPending ||
-    deleteChatMutation.isPending ||
     deleteHistoryChatMutation.isPending;
   const canSend = message.trim().length > 0 && !pending;
   const canClearChat = Boolean(chat && messageCount > 0) && !pending;
@@ -1352,8 +1391,7 @@ export function HomePage() {
       Boolean(historyErrorMessage));
   const errorMessage =
     createChatMutation.error?.message ??
-    sendMessageMutation.error?.message ??
-    deleteChatMutation.error?.message;
+    sendMessageMutation.error?.message;
 
   useEffect(() => {
     if (refreshedChat) {
@@ -1420,7 +1458,6 @@ export function HomePage() {
       return;
     }
 
-    await deleteChatMutation.mutateAsync(undefined);
     setSuppressAutoSelect(true);
     setChat(null);
     setMessage("");
@@ -1486,7 +1523,6 @@ export function HomePage() {
           canClearChat={canClearChat}
           canLoadHistory={canLoadHistory}
           chatStarted={Boolean(chat)}
-          isClearingChat={deleteChatMutation.isPending}
           errorMessage={errorMessage}
           files={files}
           message={message}

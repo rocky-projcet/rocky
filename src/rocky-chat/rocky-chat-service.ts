@@ -13,9 +13,7 @@ import {
 } from "./rocky-chat-store.js";
 import {
   extractRockyProtectionHints,
-  extractRockySkillCandidates,
   getRockySkillByWorkerId,
-  requestRequiresChartArtifact,
   selectRockySkill,
   type RockyOrchestrationSkill,
 } from "./rocky-skill-registry.js";
@@ -45,11 +43,6 @@ import type {
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
 
-type RockyTaskIntent = Extract<
-  RockyRoutingIntent,
-  "general-task" | "specialized-task"
->;
-
 export interface RockyChatServiceOptions {
   stateRoot?: string;
   now?: () => string;
@@ -77,14 +70,6 @@ function titleFromMessage(message: string): string {
   }
 
   return compact.length > 32 ? `${compact.slice(0, 32)}...` : compact;
-}
-
-function isTaskIntent(intent: RockyRoutingIntent): intent is RockyTaskIntent {
-  return intent === "general-task" || intent === "specialized-task";
-}
-
-function isCoreIntent(intent: RockyRoutingIntent): boolean {
-  return intent === "conversation" || intent === "clarification";
 }
 
 function isUnknownSessionError(error: unknown): boolean {
@@ -131,7 +116,7 @@ export class RockyChatService {
       intent,
       createdAt: timestamp,
     });
-    const routed = await this.routeRockyMessage({
+    const routed = await this.handleRockyCoreMessage({
       chatId,
       messageId: userMessage.id,
       message,
@@ -139,7 +124,7 @@ export class RockyChatService {
       domain,
       intent,
       skill,
-      routingReason: selection.reason,
+      selectionReason: selection.reason,
       reuseCoreSessionId: null,
       timestamp,
     });
@@ -212,10 +197,8 @@ export class RockyChatService {
       intent,
       createdAt: timestamp,
     });
-    const reuseCoreSessionId = isCoreIntent(intent)
-      ? this.findReusableCoreSessionId(existing)
-      : null;
-    const routed = await this.routeRockyMessage({
+    const reuseCoreSessionId = this.findReusableCoreSessionId(existing);
+    const routed = await this.handleRockyCoreMessage({
       chatId,
       messageId: userMessage.id,
       message,
@@ -223,7 +206,7 @@ export class RockyChatService {
       domain,
       intent,
       skill,
-      routingReason: selection.reason,
+      selectionReason: selection.reason,
       reuseCoreSessionId,
       timestamp,
     });
@@ -315,7 +298,7 @@ export class RockyChatService {
     };
   }
 
-  private async routeRockyMessage(input: {
+  private async handleRockyCoreMessage(input: {
     chatId: string;
     messageId: string;
     message: string;
@@ -323,7 +306,7 @@ export class RockyChatService {
     domain: RockyChatDomain;
     intent: RockyRoutingIntent;
     skill: RockyOrchestrationSkill;
-    routingReason: string;
+    selectionReason: string;
     reuseCoreSessionId: string | null;
     timestamp: string;
   }): Promise<{
@@ -332,83 +315,12 @@ export class RockyChatService {
     dispatch: RockyDispatchRecord | null;
     rockyMessage: RockyMessageRecord;
   }> {
-    if (!isTaskIntent(input.intent)) {
-      const { agent, worker } = await this.ensureSkillWorker({
-        skill: input.skill,
-        reason: input.routingReason,
-        timestamp: input.timestamp,
-      });
-      const dispatch = this.buildDispatch({
-        chatId: input.chatId,
-        messageId: input.messageId,
-        skill: input.skill,
-        intent: input.intent,
-        domain: input.domain,
-        workerId: worker.id,
-        attachments: input.attachments,
-        message: input.message,
-        skillCandidates: [],
-        timestamp: input.timestamp,
-      });
-      const extraSystemInstructions = await this.buildExtraSystemInstructions({
-        agent,
-        chatId: input.chatId,
-        dispatch,
-        domain: input.domain,
-        skill: input.skill,
-        message: input.message,
-        attachments: input.attachments,
-        skillCandidates: [],
-        timestamp: input.timestamp,
-      });
-      const orchestration = await this.orchestrator.start({
-        chatId: input.chatId,
-        domain: input.domain,
-        message: input.message,
-        worker,
-        dispatch,
-        attachments: input.attachments,
-        skillCandidates: [],
-        skill: input.skill,
-        protectionHints: dispatch.protectionHints,
-        reuseSessionId: input.reuseCoreSessionId,
-        timestamp: input.timestamp,
-        extraSystemInstructions,
-      });
-      const startedDispatch: RockyDispatchRecord = {
-        ...dispatch,
-        orchestration,
-        executionStarted: Boolean(orchestration.runId),
-      };
-
-      return {
-        worker,
-        skillCandidates: [],
-        dispatch: startedDispatch,
-        rockyMessage: this.buildCoreRockyMessage({
-          chatId: input.chatId,
-          domain: input.domain,
-          intent: input.intent,
-          worker,
-          dispatchId: startedDispatch.id,
-          orchestration,
-          timestamp: input.timestamp,
-        }),
-      };
-    }
-
-    const { agent, worker } = await this.ensureSkillWorker({
+    const { agent, worker } = await this.ensureCoreWorker({
       skill: input.skill,
-      reason: input.routingReason,
+      reason: input.selectionReason,
       timestamp: input.timestamp,
     });
-    const skillCandidates = extractRockySkillCandidates({
-      skill: input.skill,
-      message: input.message,
-      sourceMessageId: input.messageId,
-      createdAt: input.timestamp,
-      idGenerator: this.idGenerator,
-    });
+    const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
       messageId: input.messageId,
@@ -442,6 +354,7 @@ export class RockyChatService {
       skillCandidates,
       skill: input.skill,
       protectionHints: dispatch.protectionHints,
+      reuseSessionId: input.reuseCoreSessionId,
       timestamp: input.timestamp,
       extraSystemInstructions,
     });
@@ -455,14 +368,12 @@ export class RockyChatService {
       worker,
       skillCandidates,
       dispatch: startedDispatch,
-      rockyMessage: this.buildTaskRockyMessage({
+      rockyMessage: this.buildCoreRockyMessage({
         chatId: input.chatId,
         domain: input.domain,
         intent: input.intent,
         worker,
-        skillCandidates,
         dispatchId: startedDispatch.id,
-        protectionHints: startedDispatch.protectionHints,
         orchestration,
         timestamp: input.timestamp,
       }),
@@ -499,13 +410,6 @@ export class RockyChatService {
       }),
     });
 
-    if (requestRequiresChartArtifact(input.skill, input.message, input.attachments)) {
-      extraSystemInstructions.push(
-        "This turn requires at least one Rocky-previewable chart JSON artifact before the final answer. Save a JSON artifact whose filename includes `chart` or `graph` and make sure it contains real plotted data.",
-        "Do not substitute ASCII charts, unicode sparklines, or fenced-code diagrams in the Markdown body. If you cannot produce a data-backed chart artifact, state that clearly instead of faking a chart."
-      );
-    }
-
     return extraSystemInstructions;
   }
 
@@ -529,53 +433,6 @@ export class RockyChatService {
     }
   }
 
-  private buildTaskRockyMessage(input: {
-    chatId: string;
-    domain: RockyChatDomain;
-    intent: RockyTaskIntent;
-    worker: RockyWorkerRecord;
-    skillCandidates: RockySkillCandidateRecord[];
-    dispatchId: string;
-    protectionHints: string[];
-    orchestration: RockyOrchestrationRecord;
-    timestamp: string;
-  }): RockyMessageRecord {
-    const domainText =
-      input.domain === "nutrition-md"
-        ? "영양제 MD 자료로 보고 정리할게요."
-        : "자료 정리 요청으로 보고 시작할게요.";
-    const candidateText =
-      input.skillCandidates.length > 0
-        ? `반복해서 쓸 기준 후보 ${input.skillCandidates.length}개를 찾았어요.`
-        : "아직 반복 기준 후보는 없지만, 대화하면서 찾을게요.";
-    const protectionText =
-      input.protectionHints.length > 0
-        ? `보호해서 볼 항목도 표시해둘게요: ${input.protectionHints.join(", ")}.`
-        : "민감해 보이는 항목은 발견되면 따로 표시할게요.";
-    const executionText =
-      input.orchestration.status === "running"
-        ? "실제 에이전트 세션을 만들고 실행을 시작했어요."
-        : input.orchestration.status === "planned"
-          ? "실행 준비는 했지만 아직 시작하지 못했어요."
-          : input.orchestration.status === "failed"
-            ? "실행을 시작하려 했지만 실패했어요."
-            : "실행 상태를 기록해뒀어요.";
-
-    return {
-      id: `message-${this.idGenerator()}`,
-      chatId: input.chatId,
-      role: "rocky",
-      intent: input.intent,
-      text: `${domainText}\n${input.worker.displayName}을 준비했고, 요청과 자료를 바로 넘길 수 있게 묶어뒀어요.\n${executionText}\n${candidateText}\n${protectionText}`,
-      attachmentIds: [],
-      domain: input.domain,
-      workerId: input.worker.id,
-      skillCandidateIds: input.skillCandidates.map((candidate) => candidate.id),
-      dispatchId: input.dispatchId,
-      createdAt: input.timestamp,
-    };
-  }
-
   private buildCoreRockyMessage(input: {
     chatId: string;
     domain: RockyChatDomain;
@@ -588,7 +445,7 @@ export class RockyChatService {
     const text =
       input.orchestration.output ??
       (input.orchestration.status === "failed"
-        ? "Rocky core 실행을 시작하지 못했습니다."
+        ? "Rocky Core 실행을 시작하지 못했습니다."
         : "Rocky가 답변을 작성하고 있어요.");
 
     return {
@@ -649,7 +506,7 @@ export class RockyChatService {
     };
   }
 
-  private async ensureSkillWorker(input: {
+  private async ensureCoreWorker(input: {
     skill: RockyOrchestrationSkill;
     reason: string;
     timestamp: string;
@@ -658,7 +515,7 @@ export class RockyChatService {
       stateRoot: this.stateRoot,
       workerId: input.skill.worker.id,
     });
-    const agent = await this.ensureSkillAgent(input.skill);
+    const agent = await this.ensureCoreAgent(input.skill);
     const agentId = agent?.id ?? null;
     const existing = await readRockyWorkerRecord(paths);
     if (existing) {
@@ -691,7 +548,7 @@ export class RockyChatService {
     return { agent, worker };
   }
 
-  private async ensureSkillAgent(
+  private async ensureCoreAgent(
     skill: RockyOrchestrationSkill
   ): Promise<AgentRecord | null> {
     if (!this.agentService) {

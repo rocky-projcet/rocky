@@ -45,7 +45,7 @@ export const router = createBrowserRouter([
         element: (
           <DebugModeOnly
             title="Rocky 관리 화면은 디버그 모드에서만 표시합니다"
-            description="일반 모드에서는 Rocky를 홈에서만 상대하고, 내부 에이전트와 위임 상태는 숨깁니다."
+            description="일반 모드에서는 Rocky를 홈에서 사용하고, Core 상태 관리는 전용 화면에서 분리해 확인합니다."
           >
             <RockyAgentPage />
           </DebugModeOnly>

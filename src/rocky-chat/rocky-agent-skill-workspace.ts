@@ -38,40 +38,12 @@ function formatAttachments(attachments: RockyAttachmentRecord[]): string {
     .join("\n");
 }
 
-function formatSkillCandidates(candidates: RockySkillCandidateRecord[]): string {
-  if (candidates.length === 0) {
-    return "- 없음";
-  }
-
-  return candidates
-    .map(
-      (candidate) =>
-        `- ${candidate.title}: ${candidate.description} (trigger: ${candidate.trigger})`
-    )
-    .join("\n");
+function executionModeLabel(intent: RockyRoutingIntent): string {
+  return intent === "clarification" ? "rocky core clarification" : "rocky core session";
 }
 
-function formatProtectionHints(hints: string[]): string {
-  if (hints.length === 0) {
-    return "- 없음";
-  }
-
-  return hints.map((hint) => `- ${hint}`).join("\n");
-}
-
-function executionModeLabel(
-  skill: RockyOrchestrationSkill,
-  intent: RockyRoutingIntent
-): string {
-  if (skill.mode === "core") {
-    return intent === "clarification" ? "core clarification" : "core conversation";
-  }
-
-  return "delegated execution";
-}
-
-function domainLabel(domain: RockyChatDomain): string {
-  return domain === "nutrition-md" ? "영양제 MD 작업" : "일반 자료 작업";
+function domainLabel(_domain: RockyChatDomain): string {
+  return "일반 요청";
 }
 
 export function buildRockyWorkspaceSkillMarkdown(
@@ -83,30 +55,30 @@ export function buildRockyWorkspaceSkillMarkdown(
     `Skill: ${skill.displayName}`,
     `Skill ID: ${skill.id}`,
     `Skill version: ${skill.version}`,
-    `Execution mode: ${skill.mode === "core" ? "core conversation" : "delegated execution"}`,
-    `작업 영역: ${domainLabel(skill.domain)}`,
-    `담당: ${skill.worker.displayName}`,
+    "Execution mode: rocky core session",
+    `요청 영역: ${domainLabel(skill.domain)}`,
+    `Agent: ${skill.agent.name}`,
     "",
-    "스킬 설명:",
+    "설명:",
     skill.description,
     "",
-    "스킬 역량:",
+    "처리 범위:",
     formatList(skill.capabilities),
     "",
     "운영 규칙:",
     formatList(skill.operatingRules),
     "",
-    "Rocky 전달 계약:",
+    "응답 기준:",
     formatList(skill.handoffContract),
     "",
     "현재 턴 처리 규칙:",
     "- 사용자 요청은 현재 turn의 원문 user message를 그대로 사용합니다.",
-    "- 현재 turn의 첨부 메타데이터, 반복 기준 후보, 보호 항목은 runtime system instructions에 지정된 context file에서 확인합니다.",
+    "- 현재 turn의 첨부 메타데이터는 runtime system instructions에 지정된 context file에서 확인합니다.",
     "- 별도 템플릿 문서를 사용자 요청으로 다시 감싸지 않습니다.",
     "",
     "응답:",
     "- 한국어로 답하세요.",
-    "- Rocky가 별도 가공 없이 사용자에게 전달할 수 있는 최종 답변을 작성하세요.",
+    "- 사용자에게 바로 전달할 수 있는 최종 답변을 작성하세요.",
     "- 최종 답변은 Markdown으로 작성하고, 필요한 경우 제목, 목록, 표, 코드 블록을 사용하세요.",
     "- 실행하지 못한 부분이 있으면 이유와 필요한 입력을 명확히 적으세요.",
     "",
@@ -129,9 +101,9 @@ export function buildRockyTurnContextMarkdown(input: {
     `Skill: ${input.skill.displayName}`,
     `Skill ID: ${input.skill.id}`,
     `Skill version: ${input.skill.version}`,
-    `Execution mode: ${executionModeLabel(input.skill, input.dispatch.intent)}`,
-    `작업 영역: ${domainLabel(input.domain)}`,
-    `담당: ${input.skill.worker.displayName}`,
+    `Execution mode: ${executionModeLabel(input.dispatch.intent)}`,
+    `요청 영역: ${domainLabel(input.domain)}`,
+    `Agent: ${input.skill.agent.name}`,
     "",
     "요청 분류:",
     `- chat_id: ${input.chatId}`,
@@ -141,12 +113,6 @@ export function buildRockyTurnContextMarkdown(input: {
     "",
     "첨부 메타데이터:",
     formatAttachments(input.attachments),
-    "",
-    "반복 기준 후보:",
-    formatSkillCandidates(input.skillCandidates),
-    "",
-    "보호해서 다룰 항목:",
-    formatProtectionHints(input.protectionHints),
     "",
   ].join("\n");
 }
@@ -199,7 +165,7 @@ export function buildRockyTurnSystemInstructions(input: {
   contextRelativePath: string;
 }): string[] {
   return [
-    `Use the workspace-local skill \`${input.skill.id}\` for this turn.`,
+    `Use the workspace-local Rocky Core instructions in \`skills/${input.skill.id}/SKILL.md\` for this turn.`,
     `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
     "Treat the current user message as the canonical original request.",
   ];

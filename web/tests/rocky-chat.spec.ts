@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("home keeps the nutrition MD request inside one Rocky chat", async ({ page }) => {
+test("home keeps task requests inside one Rocky Core chat", async ({ page }) => {
   const nonce = Date.now().toString();
   const fileName = `nutrition-event-${nonce}.csv`;
   const userPrompt =
@@ -33,22 +33,18 @@ test("home keeps the nutrition MD request inside one Rocky chat", async ({ page 
 
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText(userPrompt)).toBeVisible();
-  await expect(page.getByText("영양제 MD 자료로 보고 정리할게요.").first()).toBeVisible();
-  await expect(page.getByText("영양제 MD 담당", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(/반복 기준 후보/).first()).toBeVisible();
-  await expect(page.getByText(/보호 항목/).first()).toBeVisible();
+  await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
+  await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/반복 기준 후보/)).toHaveCount(0);
+  await expect(page.getByText(/보호 항목/)).toHaveCount(0);
   await expect(page.getByText("작업 화면")).toHaveCount(0);
   await expect(page.getByText("확인 결과")).toHaveCount(0);
   await expect(page.getByText("세션 열기")).toHaveCount(0);
 
-  await page.getByText("반복해서 쓸 기준 후보", { exact: true }).click();
-  await expect(page.getByText("상품명 표기 묶기")).toBeVisible();
-  await expect(page.getByText("민감 자료 보호")).toBeVisible();
-
   await page.reload();
 
   await expect(page.getByText(userPrompt)).toBeVisible();
-  await expect(page.getByText("영양제 MD 자료로 보고 정리할게요.").first()).toBeVisible();
-  await expect(page.getByText("영양제 MD 담당", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
+  await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
   await expect(page.getByText("세션 열기")).toHaveCount(0);
 });

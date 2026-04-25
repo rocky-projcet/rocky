@@ -1,12 +1,10 @@
-export type RockyChatDomain = "nutrition-md" | "general";
+export type RockyChatDomain = "general";
 
 export type RockyMessageRole = "user" | "rocky";
 
 export type RockyRoutingIntent =
   | "conversation"
-  | "clarification"
-  | "general-task"
-  | "specialized-task";
+  | "clarification";
 
 export type RockyOrchestrationStatus =
   | "planned"

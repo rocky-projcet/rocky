@@ -557,13 +557,11 @@ export interface AgentTaskRunRecord {
   updatedAt: string;
 }
 
-export type RockyChatDomain = "nutrition-md" | "general";
+export type RockyChatDomain = "general";
 
 export type RockyRoutingIntent =
   | "conversation"
-  | "clarification"
-  | "general-task"
-  | "specialized-task";
+  | "clarification";
 
 export type RockyOrchestrationStatus =
   | "planned"

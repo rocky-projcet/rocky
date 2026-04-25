@@ -18,9 +18,8 @@ test("debug mode reveals Rocky management routes and screen", async ({ page }) =
   await page.getByRole("button", { name: "디버그 모드로 보기" }).click();
 
   await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Rocky 관리" })).toBeVisible();
-  await expect(page.getByText("Rocky Core")).toBeVisible();
-  await expect(page.getByText("메인 오케스트레이터")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rocky Core" }).first()).toBeVisible();
+  await expect(page.getByText("홈 대화 실행 주체")).toBeVisible();
 
   await expect(advancedMenu.getByRole("link", { name: "에이전트" })).toBeVisible();
   await expect(advancedMenu.getByRole("link", { name: "Rocky 관리" })).toBeVisible();

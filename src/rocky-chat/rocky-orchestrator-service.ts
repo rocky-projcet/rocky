@@ -14,7 +14,6 @@ import type {
   RockyDispatchRecord,
   RockyOrchestrationRecord,
   RockyOrchestrationStatus,
-  RockyRoutingIntent,
   RockySkillCandidateRecord,
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
@@ -93,10 +92,6 @@ function latestAssistantText(messages: AgentSessionMessage[]): string | null {
   return content || null;
 }
 
-function isCoreIntent(intent: RockyRoutingIntent): boolean {
-  return intent === "conversation" || intent === "clarification";
-}
-
 export class RockyOrchestratorService {
   private readonly sessionService: RockySessionServiceLike | undefined;
   private readonly now: () => string;
@@ -121,7 +116,7 @@ export class RockyOrchestratorService {
         output: null,
         error: !this.sessionService
           ? "Rocky session service is unavailable."
-          : "Rocky worker has no executable agent.",
+          : "Rocky Core agent is unavailable.",
         startedAt: null,
         endedAt: null,
         updatedAt: input.timestamp,
@@ -135,12 +130,12 @@ export class RockyOrchestratorService {
         : await this.sessionService.createSession({
             agentId,
             title: input.message.slice(0, 80),
-            kind: isCoreIntent(input.dispatch.intent) ? "task-request" : "single-task",
+            kind: "task-request",
           });
       const run = await this.sessionService.sendTurn({
         sessionId: session?.id ?? sessionId!,
         prompt: input.message,
-        triggerType: isCoreIntent(input.dispatch.intent) ? "interactive" : "manual_task",
+        triggerType: "interactive",
         extraSystemInstructions: input.extraSystemInstructions,
       });
 

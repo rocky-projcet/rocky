@@ -126,9 +126,9 @@ test("AgentManager creates isolated workspace and runtime-home layout", async ()
   );
   assert.match(envTemplate, /AGENT_SSH_COMMAND=ssh/);
   await access(path.join(agent.workspaceRoot, ".agents", "skills"));
-  await access(path.join(agent.workspaceRoot, "skills"));
+  await assert.rejects(access(path.join(agent.workspaceRoot, "skills")));
   assert.match(workspaceAgentsOverlay, /Workspace-local AGENTS overlay/);
-  assert.match(workspaceAgentsOverlay, /Create or edit agent-local skills under `skills`/);
+  assert.match(workspaceAgentsOverlay, /Create or edit agent-local skills under `.agents\/skills`/);
 });
 
 test("AgentManager rejects unmanaged custom workspace/runtime paths", async () => {

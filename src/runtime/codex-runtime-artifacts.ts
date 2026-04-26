@@ -141,16 +141,25 @@ export async function captureWorkspaceArtifacts({
     excludedPaths.map((entry) => path.resolve(entry))
   );
   const currentSnapshot = await createWorkspaceSnapshot(workspaceRoot);
-  const newFiles = [...currentSnapshot.entries()]
+  const changedFiles = [...currentSnapshot.entries()]
     .filter(
-      ([relativePath, entry]) =>
-        !beforeSnapshot.has(relativePath) &&
-        !excludedAbsolutePaths.has(path.resolve(entry.path))
+      ([relativePath, entry]) => {
+        if (excludedAbsolutePaths.has(path.resolve(entry.path))) {
+          return false;
+        }
+
+        const before = beforeSnapshot.get(relativePath);
+        return (
+          !before ||
+          before.size !== entry.size ||
+          before.mtimeMs !== entry.mtimeMs
+        );
+      }
     )
     .map(([relativePath, entry]) => ({ relativePath, entry }))
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 
-  const selectedFiles = newFiles.slice(0, MAX_CAPTURED_WORKSPACE_ARTIFACTS);
+  const selectedFiles = changedFiles.slice(0, MAX_CAPTURED_WORKSPACE_ARTIFACTS);
   const usedRoles = new Set<string>();
   const artifactRefs: RuntimeArtifactRef[] = [];
 
@@ -163,11 +172,12 @@ export async function captureWorkspaceArtifacts({
       kind: "file",
       role: buildWorkspaceArtifactRole(relativePath, usedRoles),
       path: artifactPath,
+      workspaceRelativePath: normalizeRelativePath(relativePath),
     });
   }
 
   return {
     artifactRefs,
-    skippedCount: Math.max(0, newFiles.length - selectedFiles.length),
+    skippedCount: Math.max(0, changedFiles.length - selectedFiles.length),
   };
 }

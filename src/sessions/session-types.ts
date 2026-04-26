@@ -91,6 +91,7 @@ export interface AgentSessionArtifactManifestEntry {
   kind: "file";
   role: string;
   name: string;
+  workspaceRelativePath?: string | null;
   contentType: string;
   presentation: RuntimeArtifactPresentation;
   size: number | null;
@@ -146,6 +147,7 @@ export interface AgentSessionTurnInput
   runId?: string;
   reuseMessageId?: string;
   prompt: string;
+  extraSystemInstructions?: string[];
   triggerType?: AgentRunTriggerType;
   images?: string[];
   extraEnv?: NodeJS.ProcessEnv;

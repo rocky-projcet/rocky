@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import {
   AudioLines,
   BarChart3,
@@ -24,6 +25,7 @@ import {
 } from "@/shared/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ChartArtifactPreview } from "./chart-artifact-preview";
+import { PptxArtifactPreview } from "./pptx-artifact-preview";
 
 type ArtifactLike = AgentSessionArtifactManifestEntry | RunArtifactRecord;
 
@@ -74,8 +76,22 @@ function baseContentType(value: string): string {
   return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
 
+function isPowerPointPreviewSupported(artifact: ArtifactLike): boolean {
+  const contentType = baseContentType(artifact.contentType);
+  const name = artifact.name.toLowerCase();
+
+  return (
+    contentType === "application/vnd.ms-powerpoint" ||
+    contentType ===
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    name.endsWith(".ppt") ||
+    name.endsWith(".pptx")
+  );
+}
+
 function ArtifactActionIconButton(props: {
   label: string;
+  disabled?: boolean;
   href?: string;
   onClick?: () => void;
   children: React.ReactNode;
@@ -94,8 +110,9 @@ function ArtifactActionIconButton(props: {
     <button
       type="button"
       aria-label={props.label}
+      disabled={props.disabled}
       onClick={props.onClick}
-      className={ACTION_ICON_BUTTON_BASE}
+      className={cn(ACTION_ICON_BUTTON_BASE, "disabled:cursor-not-allowed disabled:opacity-50")}
     >
       {props.children}
     </button>
@@ -155,6 +172,70 @@ function InlineVideoArtifactPreview(props: {
       >
         브라우저가 영상 미리보기를 지원하지 않습니다.
       </video>
+    </div>
+  );
+}
+
+function HtmlArtifactPreview(props: {
+  downloadHref: string;
+  name: string;
+}) {
+  const [state, setState] = React.useState<
+    | { kind: "loading" }
+    | { kind: "ready"; html: string }
+    | { kind: "error"; message: string }
+  >({ kind: "loading" });
+
+  React.useEffect(() => {
+    const controller = new AbortController();
+
+    setState({ kind: "loading" });
+    fetch(props.downloadHref, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+
+        setState({ kind: "ready", html: await response.text() });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "HTML 미리보기를 불러오지 못했습니다.",
+        });
+      });
+
+    return () => controller.abort();
+  }, [props.downloadHref]);
+
+  if (state.kind === "loading") {
+    return (
+      <UnsupportedArtifactPreviewMessage>
+        HTML 미리보기를 불러오는 중입니다.
+      </UnsupportedArtifactPreviewMessage>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <UnsupportedArtifactPreviewMessage>
+        HTML 미리보기를 불러오지 못했습니다. {state.message}
+      </UnsupportedArtifactPreviewMessage>
+    );
+  }
+
+  return (
+    <div className="h-full min-h-[28rem] overflow-hidden rounded-2xl border border-border bg-white">
+      <iframe
+        title={`${props.name} HTML 미리보기`}
+        srcDoc={state.html}
+        sandbox=""
+        className="h-full min-h-[28rem] w-full border-0"
+      />
     </div>
   );
 }
@@ -239,11 +320,24 @@ export function ArtifactPreviewCard(props: {
       : agentEngineClient.resolveApiPath(props.artifact.previewUrl);
   const downloadHref = agentEngineClient.resolveApiPath(props.artifact.downloadUrl);
   const contentType = baseContentType(props.artifact.contentType);
+  const supportsHtmlPreview =
+    props.artifact.presentation === "file" && contentType === "text/html";
+  const supportsPowerPointPreview =
+    props.artifact.presentation === "file" &&
+    isPowerPointPreviewSupported(props.artifact);
   const supportsDialogPreview =
-    props.artifact.presentation === "chart" || previewHref !== null;
+    props.artifact.presentation === "chart" ||
+    previewHref !== null ||
+    supportsHtmlPreview ||
+    supportsPowerPointPreview;
   const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [nativeOpenPending, setNativeOpenPending] = React.useState(false);
+  const nativeOpenPath = `${props.artifact.downloadUrl}/open-native`;
+  const nativeOpenLabel = nativeOpenPending
+    ? "PowerPoint 여는 중"
+    : "PowerPoint에서 열기";
 
-  const handleCompactPreview = React.useCallback(() => {
+  const handlePreview = React.useCallback(() => {
     void (async () => {
       if (props.onPreview) {
         const handled = await props.onPreview();
@@ -257,6 +351,32 @@ export function ArtifactPreviewCard(props: {
       }
     })();
   }, [props.onPreview, supportsDialogPreview]);
+
+  const handleNativeOpen = React.useCallback(() => {
+    if (!supportsPowerPointPreview || nativeOpenPending) {
+      return;
+    }
+
+    setNativeOpenPending(true);
+    agentEngineClient
+      .openNativeFile(nativeOpenPath)
+      .then(() => {
+        toast.success(`${props.artifact.name} 파일을 PowerPoint에서 열었습니다.`);
+      })
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "PowerPoint에서 파일을 열지 못했습니다."
+        );
+      })
+      .finally(() => setNativeOpenPending(false));
+  }, [
+    nativeOpenPath,
+    nativeOpenPending,
+    props.artifact.name,
+    supportsPowerPointPreview,
+  ]);
 
   if (variant === "compact") {
     const supportsCompactPreview = Boolean(props.onPreview) || supportsDialogPreview;
@@ -288,8 +408,17 @@ export function ArtifactPreviewCard(props: {
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
             {supportsCompactPreview ? (
-              <ArtifactActionIconButton label="미리보기" onClick={handleCompactPreview}>
+              <ArtifactActionIconButton label="미리보기" onClick={handlePreview}>
                 <Eye size={14} />
+              </ArtifactActionIconButton>
+            ) : null}
+            {supportsPowerPointPreview ? (
+              <ArtifactActionIconButton
+                label={nativeOpenLabel}
+                disabled={nativeOpenPending}
+                onClick={handleNativeOpen}
+              >
+                <ExternalLink size={14} />
               </ArtifactActionIconButton>
             ) : null}
             {previewHref ? (
@@ -335,6 +464,15 @@ export function ArtifactPreviewCard(props: {
                   </div>
 
                   <div className="flex items-center gap-1.5">
+                    {supportsPowerPointPreview ? (
+                      <ArtifactActionIconButton
+                        label={nativeOpenLabel}
+                        disabled={nativeOpenPending}
+                        onClick={handleNativeOpen}
+                      >
+                        <ExternalLink size={14} />
+                      </ArtifactActionIconButton>
+                    ) : null}
                     {previewHref ? (
                       <ArtifactActionIconButton label="새 탭에서 열기" href={previewHref}>
                         <ExternalLink size={14} />
@@ -377,6 +515,22 @@ export function ArtifactPreviewCard(props: {
                       </div>
                     </object>
                   </div>
+                ) : null}
+
+                {supportsHtmlPreview ? (
+                  <HtmlArtifactPreview
+                    downloadHref={downloadHref}
+                    name={props.artifact.name}
+                  />
+                ) : null}
+
+                {supportsPowerPointPreview ? (
+                  <PptxArtifactPreview
+                    contentType={props.artifact.contentType}
+                    downloadHref={downloadHref}
+                    name={props.artifact.name}
+                    previewHref={previewHref}
+                  />
                 ) : null}
 
                 {props.artifact.presentation === "file" && previewHref && contentType.startsWith("audio/") ? (
@@ -444,6 +598,15 @@ export function ArtifactPreviewCard(props: {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {supportsHtmlPreview || supportsPowerPointPreview ? (
+            <button
+              type="button"
+              onClick={handlePreview}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-foreground visited:!text-foreground transition hover:bg-muted`}
+            >
+              {supportsPowerPointPreview ? "PPT 보기" : "HTML 보기"}
+            </button>
+          ) : null}
           {previewHref ? (
             <a
               href={previewHref}
@@ -453,6 +616,16 @@ export function ArtifactPreviewCard(props: {
             >
               {props.artifact.previewable ? "미리보기 열기" : "미리보기 라우트"}
             </a>
+          ) : null}
+          {supportsPowerPointPreview ? (
+            <button
+              type="button"
+              disabled={nativeOpenPending}
+              onClick={handleNativeOpen}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-foreground visited:!text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              {nativeOpenLabel}
+            </button>
           ) : null}
           <a
             href={downloadHref}
@@ -472,6 +645,38 @@ export function ArtifactPreviewCard(props: {
           ) : null}
         </div>
       </div>
+
+      {supportsHtmlPreview || supportsPowerPointPreview ? (
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="flex h-[min(88vh,56rem)] max-h-[88vh] w-[min(96vw,72rem)] max-w-[72rem] flex-col gap-0 overflow-hidden border-border bg-background p-0">
+            <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
+              <DialogTitle className="min-w-0 text-xl font-semibold text-foreground">
+                {props.artifact.name}
+              </DialogTitle>
+              <DialogDescription className="mt-1 break-all text-body-sm leading-6">
+                {props.artifact.role} · {props.artifact.contentType}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="min-h-0 flex-1 custom-scrollbar overflow-auto bg-muted/40 p-6">
+              {supportsHtmlPreview ? (
+                <HtmlArtifactPreview
+                  downloadHref={downloadHref}
+                  name={props.artifact.name}
+                />
+              ) : null}
+              {supportsPowerPointPreview ? (
+                <PptxArtifactPreview
+                  contentType={props.artifact.contentType}
+                  downloadHref={downloadHref}
+                  name={props.artifact.name}
+                  previewHref={previewHref}
+                />
+              ) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </article>
   );
 }

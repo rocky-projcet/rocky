@@ -23,6 +23,7 @@ import type {
   AgentTaskRunRecord,
   AgentTaskUpdateInput,
 } from "../tasks/task-types.js";
+import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
 import type {
   RuntimeKind,
   RuntimeEvent,
@@ -35,11 +36,13 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
+import type { NativeFileOpener } from "./http/native-open.js";
 
 export interface SessionServiceLike {
   createSession(input: {
     agentId: string;
     title?: string | null;
+    kind?: AgentSessionKind;
     runtimeKind?: RuntimeKind;
     ollamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
     authProfileId?: string | null;
@@ -70,6 +73,7 @@ export interface SessionServiceLike {
   sendTurn(input: {
     sessionId: string;
     prompt: string;
+    extraSystemInstructions?: string[];
     images?: string[];
     runtimeKind?: RuntimeKind;
     ollamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
@@ -77,6 +81,7 @@ export interface SessionServiceLike {
     reasoningEffort?: RuntimeReasoningEffort | null;
     serviceTier?: RuntimeServiceTier | null;
     reuseMessageId?: string;
+    triggerType?: "interactive" | "manual_task" | "scheduled" | "event";
   }): Promise<AgentRunRecord>;
   streamRunEvents(runId: string): AsyncIterable<RuntimeEvent>;
   getRun(runId: string): Promise<AgentRunRecord>;
@@ -155,6 +160,7 @@ export interface ArtifactRecord {
   kind: "file";
   role: string;
   name: string;
+  workspaceRelativePath?: string | null;
   contentType: string;
   presentation: "file" | "image" | "chart";
   size: number | null;
@@ -221,5 +227,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   agentMessengerService?: AgentMessengerServiceLike;
   runtimeRegistry?: RuntimeRegistryLike;
   taskService?: TaskServiceLike;
+  rockyChatService?: RockyChatServiceLike;
   hardwareStatusService?: HardwareStatusServiceLike;
+  nativeFileOpener?: NativeFileOpener;
 }

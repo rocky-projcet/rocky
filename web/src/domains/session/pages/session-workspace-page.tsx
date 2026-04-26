@@ -1234,7 +1234,7 @@ function SessionSkillsPanel(props: {
       <div className="rounded-2xl border border-border bg-card px-4 py-3">
         <p className="text-xs font-medium text-muted-foreground">등록된 스킬</p>
         <p className="mt-1 text-sm text-foreground">
-          에이전트 작업 폴더의 <code>skills/</code> 아래에 있는 스킬과 기본 제공 스킬을 확인할 수 있습니다.
+          에이전트 작업 폴더의 <code>.agents/skills/</code> 아래에 있는 스킬과 기본 제공 스킬을 확인할 수 있습니다.
         </p>
       </div>
       <div className="rounded-2xl border border-border bg-card px-4 py-3">

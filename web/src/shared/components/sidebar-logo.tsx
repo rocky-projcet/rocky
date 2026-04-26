@@ -8,7 +8,7 @@ export function SidebarLogo() {
   const collapsed = state === "collapsed";
 
   return (
-    <NavLink to="/agents" className="block">
+    <NavLink to="/" className="block">
       <div className={cn("h-6 overflow-hidden transition-all", collapsed ? "w-6" : "w-40 px-2")}>
         <img
           src="/Rocky_logo_inline.svg"

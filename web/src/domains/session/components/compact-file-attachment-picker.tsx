@@ -36,6 +36,7 @@ export function CompactFileAttachmentPicker(props: {
         ref={inputRef}
         type="file"
         multiple
+        data-testid="compact-file-attachment-input"
         aria-label={props.buttonLabel ?? "파일 추가"}
         onChange={handleSelect}
         disabled={props.disabled}

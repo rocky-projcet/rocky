@@ -10,6 +10,7 @@ import {
 } from "../hooks";
 import { Button } from "@/shared/ui/button";
 import { Card } from "@/shared/ui/card";
+import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import {
   Dialog,
   DialogContent,
@@ -89,7 +90,7 @@ export function AgentsPage() {
     );
   }
 
-  const agents = agentsQuery.data ?? [];
+  const agents = filterUserManagedAgents(agentsQuery.data ?? []);
   if (agents.length === 0) {
     return (
       <section className="space-y-6">

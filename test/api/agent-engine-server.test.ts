@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 
 import { AgentManager } from "../../src/agents/agent-manager.js";
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
@@ -230,6 +230,38 @@ class FakeRuntime extends RuntimeAdapter {
       status: "running",
     };
   }
+}
+
+async function createFakeOfficeConverter(directory: string): Promise<string> {
+  const converterPath = path.join(directory, "fake-office-converter.sh");
+  await writeFile(
+    converterPath,
+    `#!/bin/sh
+outdir=""
+input=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --outdir)
+      shift
+      outdir="$1"
+      ;;
+    --*)
+      ;;
+    *)
+      input="$1"
+      ;;
+  esac
+  shift
+done
+base="$(basename "$input")"
+base="\${base%.*}"
+printf '%%PDF-fake-converted' > "$outdir/$base.pdf"
+`,
+    "utf8"
+  );
+  await chmod(converterPath, 0o755);
+
+  return converterPath;
 }
 
 class BlockingRuntime extends RuntimeAdapter {
@@ -1443,7 +1475,6 @@ test("Agent engine server exposes browser-safe inline preview metadata for previ
       throw new Error("not used");
     },
   };
-
   const server = createAgentEngineServer({
     stateRoot,
     sessionService,
@@ -1559,6 +1590,198 @@ test("Agent engine server exposes browser-safe inline preview metadata for previ
   }
 });
 
+test("Agent engine server converts PowerPoint artifacts to PDF previews", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-engine-ppt-preview-"));
+  const artifactsDir = path.join(stateRoot, "runs", "run-ppt", "artifacts");
+  const deckPath = path.join(artifactsDir, "project-proposal.pptx");
+  await mkdir(artifactsDir, { recursive: true });
+  await writeFile(deckPath, Buffer.from("fake-pptx-binary"), "utf8");
+
+  const previousConverter = process.env.ROCKY_OFFICE_CONVERTER;
+  process.env.ROCKY_OFFICE_CONVERTER = await createFakeOfficeConverter(stateRoot);
+
+  const run: AgentRunRecord = {
+    id: "run-ppt",
+    agentId: "agent-ppt",
+    sessionId: "session-ppt",
+    runtimeRunId: "run-ppt",
+    triggerType: "interactive",
+    status: "completed",
+    model: null,
+    reasoningEffort: null,
+    serviceTier: null,
+    prompt: "show deck",
+    startedAt: "2026-03-13T00:00:00.000Z",
+    endedAt: "2026-03-13T00:00:05.000Z",
+    summary: "deck",
+    runtimeSessionId: "thread-ppt",
+    outputLastMessagePath: null,
+    resultPath: path.join(stateRoot, "runs", "run-ppt", "result.json"),
+    eventsPath: path.join(stateRoot, "runs", "run-ppt", "events.jsonl"),
+    artifactsDir,
+  };
+
+  const result: RuntimeRunResult = {
+    runId: "run-ppt",
+    sessionId: "session-ppt",
+    runtimeSessionId: "thread-ppt",
+    sessionBinding: null,
+    status: "completed",
+    startedAt: "2026-03-13T00:00:00.000Z",
+    endedAt: "2026-03-13T00:00:05.000Z",
+    exitCode: 0,
+    signal: null,
+    command: "fake-codex",
+    args: ["show deck"],
+    messages: [],
+    warnings: [],
+    errors: [],
+    stderr: [],
+    artifactRefs: [
+      {
+        kind: "file",
+        role: "proposal-deck",
+        path: deckPath,
+      },
+    ],
+    lastMessage: "deck ready",
+    outputLastMessagePath: null,
+    rawEvents: [],
+  };
+
+  const sessionService = {
+    createSession: async () => {
+      throw new Error("not used");
+    },
+    listAgentSessions: async () => {
+      throw new Error("not used");
+    },
+    updateSession: async () => {
+      throw new Error("not used");
+    },
+    deleteSession: async () => {
+      throw new Error("not used");
+    },
+    stopSessionRuns: async () => {
+      throw new Error("not used");
+    },
+    getSession: async () => {
+      throw new Error("not used");
+    },
+    getTranscript: async () => {
+      throw new Error("not used");
+    },
+    sendTurn: async () => {
+      throw new Error("not used");
+    },
+    streamRunEvents: async function* () {
+      throw new Error("not used");
+    },
+    getRun: async () => run,
+    getRunResult: async () => result,
+    cancelRun: async () => {
+      throw new Error("not used");
+    },
+    stopAgentRuns: async () => {
+      throw new Error("not used");
+    },
+  };
+  const agentService = {
+    createAgent: async () => {
+      throw new Error("not used");
+    },
+    listAgents: async () => [],
+    getAgent: async () => {
+      throw new Error("not used");
+    },
+    updateAgent: async () => {
+      throw new Error("not used");
+    },
+    deleteAgent: async () => {
+      throw new Error("not used");
+    },
+  };
+  const nativeOpenPaths: string[] = [];
+
+  const server = createAgentEngineServer({
+    stateRoot,
+    sessionService,
+    agentService,
+    nativeFileOpener: async (filePath) => {
+      nativeOpenPaths.push(filePath);
+      return {
+        status: "opened",
+        application: "Microsoft PowerPoint",
+        fileName: path.basename(filePath),
+        platform: "test",
+      };
+    },
+  });
+
+  await server.listen({
+    port: 0,
+    host: "127.0.0.1",
+  });
+
+  const address = server.server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const artifactsResponse = await fetch(`${baseUrl}/runs/run-ppt/artifacts`);
+    assert.equal(artifactsResponse.status, 200);
+    const artifacts = (await artifactsResponse.json()) as Array<{
+      contentType: string;
+      previewable: boolean;
+      previewUrl: string | null;
+      preferredAction: string;
+    }>;
+    assert.equal(
+      artifacts[0]?.contentType,
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    );
+    assert.equal(artifacts[0]?.previewable, true);
+    assert.equal(artifacts[0]?.previewUrl, "/runs/run-ppt/artifacts/proposal-deck/preview");
+    assert.equal(artifacts[0]?.preferredAction, "preview");
+
+    const previewResponse = await fetch(
+      `${baseUrl}/runs/run-ppt/artifacts/proposal-deck/preview`
+    );
+    assert.equal(previewResponse.status, 200);
+    assert.equal(previewResponse.headers.get("content-type"), "application/pdf");
+    assert.match(
+      previewResponse.headers.get("content-disposition") ?? "",
+      /^inline;/
+    );
+    assert.equal(
+      Buffer.from(await previewResponse.arrayBuffer()).toString("utf8"),
+      "%PDF-fake-converted"
+    );
+
+    const nativeOpenResponse = await fetch(
+      `${baseUrl}/runs/run-ppt/artifacts/proposal-deck/open-native`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(nativeOpenResponse.status, 200);
+    assert.deepEqual(await nativeOpenResponse.json(), {
+      status: "opened",
+      application: "Microsoft PowerPoint",
+      fileName: "project-proposal.pptx",
+      platform: "test",
+    });
+    assert.deepEqual(nativeOpenPaths, [deckPath]);
+  } finally {
+    await server.close();
+    if (previousConverter === undefined) {
+      delete process.env.ROCKY_OFFICE_CONVERTER;
+    } else {
+      process.env.ROCKY_OFFICE_CONVERTER = previousConverter;
+    }
+  }
+});
+
 test("Agent engine server exposes agent workspace browsing and file preview APIs", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-engine-workspace-browser-"));
   const manager = new AgentManager({
@@ -1581,21 +1804,42 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
   const htmlPath = path.join(agent.workspaceRoot, "report.html");
   const imagePath = path.join(agent.workspaceRoot, "diagram.png");
   const pdfPath = path.join(agent.workspaceRoot, "manual.pdf");
+  const pptxPath = path.join(agent.workspaceRoot, "proposal.pptx");
+  const koreanPptxPath = path.join(
+    agent.workspaceRoot,
+    "uploads",
+    "rocky",
+    "input",
+    "플로깅-줍깅-플랫폼-해커톤-PPT.pptx"
+  );
   const audioPath = path.join(agent.workspaceRoot, "voice.mp3");
   const videoPath = path.join(agent.workspaceRoot, "clip.mp4");
   await mkdir(notesDir, { recursive: true });
+  await mkdir(path.dirname(koreanPptxPath), { recursive: true });
   await writeFile(notePath, "# Summary\nline two\n", "utf8");
   await writeFile(envTemplatePath, "OPENAI_API_KEY=\nMODEL=gpt-5.4\n", "utf8");
   await writeFile(htmlPath, "<!doctype html><title>Report</title><h1>Workspace</h1>", "utf8");
   await writeFile(imagePath, Buffer.from("fake-png-binary"), "utf8");
   await writeFile(pdfPath, Buffer.from("%PDF-fake"), "utf8");
+  await writeFile(pptxPath, Buffer.from("fake-pptx-binary"), "utf8");
+  await writeFile(koreanPptxPath, Buffer.from("fake-korean-pptx-binary"), "utf8");
   await writeFile(audioPath, Buffer.from("fake-mp3-binary"), "utf8");
   await writeFile(videoPath, Buffer.from("fake-mp4-binary"), "utf8");
 
+  const workspaceNativeOpenPaths: string[] = [];
   const server = createAgentEngineServer({
     stateRoot,
     manager,
     sessionService,
+    nativeFileOpener: async (filePath) => {
+      workspaceNativeOpenPaths.push(filePath);
+      return {
+        status: "opened",
+        application: "Microsoft PowerPoint",
+        fileName: path.basename(filePath),
+        platform: "test",
+      };
+    },
   });
 
   await server.listen({
@@ -1656,6 +1900,14 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
         (entry) =>
           entry.kind === "file" &&
           entry.name === "manual.pdf" &&
+          entry.previewKind === "document"
+      )
+    );
+    assert.ok(
+      workspace.entries.some(
+        (entry) =>
+          entry.kind === "file" &&
+          entry.name === "proposal.pptx" &&
           entry.previewKind === "document"
       )
     );
@@ -1791,6 +2043,54 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
       documentPreviewMetadata.inlinePreviewUrl,
       `/agents/${agent.id}/workspace/file/preview?path=manual.pdf`
     );
+
+    const pptxPreviewMetadataResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/file?path=proposal.pptx`
+    );
+    assert.equal(pptxPreviewMetadataResponse.status, 200);
+    const pptxPreviewMetadata = (await pptxPreviewMetadataResponse.json()) as {
+      previewKind: string;
+      inlinePreviewUrl: string | null;
+    };
+    assert.equal(pptxPreviewMetadata.previewKind, "document");
+    assert.equal(
+      pptxPreviewMetadata.inlinePreviewUrl,
+      `/agents/${agent.id}/workspace/file/preview?path=proposal.pptx`
+    );
+
+    const koreanPptxDownloadResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/file/content?path=${encodeURIComponent(
+        "uploads/rocky/input/플로깅-줍깅-플랫폼-해커톤-PPT.pptx"
+      )}`
+    );
+    assert.equal(koreanPptxDownloadResponse.status, 200);
+    assert.match(
+      koreanPptxDownloadResponse.headers.get("content-disposition") ?? "",
+      /^attachment;/
+    );
+    assert.match(
+      koreanPptxDownloadResponse.headers.get("content-disposition") ?? "",
+      /filename\*=UTF-8''%ED%94%8C%EB%A1%9C%EA%B9%85/u
+    );
+    assert.equal(
+      Buffer.from(await koreanPptxDownloadResponse.arrayBuffer()).toString("utf8"),
+      "fake-korean-pptx-binary"
+    );
+
+    const pptxNativeOpenResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/file/open-native?path=proposal.pptx`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(pptxNativeOpenResponse.status, 200);
+    assert.deepEqual(await pptxNativeOpenResponse.json(), {
+      status: "opened",
+      application: "Microsoft PowerPoint",
+      fileName: "proposal.pptx",
+      platform: "test",
+    });
+    assert.deepEqual(workspaceNativeOpenPaths, [pptxPath]);
 
     const audioPreviewMetadataResponse = await fetch(
       `${baseUrl}/agents/${agent.id}/workspace/file?path=voice.mp3`

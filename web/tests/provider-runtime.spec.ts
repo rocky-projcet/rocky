@@ -1,13 +1,16 @@
 import { expect, test } from "@playwright/test";
 
 test("account page shows both provider cards and CLI diagnostics", async ({ page }) => {
-  await page.goto("/account");
+  await page.goto("/settings");
 
-  await expect(page.getByRole("heading", { name: "Codex / Claude 계정 설정" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Codex CLI" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Claude Code" })).toBeVisible();
-  await expect(page.getByText("설치 상태")).toHaveCount(2);
-  await expect(page.getByText("현재 버전")).toHaveCount(2);
+  await expect(page.getByRole("heading", { name: "서비스 연결과 로컬 실행 환경" })).toBeVisible();
+  const providerPanel = page.getByRole("tabpanel", { name: "AI 서비스" });
+  await expect(providerPanel.getByRole("heading", { name: "Codex CLI" })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(providerPanel.getByRole("heading", { name: "Claude Code" })).toBeVisible();
+  await expect(providerPanel.getByText("설치 상태")).toHaveCount(2);
+  await expect(providerPanel.getByText("현재 버전")).toHaveCount(2);
 });
 
 test("sidebar usage panel toggles provider usage visibility", async ({ page }) => {
@@ -27,9 +30,9 @@ test("sidebar usage panel toggles provider usage visibility", async ({ page }) =
 test("sidebar settings button navigates directly to account page", async ({ page }) => {
   await page.goto("/agents");
 
-  await page.getByRole("button", { name: "계정 연결하기" }).click();
-  await expect(page).toHaveURL(/\/account$/);
-  await expect(page.getByRole("heading", { name: "Codex / Claude 계정 설정" })).toBeVisible();
+  await page.getByRole("button", { name: "설정 열기" }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole("heading", { name: "서비스 연결과 로컬 실행 환경" })).toBeVisible();
 });
 
 test("agent create dialog omits id and default runtime fields", async ({ page }) => {
@@ -71,10 +74,11 @@ test("task request model options stay engine-scoped for agent runtime selection"
 
   await page.goto(`/agents/${agentId}`);
 
-  await expect(page.getByRole("main").getByText("Claude Code", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "작업 요청" }).click();
+  await page.getByRole("button", { name: "작업 요청하기" }).click();
   const requestDialog = page.getByRole("dialog");
+  await expect(requestDialog.getByRole("combobox", { name: /실행 엔진/i })).toContainText(
+    "Claude Code"
+  );
   await requestDialog.getByRole("combobox", { name: /실행 엔진/i }).click();
   await expect(page.getByText("Codex CLI").last()).toBeVisible();
   await expect(page.getByText("Claude Code").last()).toBeVisible();
@@ -89,7 +93,7 @@ test("task request model options stay engine-scoped for agent runtime selection"
   await expect(page.getByText("Sonnet (1M context) · Sonnet 4.6")).toBeVisible();
   await expect(page.getByText("Opus (1M context) · Opus 4.6")).toBeVisible();
   await expect(page.getByText("Haiku · Haiku 4.5")).toBeVisible();
-  await expect(page.getByText("GPT-5.4")).toHaveCount(0);
+  await expect(page.getByText("GPT-5.5")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(requestDialog.getByRole("combobox", { name: "추론 수준" })).toBeVisible();
   await expect(requestDialog.getByText("응답 속도")).toHaveCount(0);
@@ -98,9 +102,9 @@ test("task request model options stay engine-scoped for agent runtime selection"
   await page.getByText("Codex CLI").last().click();
   await expect(
     requestDialog.getByRole("combobox", { name: /실행 모델/i })
-  ).toContainText("GPT-5.4");
+  ).toContainText("GPT-5.5");
   await requestDialog.getByRole("combobox", { name: /실행 모델/i }).click();
-  await expect(page.getByText("GPT-5.4 mini")).toBeVisible();
+  await expect(page.getByText("GPT-5.4-Mini")).toBeVisible();
   await expect(page.getByText("Default (recommended) · Sonnet 4.6")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(requestDialog.getByRole("combobox", { name: "추론 수준" })).toBeVisible();
@@ -136,9 +140,9 @@ test("task request dialog lists selected upload files before submission", async 
   expect(createAgentResponse.ok()).toBeTruthy();
 
   await page.goto(`/agents/${agentId}`);
-  await page.getByRole("button", { name: "작업 요청" }).click();
+  await page.getByRole("button", { name: "작업 요청하기" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("참고 파일 업로드").setInputFiles({
+  await dialog.getByTestId("compact-file-attachment-input").setInputFiles({
     name: "brief.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("hi"),
@@ -162,7 +166,7 @@ test("task request dialog stays inside short viewports", async ({ page, request 
 
   await page.setViewportSize({ width: 1280, height: 640 });
   await page.goto(`/agents/${agentId}`);
-  const requestButton = page.getByRole("button", { name: "작업 요청" }).first();
+  const requestButton = page.getByRole("button", { name: "작업 요청하기" }).first();
   await requestButton.scrollIntoViewIfNeeded();
   await requestButton.click();
 
@@ -208,11 +212,11 @@ test("task request runtime selections persist into the session workspace and sur
   expect(createAgentResponse.ok()).toBeTruthy();
 
   await page.goto(`/agents/${agentId}`);
-  await page.getByRole("button", { name: "작업 요청" }).click();
+  await page.getByRole("button", { name: "작업 요청하기" }).click();
 
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("combobox", { name: "실행 모델" }).click();
-  await page.getByText("GPT-5.4 mini").last().click();
+  await page.getByText(/^GPT-5\.4$/i).last().click();
   await dialog.getByRole("combobox", { name: "추론 수준" }).click();
   await page.getByText("매우 높음").last().click();
   await dialog.getByRole("combobox", { name: "응답 속도" }).click();
@@ -230,23 +234,15 @@ test("task request runtime selections persist into the session workspace and sur
   expect(sessionResponse.ok()).toBeTruthy();
   const sessionRecord = await sessionResponse.json();
 
-  expect(sessionRecord.runtimeConfig.model).toBe("gpt-5.4-mini");
+  expect(sessionRecord.runtimeConfig.model).toBe("gpt-5.4");
   expect(sessionRecord.runtimeConfig.reasoningEffort).toBe("xhigh");
   expect(sessionRecord.runtimeConfig.serviceTier).toBe("fast");
 
-  const modelSelect = page.getByRole("combobox", { name: "모델" });
-  const reasoningSelect = page.getByRole("combobox", { name: "추론 수준" });
-  const serviceTierSelect = page.getByRole("combobox", { name: "응답 속도" });
-
-  await expect(modelSelect).toContainText("GPT-5.4 mini");
-  await expect(reasoningSelect).toContainText("매우 높음");
-  await expect(serviceTierSelect).toContainText("Fast");
+  await expect(page.getByRole("button", { name: /gpt-5\.4.*매우 높음.*Fast/i })).toBeVisible();
 
   await page.reload();
 
-  await expect(modelSelect).toContainText("GPT-5.4 mini");
-  await expect(reasoningSelect).toContainText("매우 높음");
-  await expect(serviceTierSelect).toContainText("Fast");
+  await expect(page.getByRole("button", { name: /gpt-5\.4.*매우 높음.*Fast/i })).toBeVisible();
 });
 
 test("session workspace keeps the last runtime selections across refresh", async ({
@@ -268,7 +264,7 @@ test("session workspace keeps the last runtime selections across refresh", async
     data: {
       title: "sticky session test",
       runtimeKind: "codex-cli",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.4",
       reasoningEffort: "xhigh",
       serviceTier: "fast",
     },
@@ -278,30 +274,38 @@ test("session workspace keeps the last runtime selections across refresh", async
 
   await page.goto(`/agents/${agentId}/sessions/${createdSession.id}`);
 
+  const modelSettingsButton = page.getByRole("button", {
+    name: /gpt-5\.4.*매우 높음.*Fast/i,
+  });
+  await expect(modelSettingsButton).toBeVisible();
+  await modelSettingsButton.click();
+
   const modelSelect = page.getByRole("combobox", { name: "모델" });
   const reasoningSelect = page.getByRole("combobox", { name: "추론 수준" });
   const serviceTierSelect = page.getByRole("combobox", { name: "응답 속도" });
 
-  await expect(modelSelect).toContainText("GPT-5.4 mini");
+  await expect(modelSelect).toContainText(/gpt-5\.4/i);
   await expect(reasoningSelect).toContainText("매우 높음");
   await expect(serviceTierSelect).toContainText("Fast");
 
   await modelSelect.click();
-  await page.getByText("GPT-5.4", { exact: true }).last().click();
+  await page.getByText("GPT-5.5", { exact: true }).last().click();
   await reasoningSelect.click();
   await page.getByText("높음", { exact: true }).last().click();
   await serviceTierSelect.click();
   await page.getByText("기본", { exact: true }).last().click();
 
-  await expect(modelSelect).toContainText("GPT-5.4");
+  await expect(modelSelect).toContainText("GPT-5.5");
   await expect(reasoningSelect).toContainText("높음");
   await expect(serviceTierSelect).toContainText("기본");
 
   await page.reload();
 
-  await expect(modelSelect).toContainText("GPT-5.4");
-  await expect(reasoningSelect).toContainText("높음");
-  await expect(serviceTierSelect).toContainText("기본");
+  await expect(page.getByRole("button", { name: /GPT-5\.5.*높음/ })).toBeVisible();
+  await page.getByRole("button", { name: /GPT-5\.5.*높음/ }).click();
+  await expect(page.getByRole("combobox", { name: "모델" })).toContainText("GPT-5.5");
+  await expect(page.getByRole("combobox", { name: "추론 수준" })).toContainText("높음");
+  await expect(page.getByRole("combobox", { name: "응답 속도" })).toContainText("기본");
 });
 
 test("single task dialog exposes save-and-run action", async ({ page, request }) => {
@@ -317,6 +321,7 @@ test("single task dialog exposes save-and-run action", async ({ page, request })
   expect(createAgentResponse.ok()).toBeTruthy();
 
   await page.goto(`/agents/${agentId}`);
+  await page.getByRole("tab", { name: "단일 작업" }).click();
   await page.getByRole("button", { name: "저장된 작업 만들기" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "단일 작업 저장" })).toBeVisible();

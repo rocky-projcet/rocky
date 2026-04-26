@@ -24,6 +24,31 @@ export interface AgentRecord {
   updatedAt: string;
 }
 
+export interface AgentLocalSkillRecord {
+  id: string;
+  workspacePath: string;
+  skillPath: string;
+}
+
+export interface AgentLocalSkillDeleteResult {
+  id: string;
+  deleted: boolean;
+  deletedPaths: string[];
+  skills: AgentLocalSkillRecord[];
+}
+
+export interface AgentLocalSkillFileInput {
+  path: string;
+  content: string;
+  encoding?: "utf8" | "base64";
+}
+
+export interface AgentLocalSkillUpsertResult {
+  id: string;
+  skill: AgentLocalSkillRecord;
+  skills: AgentLocalSkillRecord[];
+}
+
 export interface AgentCreateInput {
   name: string;
   id?: string | null;
@@ -557,6 +582,240 @@ export interface AgentTaskRunRecord {
   updatedAt: string;
 }
 
+export type RockyChatDomain = "general";
+
+export type RockyRoutingIntent =
+  | "conversation"
+  | "clarification";
+
+export type RockyOrchestrationStatus =
+  | "planned"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface RockyOrchestrationRecord {
+  id: string;
+  status: RockyOrchestrationStatus;
+  agentId: string | null;
+  sessionId: string | null;
+  runId: string | null;
+  output: string | null;
+  error: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  updatedAt: string;
+}
+
+export interface RockyAttachmentInput {
+  name: string;
+  contentType?: string | null;
+  size?: number | null;
+  contentBase64?: string | null;
+}
+
+export interface RockyAttachmentRecord {
+  id: string;
+  name: string;
+  contentType: string | null;
+  size: number | null;
+  workspacePath: string | null;
+  addedAt: string;
+}
+
+export interface RockySkillCandidateRecord {
+  id: string;
+  title: string;
+  description: string;
+  trigger: string;
+  confidence: number;
+  sourceMessageId: string;
+  status: "candidate";
+  createdAt: string;
+}
+
+export type RockyAbilityIcon = "message-square" | "presentation";
+
+export interface RockyAbilityCardRecord {
+  id: string;
+  skillId: string;
+  title: string;
+  description: string;
+  icon: RockyAbilityIcon;
+  examples: string[];
+  matchedSkillIds: string[];
+  installedSkillIds: string[];
+  installed: boolean;
+  sortOrder: number;
+}
+
+export interface RockyWorkerRecord {
+  id: string;
+  skillId: string;
+  domain: RockyChatDomain;
+  displayName: string;
+  agentId: string | null;
+  reason: string;
+  status: "ready";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RockyDispatchRecord {
+  id: string;
+  chatId: string;
+  messageId: string;
+  skillId: string;
+  intent: RockyRoutingIntent;
+  domain: RockyChatDomain;
+  workerId: string;
+  attachmentIds: string[];
+  originalRequest: string;
+  skillCandidateIds: string[];
+  protectionHints: string[];
+  orchestration: RockyOrchestrationRecord | null;
+  executionStarted: boolean;
+  createdAt: string;
+}
+
+export interface RockyMessageRecord {
+  id: string;
+  chatId: string;
+  role: "user" | "rocky";
+  intent: RockyRoutingIntent;
+  text: string;
+  attachmentIds: string[];
+  domain: RockyChatDomain;
+  workerId: string | null;
+  skillCandidateIds: string[];
+  dispatchId: string | null;
+  createdAt: string;
+}
+
+export interface RockyChatRecord {
+  id: string;
+  title: string;
+  intent: RockyRoutingIntent;
+  domain: RockyChatDomain;
+  worker: RockyWorkerRecord | null;
+  attachments: RockyAttachmentRecord[];
+  messages: RockyMessageRecord[];
+  skillCandidates: RockySkillCandidateRecord[];
+  dispatches: RockyDispatchRecord[];
+  orchestration: RockyOrchestrationRecord | null;
+  executionStarted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RockyCoreSettingsRecord {
+  defaultRuntimeKind: RuntimeKind;
+  defaultModel: string | null;
+  defaultReasoningEffort: RuntimeReasoningEffort | null;
+  defaultServiceTier: RuntimeServiceTier | null;
+  defaultOllamaLaunchTarget: RuntimeOllamaLaunchTarget | null;
+  updatedAt: string | null;
+}
+
+export interface RockyCoreSettingsUpdateInput {
+  defaultRuntimeKind?: RuntimeKind;
+  defaultModel?: string | null;
+  defaultReasoningEffort?: RuntimeReasoningEffort | null;
+  defaultServiceTier?: RuntimeServiceTier | null;
+  defaultOllamaLaunchTarget?: RuntimeOllamaLaunchTarget | null;
+}
+
+export interface RockyCoreSkillRecord {
+  id: string;
+  version: string;
+  displayName: string;
+  description: string;
+  workspacePath: string | null;
+  matchedSkillIds: string[];
+  installedSkillIds: string[];
+  installed: boolean;
+  synchronized: boolean;
+}
+
+export interface RockyCoreSessionHealthRecord {
+  homeChatCount: number;
+  chatsWithDispatches: number;
+  chatsWithoutSessionIds: number;
+  chatsWithMissingSessions: number;
+  existingSessionCount: number;
+  runningSessionCount: number;
+  danglingSessionIds: string[];
+}
+
+export interface RockyCoreManagementRecord {
+  agent: {
+    id: string;
+    name: string;
+    description: string;
+    workspaceRoot: string;
+    runtimeHome: string;
+    defaultRuntime: RuntimeKind;
+    lifecycle: "active" | "archived";
+    updatedAt: string;
+  } | null;
+  settings: RockyCoreSettingsRecord;
+  skills: RockyCoreSkillRecord[];
+  sessionHealth: RockyCoreSessionHealthRecord;
+}
+
+export interface RockyChatCreateInput {
+  message: string;
+  attachments?: RockyAttachmentInput[];
+}
+
+export type RockyTemplateCategory = "document" | "content" | "data";
+
+export type RockyTemplateInterviewStepId =
+  | "intent"
+  | "inputs"
+  | "output"
+  | "rules"
+  | "review";
+
+export interface RockyTemplateDraft {
+  category: RockyTemplateCategory;
+  title: string;
+  description: string;
+  triggerLabel: string;
+  requiredInputs: string[];
+  outputFormatLabel: string;
+  defaultInstructions: string;
+}
+
+export interface RockyTemplateInterviewAnswer {
+  stepId: RockyTemplateInterviewStepId;
+  answer: string;
+}
+
+export interface RockyTemplateInterviewTurnInput {
+  stepId: RockyTemplateInterviewStepId;
+  answer: string;
+  answers?: RockyTemplateInterviewAnswer[];
+  draft?: RockyTemplateDraft | null;
+}
+
+export interface RockyTemplateInterviewAgentRecord {
+  status: RockyOrchestrationStatus;
+  sessionId: string | null;
+  runId: string | null;
+  output: string | null;
+  error: string | null;
+}
+
+export interface RockyTemplateInterviewTurnResult {
+  summary: string;
+  nextStepId: RockyTemplateInterviewStepId;
+  draft: RockyTemplateDraft | null;
+  source: "agent" | "fallback";
+  agent: RockyTemplateInterviewAgentRecord | null;
+}
+
 export interface AgentSessionDeleteOptions {
   stopRunningRuns?: boolean;
 }
@@ -694,6 +953,13 @@ export interface RunArtifactRecord {
   previewUrl: string | null;
   downloadUrl: string;
   preferredAction: "preview" | "download";
+}
+
+export interface NativeFileOpenRecord {
+  status: "opened";
+  application: string;
+  fileName: string;
+  platform: string;
 }
 
 export type AgentWorkspacePreviewKind =
@@ -1002,6 +1268,41 @@ export class AgentEngineClient {
     return this.request<AgentRecord>(`/agents/${encodeURIComponent(agentId)}`);
   }
 
+  listAgentLocalSkills(agentId: string): Promise<AgentLocalSkillRecord[]> {
+    return this.request<AgentLocalSkillRecord[]>(
+      `/agents/${encodeURIComponent(agentId)}/skills`
+    );
+  }
+
+  upsertAgentLocalSkill(
+    agentId: string,
+    skillId: string,
+    input: {
+      replace?: boolean;
+      files: AgentLocalSkillFileInput[];
+    }
+  ): Promise<AgentLocalSkillUpsertResult> {
+    return this.request<AgentLocalSkillUpsertResult>(
+      `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  deleteAgentLocalSkill(
+    agentId: string,
+    skillId: string
+  ): Promise<AgentLocalSkillDeleteResult> {
+    return this.request<AgentLocalSkillDeleteResult>(
+      `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
   updateAgent(agentId: string, input: AgentUpdateInput): Promise<AgentRecord> {
     return this.request<AgentRecord>(`/agents/${encodeURIComponent(agentId)}`, {
       method: "PATCH",
@@ -1112,6 +1413,98 @@ export class AgentEngineClient {
       `/tasks/${encodeURIComponent(taskId)}/run`,
       {
         method: "POST",
+      }
+    );
+  }
+
+  getRockyCoreManagement(): Promise<RockyCoreManagementRecord> {
+    return this.request<RockyCoreManagementRecord>("/rocky/core");
+  }
+
+  updateRockyCoreSettings(
+    input: RockyCoreSettingsUpdateInput
+  ): Promise<RockyCoreManagementRecord> {
+    return this.request<RockyCoreManagementRecord>("/rocky/core/settings", {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  syncRockyCoreSkills(): Promise<RockyCoreManagementRecord> {
+    return this.request<RockyCoreManagementRecord>("/rocky/core/skills/sync", {
+      method: "POST",
+    });
+  }
+
+  listRockyAbilities(): Promise<RockyAbilityCardRecord[]> {
+    return this.request<RockyAbilityCardRecord[]>("/rocky/abilities");
+  }
+
+  startRockyAbilityGuide(abilityId: string): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/abilities/${encodeURIComponent(abilityId)}/guide`,
+      {
+        method: "POST",
+      }
+    );
+  }
+
+  processRockyTemplateInterviewTurn(
+    input: RockyTemplateInterviewTurnInput
+  ): Promise<RockyTemplateInterviewTurnResult> {
+    return this.request<RockyTemplateInterviewTurnResult>(
+      "/rocky/template-interview/turn",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  listRockyChats(): Promise<RockyChatRecord[]> {
+    return this.request<RockyChatRecord[]>("/rocky/chats");
+  }
+
+  createRockyChat(input: RockyChatCreateInput): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>("/rocky/chats", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  getRockyChat(chatId: string): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}`
+    );
+  }
+
+  sendRockyChatMessage(
+    chatId: string,
+    input: RockyChatCreateInput
+  ): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  cancelRockyChat(chatId: string): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}/cancel`,
+      {
+        method: "POST",
+      }
+    );
+  }
+
+  async deleteRockyChat(chatId: string): Promise<void> {
+    await this.request<Record<string, never> | null>(
+      `/rocky/chats/${encodeURIComponent(chatId)}`,
+      {
+        method: "DELETE",
       }
     );
   }
@@ -1325,6 +1718,12 @@ export class AgentEngineClient {
     return this.request<RunArtifactRecord[]>(`/runs/${encodeURIComponent(runId)}/artifacts`);
   }
 
+  openNativeFile(pathname: string): Promise<NativeFileOpenRecord> {
+    return this.request<NativeFileOpenRecord>(pathname, {
+      method: "POST",
+    });
+  }
+
   cancelRun(runId: string): Promise<RuntimeRunResult> {
     return this.request<RuntimeRunResult>(`/runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -1361,6 +1760,13 @@ export class AgentEngineClient {
     return this.resolveApiPath(
       `/agents/${encodeURIComponent(agentId)}/workspace/file/preview?${search.toString()}`
     );
+  }
+
+  agentWorkspaceFileNativeOpenPath(agentId: string, searchPath: string): string {
+    const search = new URLSearchParams();
+    search.set("path", searchPath);
+
+    return `/agents/${encodeURIComponent(agentId)}/workspace/file/open-native?${search.toString()}`;
   }
 
   resolveApiPath(pathname: string): string {

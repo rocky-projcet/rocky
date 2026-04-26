@@ -6,9 +6,12 @@ import type {
 } from "@/shared/lib/agent-engine-client";
 
 export const runtimeModelLabel: Record<string, string> = {
+  "gpt-5.5": "GPT-5.5",
   "gpt-5.4": "GPT-5.4",
   "gpt-5.4-mini": "GPT-5.4 mini",
   "gpt-5.3-codex": "GPT-5.3 Codex",
+  "gpt-5.3-codex-spark": "GPT-5.3 Codex Spark",
+  "gpt-5.2": "GPT-5.2",
   "gpt-5.4-nano": "GPT-5.4 nano",
   default: "Default (recommended) · Sonnet 4.6",
   "sonnet[1m]": "Sonnet (1M context) · Sonnet 4.6",
@@ -22,9 +25,12 @@ export const runtimeModelLabel: Record<string, string> = {
 };
 
 export const compactRuntimeModelLabel: Record<string, string> = {
+  "gpt-5.5": "GPT-5.5",
   "gpt-5.4": "GPT-5.4",
   "gpt-5.4-mini": "GPT-5.4 mini",
   "gpt-5.3-codex": "GPT-5.3 Codex",
+  "gpt-5.3-codex-spark": "GPT-5.3 Spark",
+  "gpt-5.2": "GPT-5.2",
   "gpt-5.4-nano": "GPT-5.4 nano",
   default: "Sonnet 4.6",
   "sonnet[1m]": "Sonnet 4.6 1M",

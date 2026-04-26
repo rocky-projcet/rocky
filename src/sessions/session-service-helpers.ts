@@ -274,6 +274,9 @@ export function buildArtifactManifestEntry(
     kind: artifactRef.kind,
     role: artifactRef.role,
     name: view.name,
+    ...(artifactRef.workspaceRelativePath
+      ? { workspaceRelativePath: artifactRef.workspaceRelativePath }
+      : {}),
     contentType: view.contentType,
     presentation: view.presentation,
     size,
@@ -411,10 +414,11 @@ export function runtimeSessionOverridesFromRecord(
 
 export function buildRuntimePrompt(
   session: AgentSessionRecord,
-  prompt: string
+  prompt: string,
+  extraSystemInstructions: string[] = []
 ): string {
   return [
-    buildRuntimeSystemPrompt(session, prompt),
+    buildRuntimeSystemPrompt(session, prompt, extraSystemInstructions),
     USER_REQUEST_OPEN,
     prompt,
     USER_REQUEST_CLOSE,
@@ -423,7 +427,8 @@ export function buildRuntimePrompt(
 
 export function buildRuntimeSystemPrompt(
   session: AgentSessionRecord,
-  prompt = ""
+  prompt = "",
+  extraSystemInstructions: string[] = []
 ): string {
   const sandbox = session.runtimeConfig.sandbox;
   const shellExecutionHint = detectShellExecutionHint(prompt);
@@ -440,8 +445,8 @@ export function buildRuntimeSystemPrompt(
     `sandbox=${sandbox}`,
     "</runtime_policy>",
     "<skill_policy>",
-    "- Available skill scopes in this session are limited to workspace-local skills under `skills/` and the read-only system skills `openai-docs`, `skill-creator`, and `skill-installer`.",
-    "- In writable managed sessions, `skills/` is the allowed authoring directory for agent-local skills.",
+    "- Available skill scopes in this session are limited to workspace-local skills under `.agents/skills/` and the read-only system skills `openai-docs`, `skill-creator`, and `skill-installer`.",
+    "- In writable managed sessions, `.agents/skills/` is the allowed authoring directory for agent-local skills.",
     "- Repository-root developer skills from parent directories are unavailable in this agent session. Do not list or use them.",
     "- Do not create, modify, shadow, or copy the read-only system skills `openai-docs`, `skill-creator`, or `skill-installer`.",
     "- When asked to list available skills, report only workspace-local skills and the three read-only system skills above.",
@@ -462,6 +467,13 @@ export function buildRuntimeSystemPrompt(
         "- If the command fails, report only the exact stderr and exit status produced by that command_execution step.",
         "</required_command_execution>",
       ]
+      : []),
+    ...(extraSystemInstructions.length > 0
+      ? [
+          "<turn_instructions>",
+          ...extraSystemInstructions.map((instruction) => `- ${instruction}`),
+          "</turn_instructions>",
+        ]
       : []),
     "<runtime_rules>",
     ...runtimeRules,
@@ -488,7 +500,7 @@ function buildRuntimeRules(
     return [
       "- The sandbox is read-only. Do not claim that you created or modified files.",
       "- If the user asks for a file write, explain that the sandbox is read-only and provide the content or next steps instead.",
-      "- Reserved system skill namespaces are read-only platform assets. Do not create or modify `skills/.system`, `.agents/skills/.system`, `system`, `system-*`, `openai-docs`, `skill-creator`, or `skill-installer` from this session.",
+      "- Reserved system skill namespaces are read-only platform assets. Do not create or modify `.agents/skills/.system`, `skills/.system`, `system`, `system-*`, `openai-docs`, `skill-creator`, or `skill-installer` from this session.",
       ...workspaceBoundaryRules,
       ...evidenceRules,
     ];
@@ -498,8 +510,8 @@ function buildRuntimeRules(
     `- The sandbox is ${sandbox}. Treat it as writable within the workspace unless a command execution proves otherwise.`,
     "- The current working directory for shell commands is already the workspace root.",
     "- If the user asks you to create or modify files in the workspace, attempt the write directly before claiming the filesystem is read-only.",
-    "- Only create agent-local skills under `skills/<skill-id>/` using a non-system skill id.",
-    "- Reserved system skill namespaces are not allowed in this session. Do not create or modify `skills/.system`, `.agents/skills/.system`, `system`, `system-*`, `openai-docs`, `skill-creator`, or `skill-installer`.",
+    "- Only create agent-local skills under `.agents/skills/<skill-id>/` using a non-system skill id.",
+    "- Reserved system skill namespaces are not allowed in this session. Do not create or modify `.agents/skills/.system`, `skills/.system`, `system`, `system-*`, `openai-docs`, `skill-creator`, or `skill-installer`.",
     "- Prefer relative paths for workspace file writes.",
     ...workspaceBoundaryRules,
     "- If a write fails, report the exact command and the observed stderr/stdout.",
@@ -606,15 +618,21 @@ export function buildOllamaConversationMessages({
   session,
   transcript,
   prompt,
+  extraSystemInstructions = [],
 }: {
   session: AgentSessionRecord;
   transcript: AgentSessionMessage[];
   prompt: string;
+  extraSystemInstructions?: string[];
 }): RuntimeConversationMessage[] {
   const messages: RuntimeConversationMessage[] = [
     {
       role: "system",
-      content: buildRuntimeSystemPrompt(session, prompt),
+      content: buildRuntimeSystemPrompt(
+        session,
+        prompt,
+        extraSystemInstructions
+      ),
     },
   ];
 
@@ -1237,7 +1255,11 @@ export function buildRuntimeRequest({
   return {
     sessionId: session.id,
     runId,
-    prompt: buildRuntimePrompt(session, input.prompt),
+    prompt: buildRuntimePrompt(
+      session,
+      input.prompt,
+      input.extraSystemInstructions ?? []
+    ),
     dangerouslyBypassApprovalsAndSandbox: requestedBypass || browserAutomationBypass,
     additionalWritableDirs: input.additionalWritableDirs,
     configOverrides: input.configOverrides,

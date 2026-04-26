@@ -20,7 +20,15 @@ function ensureResultMessages(
   lastMessage: string | null,
   occurredAt: string | null
 ): RuntimeMessage[] {
-  if (!lastMessage || messages.length > 0 || !occurredAt) {
+  const normalizedLastMessage = lastMessage?.trim();
+  if (!normalizedLastMessage || !occurredAt) {
+    return messages;
+  }
+
+  const lastAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  if (lastAssistantMessage?.text.trim() === normalizedLastMessage) {
     return messages;
   }
 
@@ -28,7 +36,7 @@ function ensureResultMessages(
     ...messages,
     {
       role: "assistant",
-      text: lastMessage,
+      text: normalizedLastMessage,
       itemType: "output-last-message",
       occurredAt,
       source: "output-last-message",

@@ -4,11 +4,21 @@ import {
 } from "react-router-dom";
 
 import { AppShell } from "../shared/components/app-shell";
+import { DebugModeOnly } from "../shared/components/debug-mode-only";
 import { PageState } from "../shared/components/page-state";
 import { AccountPage } from "../domains/codex/pages/account-page";
 import { AgentDetailPage } from "../domains/agent/pages/agent-detail-page";
 import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
+import { WorkspaceFilePreviewPage } from "../domains/agent/pages/workspace-file-preview-page";
+import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
+import { HomePage, RockyTaskDetailPage } from "../domains/rocky/pages/home-page";
+import { SearchPage } from "../domains/rocky/pages/search-page";
+import { TasksPage } from "../domains/rocky/pages/tasks-page";
+import {
+  TemplateBuilderPage,
+  TemplatesPage,
+} from "../domains/template/pages/templates-page";
 import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
 import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
 
@@ -19,11 +29,35 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/agents" replace />,
+        element: <HomePage />,
+      },
+      {
+        path: "search",
+        element: <SearchPage />,
+      },
+      {
+        path: "tasks",
+        element: <TasksPage />,
+      },
+      {
+        path: "tasks/:taskId",
+        element: <RockyTaskDetailPage />,
       },
       {
         path: "agents",
         element: <AgentsPage />,
+      },
+      {
+        path: "templates",
+        element: <TemplatesPage />,
+      },
+      {
+        path: "templates/new",
+        element: <TemplateBuilderPage />,
+      },
+      {
+        path: "templates/:templateId/edit",
+        element: <TemplateBuilderPage />,
       },
       {
         path: "agents/archived",
@@ -36,6 +70,17 @@ export const router = createBrowserRouter([
       {
         path: "agents/:agentId/sessions/:sessionId",
         element: <SessionWorkspacePage />,
+      },
+      {
+        path: "rocky/agent",
+        element: (
+          <DebugModeOnly
+            title="Rocky 관리 화면은 디버그 모드에서만 표시합니다"
+            description="일반 모드에서는 Rocky를 홈에서 사용하고, Core 상태 관리는 전용 화면에서 분리해 확인합니다."
+          >
+            <RockyAgentPage />
+          </DebugModeOnly>
+        ),
       },
       {
         path: "runs",
@@ -60,5 +105,9 @@ export const router = createBrowserRouter([
         element: <Navigate to="/settings" replace />,
       }
     ],
+  },
+  {
+    path: "/workspace-preview",
+    element: <WorkspaceFilePreviewPage />,
   },
 ]);

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { LogOut, Settings } from "lucide-react";
 
@@ -18,6 +19,7 @@ import { ProviderGlyph } from "./provider-glyph";
 import { providerAccountLabel, providerLabel } from "../lib/provider-display";
 
 export function AccountPopover() {
+  const [open, setOpen] = useState(false);
   const accountsQuery = useProviderAccountsQuery();
   const logoutCodexMutation = useLogoutCodexAccountMutation();
   const logoutClaudeMutation = useLogoutClaudeAccountMutation();
@@ -31,7 +33,7 @@ export function AccountPopover() {
   const initials = providers.map((provider) => provider.provider[0].toUpperCase()).join("");
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={<Button variant="ghost" size="icon" />}
       >
@@ -94,6 +96,7 @@ export function AccountPopover() {
           <Link
             to="/settings"
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground no-underline"
+            onClick={() => setOpen(false)}
           >
             <Settings size={16} />
             설정

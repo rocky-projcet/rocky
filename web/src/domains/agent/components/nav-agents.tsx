@@ -1,40 +1,49 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { Bot, Archive } from "lucide-react";
+import { Bot, Archive, Sparkles } from "lucide-react";
 
+import { useAppMode } from "@/shared/lib/app-mode";
 import {
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/shared/ui/sidebar";
 
 export function NavAgents() {
   const location = useLocation();
-  const active = location.pathname.startsWith("/agents") || location.pathname.startsWith("/runs");
+  const { mode } = useAppMode();
+  const agentsActive =
+    location.pathname.startsWith("/agents") || location.pathname.startsWith("/runs");
 
   return (
     <>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          tooltip="에이전트"
-          isActive={active && !location.pathname.startsWith("/agents/archived")}
+      {mode === "debug" ? (
+        <SidebarMenuSubItem>
+          <SidebarMenuSubButton
+            isActive={location.pathname.startsWith("/rocky/agent")}
+            render={<NavLink to="/rocky/agent" />}
+          >
+            <Sparkles />
+            <span>Rocky 관리</span>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+      ) : null}
+      <SidebarMenuSubItem>
+        <SidebarMenuSubButton
+          isActive={agentsActive && !location.pathname.startsWith("/agents/archived")}
           render={<NavLink to="/agents" />}
         >
           <Bot />
           <span>에이전트</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          tooltip="보관함"
+        </SidebarMenuSubButton>
+      </SidebarMenuSubItem>
+      <SidebarMenuSubItem>
+        <SidebarMenuSubButton
           isActive={location.pathname.startsWith("/agents/archived")}
           render={<NavLink to="/agents/archived" />}
         >
           <Archive />
           <span>보관함</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
+        </SidebarMenuSubButton>
+      </SidebarMenuSubItem>
     </>
   );
 }

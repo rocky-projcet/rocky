@@ -1,0 +1,208 @@
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+
+import {
+  WORKSPACE_LOCAL_SKILL_AUTHORING_DIR,
+  ensureWorkspaceSkillBridge,
+} from "../agents/agent-workspace.js";
+
+import type { AgentRecord } from "../agents/agent-types.js";
+import type {
+  RockyAttachmentRecord,
+  RockyChatDomain,
+  RockyDispatchRecord,
+  RockyRoutingIntent,
+  RockySkillCandidateRecord,
+} from "./rocky-chat-types.js";
+import type { RockyOrchestrationSkill } from "./rocky-skill-registry.js";
+
+export const ROCKY_AGENT_REQUEST_CONTEXT_DIR = ".agents/rocky/requests";
+
+function formatList(items: string[]): string {
+  if (items.length === 0) {
+    return "- 없음";
+  }
+
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+function linkedSkillIds(skill: RockyOrchestrationSkill): string[] {
+  return skill.ability?.installableSkillIds ?? [];
+}
+
+function formatLinkedSkillInstructions(skill: RockyOrchestrationSkill): string[] {
+  const skillIds = linkedSkillIds(skill);
+  if (skillIds.length === 0) {
+    return [];
+  }
+
+  return [
+    "연결된 workspace-local skill:",
+    ...skillIds.map(
+      (skillId) =>
+        `- \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${skillId}/SKILL.md\`가 있으면 먼저 읽고, 해당 절차와 도구 사용 지침을 우선 적용합니다.`
+    ),
+    "- 연결된 skill 파일이 없으면 없는 상태를 명확히 밝히고, 현재 workspace와 사용 가능한 도구 범위 안에서 처리합니다.",
+    "",
+  ];
+}
+
+function formatAttachments(attachments: RockyAttachmentRecord[]): string {
+  if (attachments.length === 0) {
+    return "- 없음";
+  }
+
+  return attachments
+    .map((attachment) => {
+      const size =
+        typeof attachment.size === "number" ? `${attachment.size} bytes` : "size unknown";
+      const contentType = attachment.contentType ?? "content type unknown";
+      const workspacePath = attachment.workspacePath
+        ? `, workspace path: ${attachment.workspacePath}`
+        : "";
+      return `- ${attachment.name} (${contentType}, ${size}${workspacePath})`;
+    })
+    .join("\n");
+}
+
+function executionModeLabel(intent: RockyRoutingIntent): string {
+  return intent === "clarification" ? "rocky core clarification" : "rocky core session";
+}
+
+function domainLabel(_domain: RockyChatDomain): string {
+  return "일반 요청";
+}
+
+export function buildRockyWorkspaceSkillMarkdown(
+  skill: RockyOrchestrationSkill
+): string {
+  return [
+    `# ${skill.displayName}`,
+    "",
+    `Skill: ${skill.displayName}`,
+    `Skill ID: ${skill.id}`,
+    `Skill version: ${skill.version}`,
+    "Execution mode: rocky core session",
+    `요청 영역: ${domainLabel(skill.domain)}`,
+    `Agent: ${skill.agent.name}`,
+    "",
+    "설명:",
+    skill.description,
+    "",
+    "처리 범위:",
+    formatList(skill.capabilities),
+    "",
+    "운영 규칙:",
+    formatList(skill.operatingRules),
+    "",
+    "응답 기준:",
+    formatList(skill.handoffContract),
+    "",
+    "현재 턴 처리 규칙:",
+    "- 사용자 요청은 현재 turn의 원문 user message를 그대로 사용합니다.",
+    "- 현재 turn의 첨부 메타데이터는 runtime system instructions에 지정된 context file에서 확인합니다.",
+    "- 별도 템플릿 문서를 사용자 요청으로 다시 감싸지 않습니다.",
+    "",
+    ...formatLinkedSkillInstructions(skill),
+    "응답:",
+    "- 한국어로 답하세요.",
+    "- 사용자에게 바로 전달할 수 있는 최종 답변을 작성하세요.",
+    "- 최종 답변은 Markdown으로 작성하고, 필요한 경우 제목, 목록, 표, 코드 블록을 사용하세요.",
+    "- 실행하지 못한 부분이 있으면 이유와 필요한 입력을 명확히 적으세요.",
+    "",
+  ].join("\n");
+}
+
+export function buildRockyTurnContextMarkdown(input: {
+  chatId: string;
+  dispatch: RockyDispatchRecord;
+  domain: RockyChatDomain;
+  skill: RockyOrchestrationSkill;
+  attachments: RockyAttachmentRecord[];
+  skillCandidates: RockySkillCandidateRecord[];
+  protectionHints: string[];
+  timestamp: string;
+}): string {
+  return [
+    "# Rocky Turn Context",
+    "",
+    `Skill: ${input.skill.displayName}`,
+    `Skill ID: ${input.skill.id}`,
+    `Skill version: ${input.skill.version}`,
+    `Execution mode: ${executionModeLabel(input.dispatch.intent)}`,
+    `요청 영역: ${domainLabel(input.domain)}`,
+    `Agent: ${input.skill.agent.name}`,
+    "",
+    "요청 분류:",
+    `- chat_id: ${input.chatId}`,
+    `- dispatch_id: ${input.dispatch.id}`,
+    `- intent: ${input.dispatch.intent}`,
+    `- created_at: ${input.timestamp}`,
+    "",
+    "첨부 메타데이터:",
+    formatAttachments(input.attachments),
+    "",
+  ].join("\n");
+}
+
+export async function syncRockyAgentSkillWorkspace(input: {
+  agent: AgentRecord;
+  skill: RockyOrchestrationSkill;
+}): Promise<string> {
+  const skillDir = path.join(
+    input.agent.workspaceRoot,
+    WORKSPACE_LOCAL_SKILL_AUTHORING_DIR,
+    input.skill.id
+  );
+  const skillPath = path.join(skillDir, "SKILL.md");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(skillPath, buildRockyWorkspaceSkillMarkdown(input.skill), "utf8");
+  await ensureWorkspaceSkillBridge(input.agent.workspaceRoot);
+  return skillPath;
+}
+
+export async function writeRockyTurnContextFile(input: {
+  agent: AgentRecord;
+  chatId: string;
+  dispatch: RockyDispatchRecord;
+  domain: RockyChatDomain;
+  skill: RockyOrchestrationSkill;
+  attachments: RockyAttachmentRecord[];
+  skillCandidates: RockySkillCandidateRecord[];
+  protectionHints: string[];
+  timestamp: string;
+}): Promise<string> {
+  const relativePath = `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${input.dispatch.id}.md`;
+  const absolutePath = path.join(input.agent.workspaceRoot, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(
+    absolutePath,
+    buildRockyTurnContextMarkdown({
+      chatId: input.chatId,
+      dispatch: input.dispatch,
+      domain: input.domain,
+      skill: input.skill,
+      attachments: input.attachments,
+      skillCandidates: input.skillCandidates,
+      protectionHints: input.protectionHints,
+      timestamp: input.timestamp,
+    }),
+    "utf8"
+  );
+  return relativePath;
+}
+
+export function buildRockyTurnSystemInstructions(input: {
+  skill: RockyOrchestrationSkill;
+  contextRelativePath: string;
+}): string[] {
+  return [
+    `Use the workspace-local Rocky Core instructions in \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${input.skill.id}/SKILL.md\` for this turn.`,
+    ...linkedSkillIds(input.skill).map(
+      (skillId) =>
+        `If \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${skillId}/SKILL.md\` exists, read it and apply it as the linked skill instructions for this turn.`
+    ),
+    `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
+    "Treat the current user message as the canonical original request.",
+  ];
+}

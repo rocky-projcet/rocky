@@ -112,6 +112,22 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function isUnknownRuntimeRecordError(error: unknown): boolean {
+  return error instanceof Error && /^Unknown (session|run): /u.test(error.message);
+}
+
+function missingRuntimeRecordMessage(error: unknown): string {
+  const message = errorMessage(error);
+  if (/^Unknown session: /u.test(message)) {
+    return "연결된 실행 세션이 삭제되었습니다. 새 메시지를 보내면 새 세션으로 이어서 진행합니다.";
+  }
+  if (/^Unknown run: /u.test(message)) {
+    return "연결된 실행 기록이 삭제되었습니다. 새 메시지를 보내면 새 세션으로 이어서 진행합니다.";
+  }
+
+  return message;
+}
+
 function latestAssistantText(messages: AgentSessionMessage[]): string | null {
   const assistant = [...messages].reverse().find((message) => message.role === "assistant");
   const content = assistant?.content.trim();
@@ -166,11 +182,10 @@ export class RockyOrchestratorService {
       };
     }
 
-    try {
-      const sessionId = input.reuseSessionId ?? null;
-      const session = sessionId
+    const startRun = async (reuseSessionId: string | null) => {
+      const session = reuseSessionId
         ? null
-        : await this.sessionService.createSession({
+        : await this.sessionService!.createSession({
             agentId,
             title: input.message.slice(0, 80),
             kind: "task-request",
@@ -180,26 +195,57 @@ export class RockyOrchestratorService {
             reasoningEffort: input.defaultReasoningEffort,
             serviceTier: input.defaultServiceTier,
           });
-      const run = await this.sessionService.sendTurn({
-        sessionId: session?.id ?? sessionId!,
+      const sessionId = session?.id ?? reuseSessionId;
+      if (!sessionId) {
+        throw new Error("Rocky Core session id is required.");
+      }
+
+      const run = await this.sessionService!.sendTurn({
+        sessionId,
         prompt: input.message,
         triggerType: "interactive",
         extraSystemInstructions: input.extraSystemInstructions,
       });
 
+      return { run, sessionId };
+    };
+
+    try {
+      const started = await startRun(input.reuseSessionId ?? null);
       return {
         id: orchestrationId,
-        status: runStatusToOrchestrationStatus(run.status),
+        status: runStatusToOrchestrationStatus(started.run.status),
         agentId,
-        sessionId: session?.id ?? sessionId,
-        runId: run.id,
+        sessionId: started.sessionId,
+        runId: started.run.id,
         output: null,
         error: null,
-        startedAt: run.startedAt,
-        endedAt: run.endedAt,
+        startedAt: started.run.startedAt,
+        endedAt: started.run.endedAt,
         updatedAt: this.now(),
       };
     } catch (error) {
+      let finalError = error;
+      if (input.reuseSessionId && isUnknownRuntimeRecordError(error)) {
+        try {
+          const started = await startRun(null);
+          return {
+            id: orchestrationId,
+            status: runStatusToOrchestrationStatus(started.run.status),
+            agentId,
+            sessionId: started.sessionId,
+            runId: started.run.id,
+            output: null,
+            error: null,
+            startedAt: started.run.startedAt,
+            endedAt: started.run.endedAt,
+            updatedAt: this.now(),
+          };
+        } catch (retryError) {
+          finalError = retryError;
+        }
+      }
+
       return {
         id: orchestrationId,
         status: "failed",
@@ -207,7 +253,7 @@ export class RockyOrchestratorService {
         sessionId: null,
         runId: null,
         output: null,
-        error: errorMessage(error),
+        error: errorMessage(finalError),
         startedAt: null,
         endedAt: this.now(),
         updatedAt: this.now(),
@@ -242,43 +288,86 @@ export class RockyOrchestratorService {
       return orchestration;
     }
 
-    try {
-      const run =
-        !isTerminal && this.sessionService.getRun
-          ? await this.sessionService.getRun(orchestration.runId)
-          : null;
-      const result =
-        this.sessionService.getRunResult &&
-        ((run && run.status !== "running") ||
-          isTerminal)
-          ? await this.sessionService.getRunResult(orchestration.runId)
-          : null;
-      const transcriptOutput =
-        orchestration.sessionId && this.sessionService.getTranscript
-          ? latestAssistantText(await this.sessionService.getTranscript(orchestration.sessionId))
-          : orchestration.output;
-      const terminalRunSummary =
-        run && run.status !== "running" ? run.summary?.trim() || null : null;
-      const output =
-        resultAssistantText(result) ??
-        terminalRunSummary ??
-        transcriptOutput ??
-        orchestration.output;
-      return {
-        ...orchestration,
-        status: run ? runStatusToOrchestrationStatus(run.status) : orchestration.status,
-        output,
-        error: run
-          ? run.status === "failed"
-            ? run.summary ?? orchestration.error
-            : null
-          : orchestration.error,
-        startedAt: run?.startedAt ?? orchestration.startedAt,
-        endedAt: run?.endedAt ?? orchestration.endedAt,
-        updatedAt: this.now(),
-      };
-    } catch {
-      return orchestration;
+    const missingActiveOrchestration = (
+      error: unknown
+    ): RockyOrchestrationRecord | null => {
+      if (!isTerminal && isUnknownRuntimeRecordError(error)) {
+        return {
+          ...orchestration,
+          status: "failed",
+          error: missingRuntimeRecordMessage(error),
+          endedAt: orchestration.endedAt ?? this.now(),
+          updatedAt: this.now(),
+        };
+      }
+
+      return null;
+    };
+
+    let run: AgentRunRecord | null = null;
+    if (!isTerminal && this.sessionService.getRun) {
+      try {
+        run = await this.sessionService.getRun(orchestration.runId);
+      } catch (error) {
+        return missingActiveOrchestration(error) ?? orchestration;
+      }
     }
+
+    let result: RuntimeRunResult | null = null;
+    if (
+      this.sessionService.getRunResult &&
+      ((run && run.status !== "running") || isTerminal)
+    ) {
+      try {
+        result = await this.sessionService.getRunResult(orchestration.runId);
+      } catch (error) {
+        const missing = missingActiveOrchestration(error);
+        if (missing && !run) {
+          return missing;
+        }
+      }
+    }
+
+    let transcriptOutput = orchestration.output;
+    const status = run ? runStatusToOrchestrationStatus(run.status) : orchestration.status;
+    const shouldHydrateTranscript = Boolean(
+      orchestration.sessionId &&
+        this.sessionService.getTranscript &&
+        (!orchestration.output || !isTerminal)
+    );
+    if (shouldHydrateTranscript) {
+      try {
+        transcriptOutput =
+          latestAssistantText(
+            await this.sessionService.getTranscript(orchestration.sessionId!)
+          ) ?? orchestration.output;
+      } catch (error) {
+        const missing = missingActiveOrchestration(error);
+        if (missing && status === "running") {
+          return missing;
+        }
+      }
+    }
+
+    const terminalRunSummary =
+      run && run.status !== "running" ? run.summary?.trim() || null : null;
+    const output =
+      resultAssistantText(result) ??
+      terminalRunSummary ??
+      transcriptOutput ??
+      orchestration.output;
+    return {
+      ...orchestration,
+      status,
+      output,
+      error: run
+        ? run.status === "failed"
+          ? run.summary ?? orchestration.error
+          : null
+        : orchestration.error,
+      startedAt: run?.startedAt ?? orchestration.startedAt,
+      endedAt: run?.endedAt ?? orchestration.endedAt,
+      updatedAt: this.now(),
+    };
   }
 }

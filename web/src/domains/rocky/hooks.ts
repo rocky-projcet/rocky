@@ -15,6 +15,17 @@ export const rockyQueryKeys = {
   coreManagement: ["rocky-core-management"] as const,
 };
 
+function hasActiveRockyChat(chats: RockyChatRecord[] | undefined): boolean {
+  return (
+    chats?.some((chat) =>
+      chat.dispatches.some((dispatch) => {
+        const status = dispatch.orchestration?.status;
+        return status === "running" || status === "planned";
+      })
+    ) ?? false
+  );
+}
+
 async function invalidateRockyCore(queryClient: ReturnType<typeof useQueryClient>) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: rockyQueryKeys.coreManagement }),
@@ -26,6 +37,11 @@ export function useRockyChatsQuery() {
   return useQuery({
     queryKey: rockyQueryKeys.chats,
     queryFn: () => agentEngineClient.listRockyChats(),
+    refetchInterval: (query) =>
+      hasActiveRockyChat(query.state.data as RockyChatRecord[] | undefined)
+        ? 2000
+        : false,
+    refetchIntervalInBackground: true,
   });
 }
 

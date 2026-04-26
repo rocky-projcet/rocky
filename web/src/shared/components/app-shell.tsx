@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { ChevronDown, Home, LayoutTemplate, SlidersHorizontal } from "lucide-react";
+import {
+  ChevronDown,
+  Home,
+  LayoutTemplate,
+  ListTodo,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
 import { NavAgents } from "@/domains/agent/components/nav-agents";
@@ -31,10 +38,15 @@ function isAgentDetailRoute(pathname: string): boolean {
   return /^\/agents\/[^/]+$/.test(pathname);
 }
 
+function isTaskDetailRoute(pathname: string): boolean {
+  return /^\/tasks\/[^/]+$/.test(pathname);
+}
+
 function usesBoundedCanvas(pathname: string): boolean {
   return (
     pathname === "/" ||
     pathname === "/agents" ||
+    isTaskDetailRoute(pathname) ||
     isAgentDetailRoute(pathname) ||
     isCompactRoute(pathname)
   );
@@ -46,6 +58,14 @@ function isRockyHomeRoute(pathname: string): boolean {
 
 function isTemplatesRoute(pathname: string): boolean {
   return pathname.startsWith("/templates");
+}
+
+function isSearchRoute(pathname: string): boolean {
+  return pathname.startsWith("/search");
+}
+
+function isTasksRoute(pathname: string): boolean {
+  return pathname.startsWith("/tasks");
 }
 
 function isAdvancedManagementRoute(pathname: string): boolean {
@@ -60,8 +80,11 @@ export function AppShell() {
   const location = useLocation();
   const boundedCanvas = usesBoundedCanvas(location.pathname);
   const compactRoute = isCompactRoute(location.pathname);
+  const taskDetailRoute = isTaskDetailRoute(location.pathname);
   const rockyHomeRoute = isRockyHomeRoute(location.pathname);
   const templatesRoute = isTemplatesRoute(location.pathname);
+  const searchRoute = isSearchRoute(location.pathname);
+  const tasksRoute = isTasksRoute(location.pathname);
   const advancedManagementRoute = isAdvancedManagementRoute(location.pathname);
   const [advancedManagementOpen, setAdvancedManagementOpen] = useState(
     () => advancedManagementRoute,
@@ -86,12 +109,32 @@ export function AppShell() {
               <SidebarMenu>
                 <SidebarMenuItem>
                   <SidebarMenuButton
+                    tooltip="검색"
+                    isActive={searchRoute}
+                    render={<NavLink to="/search" />}
+                  >
+                    <Search />
+                    <span>검색</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     tooltip="홈"
                     isActive={rockyHomeRoute}
                     render={<NavLink to="/" />}
                   >
                     <Home />
                     <span>홈</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="작업"
+                    isActive={tasksRoute}
+                    render={<NavLink to="/tasks" />}
+                  >
+                    <ListTodo />
+                    <span>작업</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
@@ -155,7 +198,11 @@ export function AppShell() {
             boundedCanvas
               ? cn(
                 "box-border flex h-[calc(100svh-3rem)] max-h-[calc(100svh-3rem)] min-h-0 flex-col overflow-hidden",
-                rockyHomeRoute ? "p-0" : compactRoute ? "p-5 md:p-6" : "p-8 md:p-10",
+                rockyHomeRoute || taskDetailRoute
+                  ? "p-0"
+                  : compactRoute
+                    ? "p-5 md:p-6"
+                    : "p-8 md:p-10",
               )
               : "custom-scrollbar overflow-y-auto p-8 md:p-10",
           )}

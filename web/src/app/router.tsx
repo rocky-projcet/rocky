@@ -12,7 +12,9 @@ import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
 import { WorkspaceFilePreviewPage } from "../domains/agent/pages/workspace-file-preview-page";
 import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
-import { HomePage } from "../domains/rocky/pages/home-page";
+import { HomePage, RockyTaskDetailPage } from "../domains/rocky/pages/home-page";
+import { SearchPage } from "../domains/rocky/pages/search-page";
+import { TasksPage } from "../domains/rocky/pages/tasks-page";
 import {
   TemplateBuilderPage,
   TemplatesPage,
@@ -28,6 +30,18 @@ export const router = createBrowserRouter([
       {
         index: true,
         element: <HomePage />,
+      },
+      {
+        path: "search",
+        element: <SearchPage />,
+      },
+      {
+        path: "tasks",
+        element: <TasksPage />,
+      },
+      {
+        path: "tasks/:taskId",
+        element: <RockyTaskDetailPage />,
       },
       {
         path: "agents",

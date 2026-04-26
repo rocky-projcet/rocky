@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
@@ -16,9 +16,7 @@ import {
   FileInput,
   FileOutput,
   FileText,
-  History,
   LayoutTemplate,
-  MessageSquare,
   Paperclip,
   PenLine,
   Presentation,
@@ -26,7 +24,6 @@ import {
   RefreshCw,
   Send,
   Square,
-  Trash2,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -36,14 +33,11 @@ import { toast } from "sonner";
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
 import { RunEventsSource } from "@/domains/run/lib/run-events-source";
 import {
-  useRockyAbilitiesQuery,
   useCancelRockyChatMutation,
   useCreateRockyChatMutation,
-  useDeleteRockyChatMutation,
   useRockyChatsQuery,
   useRockyChatQuery,
   useSendRockyMessageMutation,
-  useStartRockyAbilityGuideMutation,
 } from "@/domains/rocky/hooks";
 import {
   defaultRockyRunProgressLabel,
@@ -71,9 +65,16 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
+import {
+  formatRockyTaskDateTime,
+  getRockyTaskSummary,
+  getRockyTaskTemplateTitle,
+  getRockyTaskStatus,
+  rockyTaskStatusLabel,
+  rockyTaskStatusTone,
+} from "@/domains/rocky/lib/rocky-task-model";
 
 import type {
-  RockyAbilityCardRecord,
   RockyAttachmentRecord,
   RockyChatRecord,
   RockyMessageRecord,
@@ -632,14 +633,6 @@ async function openRockyWorkspacePath(
   }
 }
 
-function RockyAbilityIcon({ icon }: { icon: RockyAbilityCardRecord["icon"] }) {
-  if (icon === "presentation") {
-    return <Presentation className="size-4" />;
-  }
-
-  return <MessageSquare className="size-4" />;
-}
-
 function TemplateCategoryIcon({ category }: { category: MdTemplateCategory }) {
   if (category === "content") {
     return <PenLine className="size-4" />;
@@ -667,10 +660,12 @@ function templateTone(category: MdTemplateCategory): string {
 function TemplateCardGrid({
   disabled,
   onSelectTemplate,
+  recentTasksByTemplateTitle,
   userTemplates,
 }: {
   disabled: boolean;
   onSelectTemplate: (template: MdTemplateDefinition) => void;
+  recentTasksByTemplateTitle: Map<string, RockyChatRecord>;
   userTemplates: MdTemplateDefinition[];
 }) {
   return (
@@ -694,6 +689,7 @@ function TemplateCardGrid({
             <TemplateLaunchCard
               key={template.id}
               disabled={disabled}
+              recentTask={recentTasksByTemplateTitle.get(template.title) ?? null}
               template={template}
               onSelectTemplate={onSelectTemplate}
             />
@@ -720,12 +716,16 @@ function TemplateCardGrid({
 function TemplateLaunchCard({
   disabled,
   onSelectTemplate,
+  recentTask,
   template,
 }: {
   disabled: boolean;
   onSelectTemplate: (template: MdTemplateDefinition) => void;
+  recentTask: RockyChatRecord | null;
   template: MdTemplateDefinition;
 }) {
+  const recentStatus = recentTask ? getRockyTaskStatus(recentTask) : null;
+
   return (
     <button
       type="button"
@@ -755,117 +755,63 @@ function TemplateLaunchCard({
       <div className="mt-4 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
         <span className="truncate">{template.outputFormatLabel}</span>
       </div>
+      <div className="mt-4 rounded-md bg-muted/55 px-3 py-2">
+        {recentTask && recentStatus ? (
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-[11px] font-semibold text-muted-foreground">
+                최근 작업
+              </span>
+              <span
+                className={cn(
+                  "inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-medium",
+                  rockyTaskStatusTone(recentStatus)
+                )}
+              >
+                {rockyTaskStatusLabel(recentStatus)}
+              </span>
+            </div>
+            <div className="mt-1 line-clamp-1 text-xs text-foreground">
+              {getRockyTaskSummary(recentTask)}
+            </div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              {formatRockyTaskDateTime(recentTask.updatedAt)}
+            </div>
+          </>
+        ) : (
+          <div className="text-xs text-muted-foreground">
+            이 템플릿으로 시작한 최근 작업이 없습니다.
+          </div>
+        )}
+      </div>
     </button>
   );
 }
 
-function AbilityCardGrid({
-  abilities,
-  disabled,
-  loading,
-  onSelectAbility,
-}: {
-  abilities: RockyAbilityCardRecord[];
-  disabled: boolean;
-  loading: boolean;
-  onSelectAbility: (ability: RockyAbilityCardRecord) => void;
-}) {
-  if (loading && abilities.length === 0) {
-    return (
-      <div className="mt-8 grid w-full gap-3 text-left sm:grid-cols-2">
-        {[0, 1].map((index) => (
-          <div
-            key={index}
-            className="h-32 rounded-lg border border-dashed bg-muted/30"
-          />
-        ))}
-      </div>
-    );
-  }
-
-  if (abilities.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="mt-8 grid w-full gap-3 text-left sm:grid-cols-2">
-      {abilities.map((ability) => (
-        <button
-          key={ability.id}
-          type="button"
-          disabled={disabled}
-          onClick={() => onSelectAbility(ability)}
-          className="group min-h-32 rounded-lg border bg-card px-4 py-4 text-left shadow-sm transition hover:border-primary/40 hover:bg-secondary/50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-foreground">
-              <RockyAbilityIcon icon={ability.icon} />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold text-foreground">
-                {ability.title}
-              </span>
-              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                {ability.description}
-              </span>
-            </span>
-          </div>
-
-          <ul className="mt-3 space-y-1.5 text-xs leading-5 text-muted-foreground">
-            {ability.examples.slice(0, 3).map((example) => (
-              <li key={example} className="flex gap-2">
-                <span aria-hidden="true" className="mt-2 size-1 rounded-full bg-border" />
-                <span>{example}</span>
-              </li>
-            ))}
-          </ul>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function EmptyChatState({
-  abilities,
-  abilitiesLoading,
   disabled,
-  onSelectAbility,
   onSelectTemplate,
+  recentTasksByTemplateTitle,
   userTemplates,
 }: {
-  abilities: RockyAbilityCardRecord[];
-  abilitiesLoading: boolean;
   disabled: boolean;
-  onSelectAbility: (ability: RockyAbilityCardRecord) => void;
   onSelectTemplate: (template: MdTemplateDefinition) => void;
+  recentTasksByTemplateTitle: Map<string, RockyChatRecord>;
   userTemplates: MdTemplateDefinition[];
 }) {
   return (
     <div className="mx-auto flex min-h-full max-w-5xl flex-col items-center justify-center pb-16 text-center">
       <h1 className="text-2xl font-semibold tracking-normal md:text-3xl">
-        무엇을 도와드릴까요?
+        어떤 작업을 시작할까요?
       </h1>
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
-        PPT나 자료를 올리고 필요한 일을 편하게 말해 주세요.
+        템플릿을 고르거나 자료를 올려 Rocky에게 바로 요청하세요.
       </p>
       <TemplateCardGrid
         disabled={disabled}
         onSelectTemplate={onSelectTemplate}
+        recentTasksByTemplateTitle={recentTasksByTemplateTitle}
         userTemplates={userTemplates}
-      />
-      <div className="mt-8 flex w-full items-center gap-3">
-        <div className="h-px flex-1 bg-border" />
-        <div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <LayoutTemplate className="size-3.5" />
-          Rocky 기본 능력
-        </div>
-        <div className="h-px flex-1 bg-border" />
-      </div>
-      <AbilityCardGrid
-        abilities={abilities}
-        disabled={disabled}
-        loading={abilitiesLoading}
-        onSelectAbility={onSelectAbility}
       />
     </div>
   );
@@ -1753,7 +1699,6 @@ function SelectedFileList({
 function ChatComposer({
   canSend,
   canClearChat,
-  canLoadHistory,
   canStop,
   chatStarted,
   errorMessage,
@@ -1762,7 +1707,6 @@ function ChatComposer({
   onFilesChange,
   onFileRemove,
   onClearChat,
-  onOpenHistory,
   onStop,
   onMessageChange,
   onSubmit,
@@ -1770,7 +1714,6 @@ function ChatComposer({
 }: {
   canSend: boolean;
   canClearChat: boolean;
-  canLoadHistory: boolean;
   canStop: boolean;
   chatStarted: boolean;
   errorMessage: string | undefined;
@@ -1779,7 +1722,6 @@ function ChatComposer({
   onFilesChange: (files: File[]) => void;
   onFileRemove: (file: File) => void;
   onClearChat: () => void;
-  onOpenHistory: () => void;
   onStop: () => void;
   onMessageChange: (message: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -1788,16 +1730,6 @@ function ChatComposer({
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
       <div className="mx-auto mb-2 flex w-full max-w-4xl justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!canLoadHistory}
-          onClick={onOpenHistory}
-        >
-          <History className="size-4" />
-          이전 대화
-        </Button>
         {chatStarted ? (
           <Button
             type="button"
@@ -2042,134 +1974,6 @@ function TemplateExecutionDialog({
             템플릿 실행
             <ArrowRight className="size-4" />
           </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function PreviousChatsDialog({
-  chats,
-  currentChatId,
-  deletingChatId,
-  disabled,
-  errorMessage,
-  loading,
-  onDeleteChat,
-  onOpenChange,
-  onSelectChat,
-  open,
-}: {
-  chats: RockyChatRecord[];
-  currentChatId: string | null;
-  deletingChatId: string | null;
-  disabled: boolean;
-  errorMessage: string | null;
-  loading: boolean;
-  onDeleteChat: (chat: RockyChatRecord) => void;
-  onOpenChange: (open: boolean) => void;
-  onSelectChat: (chat: RockyChatRecord) => void;
-  open: boolean;
-}) {
-  const hasChats = chats.length > 0;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(80vh,42rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
-          <DialogTitle>이전 대화</DialogTitle>
-          <DialogDescription>
-            저장된 Rocky 대화를 현재 홈 화면에 불러옵니다.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
-          {errorMessage ? (
-            <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {errorMessage}
-            </div>
-          ) : null}
-
-          {loading ? (
-            <div className="flex min-h-36 items-center justify-center rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-              이전 대화를 불러오는 중입니다.
-            </div>
-          ) : hasChats ? (
-            <div className="grid gap-2">
-              {chats.map((chat) => {
-                const isCurrentChat = chat.id === currentChatId;
-                const itemDisabled = disabled || isCurrentChat;
-                const deletePending = deletingChatId === chat.id;
-                const deleteDisabled = disabled || Boolean(deletingChatId);
-
-                return (
-                  <div
-                    key={chat.id}
-                    data-testid={`previous-chat-row-${chat.id}`}
-                    className={cn(
-                      "flex w-full items-stretch overflow-hidden rounded-lg border transition",
-                      isCurrentChat
-                        ? "border-primary/35 bg-primary/5"
-                        : "border-border bg-background"
-                    )}
-                  >
-                    <button
-                      type="button"
-                      disabled={itemDisabled}
-                      onClick={() => onSelectChat(chat)}
-                      className={cn(
-                        "min-w-0 flex-1 px-4 py-3 text-left transition",
-                        itemDisabled
-                          ? "cursor-default opacity-70"
-                          : "cursor-pointer hover:bg-muted/50"
-                      )}
-                    >
-                      <div className="flex min-w-0 items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-foreground">
-                            {chat.title || "제목 없는 대화"}
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                            <span>{chat.messages.length}개 메시지</span>
-                            <span aria-hidden="true">·</span>
-                            <span>마지막 수정 {formatDateTime(chat.updatedAt)}</span>
-                          </div>
-                        </div>
-                        {isCurrentChat ? (
-                          <Badge variant="secondary" className="shrink-0">
-                            현재 대화
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </button>
-                    <div className="flex shrink-0 items-center border-l border-border/70 px-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        data-testid={`previous-chat-delete-${chat.id}`}
-                        disabled={deleteDisabled}
-                        aria-label={`${chat.title || "제목 없는 대화"} 삭제`}
-                        title="대화 삭제"
-                        onClick={() => onDeleteChat(chat)}
-                        className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        {deletePending ? (
-                          <span className="text-[10px] font-medium">삭제중</span>
-                        ) : (
-                          <Trash2 className="size-4" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : errorMessage ? null : (
-            <div className="flex min-h-36 items-center justify-center rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-              불러올 이전 대화가 없습니다.
-            </div>
-          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -2913,44 +2717,50 @@ function TemplateFilePanel({
   );
 }
 
-function chatHasActiveOrchestration(chat: RockyChatRecord): boolean {
-  return chat.dispatches.some((dispatch) => {
-    const status = dispatch.orchestration?.status;
-    return status === "running" || status === "planned";
-  });
-}
+type RockyWorkspaceMode = "home" | "task-detail";
 
-export function HomePage() {
+function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
+  const navigate = useNavigate();
+  const params = useParams<{ taskId?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isTaskDetail = mode === "task-detail";
+  const routeTaskId = isTaskDetail ? params.taskId ?? null : null;
   const [chat, setChat] = useState<RockyChatRecord | null>(null);
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [submitInFlight, setSubmitInFlight] = useState(false);
-  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [templateExecutionTemplate, setTemplateExecutionTemplate] =
     useState<MdTemplateDefinition | null>(null);
   const [previewPanelSource, setPreviewPanelSource] =
     useState<RockyPreviewPanelSource | null>(null);
-  const [suppressAutoSelect, setSuppressAutoSelect] = useState(false);
   const [runProgressByRunId, setRunProgressByRunId] = useState<Record<string, string>>(
     {}
   );
   const submitInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
-  const abilitiesQuery = useRockyAbilitiesQuery();
-  const abilities = abilitiesQuery.data ?? [];
   const { userTemplates } = useMdTemplates();
   const rockyChatsQuery = useRockyChatsQuery();
-  const rockyChats = rockyChatsQuery.data;
-  const previousChats = rockyChats ?? [];
+  const rockyChats = rockyChatsQuery.data ?? [];
+  const recentTasksByTemplateTitle = useMemo(() => {
+    const tasksByTitle = new Map<string, RockyChatRecord>();
+    [...rockyChats]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .forEach((entry) => {
+        const templateTitle = getRockyTaskTemplateTitle(entry);
+        if (templateTitle && !tasksByTitle.has(templateTitle)) {
+          tasksByTitle.set(templateTitle, entry);
+        }
+      });
+    return tasksByTitle;
+  }, [rockyChats]);
   const createChatMutation = useCreateRockyChatMutation();
-  const deleteHistoryChatMutation = useDeleteRockyChatMutation(null);
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
   const cancelRockyChatMutation = useCancelRockyChatMutation(chat?.id ?? null);
-  const startAbilityGuideMutation = useStartRockyAbilityGuideMutation();
-  const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
-    chat?.id ?? null
+  const rockyChatQuery = useRockyChatQuery(
+    isTaskDetail ? routeTaskId : chat?.id ?? null
   );
+  const { data: refreshedChat, refetch: refetchRockyChat } = rockyChatQuery;
   const transcriptSessionIds =
     chat?.dispatches.flatMap((dispatch) =>
       dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
@@ -3050,48 +2860,24 @@ export function HomePage() {
   const mutationPending =
     submitInFlight ||
     createChatMutation.isPending ||
-    sendMessageMutation.isPending ||
-    startAbilityGuideMutation.isPending ||
-    deleteHistoryChatMutation.isPending;
+    sendMessageMutation.isPending;
   const pending = mutationPending || cancelRockyChatMutation.isPending;
   const canSend =
     (message.trim().length > 0 || files.length > 0) &&
     !mutationPending &&
     !cancelRockyChatMutation.isPending &&
-    !hasActiveOrchestration;
+    !hasActiveOrchestration &&
+    (!isTaskDetail || Boolean(chat));
   const canStop =
     Boolean(chat?.id) &&
     hasActiveOrchestration &&
     !cancelRockyChatMutation.isPending;
   const canClearChat =
-    Boolean(chat && messageCount > 0) && !pending && !hasActiveOrchestration;
-  const historyQueryErrorMessage = rockyChatsQuery.error
-    ? getErrorMessage(
-        rockyChatsQuery.error,
-        "이전 대화 목록을 불러오지 못했습니다."
-      )
-    : null;
-  const historyDeleteErrorMessage = deleteHistoryChatMutation.error
-    ? getErrorMessage(
-        deleteHistoryChatMutation.error,
-        "이전 대화를 삭제하지 못했습니다."
-      )
-    : null;
-  const historyErrorMessage =
-    historyDeleteErrorMessage ?? historyQueryErrorMessage;
-  const deletingHistoryChatId = deleteHistoryChatMutation.isPending
-    ? deleteHistoryChatMutation.variables ?? null
-    : null;
-  const canLoadHistory =
-    !pending &&
-    (previousChats.length > 0 ||
-      rockyChatsQuery.isLoading ||
-      Boolean(historyErrorMessage));
+    isTaskDetail && Boolean(chat && messageCount > 0) && !pending && !hasActiveOrchestration;
   const errorMessage =
     createChatMutation.error?.message ??
     sendMessageMutation.error?.message ??
-    cancelRockyChatMutation.error?.message ??
-    startAbilityGuideMutation.error?.message;
+    cancelRockyChatMutation.error?.message;
 
   useEffect(() => {
     if (refreshedChat) {
@@ -3100,15 +2886,33 @@ export function HomePage() {
   }, [refreshedChat]);
 
   useEffect(() => {
-    if (chat || suppressAutoSelect || !rockyChats || rockyChats.length === 0) {
+    if (!isTaskDetail) {
+      setChat(null);
+      setPreviewPanelSource(null);
       return;
     }
 
-    const activeChat = rockyChats.find(chatHasActiveOrchestration);
-    if (activeChat) {
-      setChat(activeChat);
+    setChat((current) => (current?.id === routeTaskId ? current : null));
+    setPreviewPanelSource(null);
+    setTemplateExecutionTemplate(null);
+  }, [isTaskDetail, routeTaskId]);
+
+  useEffect(() => {
+    if (isTaskDetail) {
+      return;
     }
-  }, [chat, rockyChats, suppressAutoSelect]);
+
+    const requestedTemplateId = searchParams.get("templateId");
+    if (!requestedTemplateId) {
+      return;
+    }
+
+    const template = userTemplates.find((entry) => entry.id === requestedTemplateId);
+    if (template) {
+      setTemplateExecutionTemplate(template);
+      setSearchParams({}, { replace: true });
+    }
+  }, [isTaskDetail, searchParams, setSearchParams, userTemplates]);
 
   useEffect(() => {
     const active = new Set(
@@ -3226,6 +3030,9 @@ export function HomePage() {
       setChat(nextChat);
       setMessage("");
       setFiles([]);
+      if (!isTaskDetail) {
+        navigate(`/tasks/${encodeURIComponent(nextChat.id)}`);
+      }
     } finally {
       submitInFlightRef.current = false;
       setSubmitInFlight(false);
@@ -3259,25 +3066,6 @@ export function HomePage() {
     setTemplateExecutionTemplate(null);
   };
 
-  const startAbilityGuide = async (ability: RockyAbilityCardRecord) => {
-    if (pending || submitInFlightRef.current) {
-      return;
-    }
-
-    submitInFlightRef.current = true;
-    setSubmitInFlight(true);
-    try {
-      const nextChat = await startAbilityGuideMutation.mutateAsync(ability.id);
-
-      setChat(nextChat);
-      setMessage("");
-      setFiles([]);
-    } finally {
-      submitInFlightRef.current = false;
-      setSubmitInFlight(false);
-    }
-  };
-
   const stopActiveResponse = async () => {
     if (!chat?.id || !hasActiveOrchestration || cancelRockyChatMutation.isPending) {
       return;
@@ -3299,57 +3087,37 @@ export function HomePage() {
       return;
     }
 
-    setSuppressAutoSelect(true);
     setChat(null);
     setMessage("");
     setFiles([]);
     setTemplateExecutionTemplate(null);
     setPreviewPanelSource(null);
-  };
-
-  const loadPreviousChat = (selectedChat: RockyChatRecord) => {
-    if (pending || selectedChat.id === chat?.id) {
-      return;
-    }
-
-    setChat(selectedChat);
-    setSuppressAutoSelect(false);
-    setPreviewPanelSource(null);
-    setTemplateExecutionTemplate(null);
-    setMessage("");
-    setFiles([]);
-    setHistoryDialogOpen(false);
-  };
-
-  const deletePreviousChat = async (selectedChat: RockyChatRecord) => {
-    if (pending) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `"${selectedChat.title || "제목 없는 대화"}" 대화를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    await deleteHistoryChatMutation.mutateAsync(selectedChat.id);
-
-    if (selectedChat.id === chat?.id) {
-      setSuppressAutoSelect(true);
-      setChat(null);
-      setPreviewPanelSource(null);
-      setTemplateExecutionTemplate(null);
-      setMessage("");
-      setFiles([]);
-    }
+    navigate("/");
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background lg:flex-row">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <main className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
-          {chat && messageCount > 0 ? (
+          {isTaskDetail && !chat ? (
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center text-center">
+              <div className="text-sm font-medium text-foreground">
+                {rockyChatQuery.isError
+                  ? "작업을 불러오지 못했습니다."
+                  : "작업을 불러오는 중입니다."}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {rockyChatQuery.isError
+                  ? getErrorMessage(rockyChatQuery.error, "잠시 후 다시 시도해 주세요.")
+                  : "Rocky 작업 대화와 진행 상태를 준비하고 있습니다."}
+              </p>
+              {rockyChatQuery.isError ? (
+                <Button className="mt-4" variant="outline" render={<Link to="/tasks" />}>
+                  작업 목록으로
+                </Button>
+              ) : null}
+            </div>
+          ) : chat && messageCount > 0 ? (
             <MessageList
               agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
               chat={chat}
@@ -3360,15 +3128,11 @@ export function HomePage() {
             />
           ) : (
             <EmptyChatState
-              abilities={abilities}
-              abilitiesLoading={abilitiesQuery.isLoading}
               disabled={pending}
-              onSelectAbility={(ability) => {
-                void startAbilityGuide(ability);
-              }}
               onSelectTemplate={(template) => {
                 setTemplateExecutionTemplate(template);
               }}
+              recentTasksByTemplateTitle={recentTasksByTemplateTitle}
               userTemplates={userTemplates}
             />
           )}
@@ -3377,9 +3141,8 @@ export function HomePage() {
         <ChatComposer
           canSend={canSend}
           canClearChat={canClearChat}
-          canLoadHistory={canLoadHistory}
           canStop={canStop}
-          chatStarted={Boolean(chat)}
+          chatStarted={isTaskDetail && Boolean(chat)}
           errorMessage={errorMessage}
           files={files}
           message={message}
@@ -3390,7 +3153,6 @@ export function HomePage() {
           onClearChat={() => {
             void clearConversation();
           }}
-          onOpenHistory={() => setHistoryDialogOpen(true)}
           onStop={() => {
             void stopActiveResponse();
           }}
@@ -3419,21 +3181,6 @@ export function HomePage() {
         template={templateExecutionTemplate}
       />
 
-      <PreviousChatsDialog
-        chats={previousChats}
-        currentChatId={chat?.id ?? null}
-        deletingChatId={deletingHistoryChatId}
-        disabled={pending}
-        errorMessage={historyErrorMessage}
-        loading={rockyChatsQuery.isLoading}
-        onDeleteChat={(selectedChat) => {
-          void deletePreviousChat(selectedChat);
-        }}
-        onOpenChange={setHistoryDialogOpen}
-        onSelectChat={loadPreviousChat}
-        open={historyDialogOpen}
-      />
-
       {templateFilePanelContext ? (
         <TemplateFilePanel
           context={templateFilePanelContext}
@@ -3449,4 +3196,12 @@ export function HomePage() {
       ) : null}
     </div>
   );
+}
+
+export function HomePage() {
+  return <RockyWorkspacePage mode="home" />;
+}
+
+export function RockyTaskDetailPage() {
+  return <RockyWorkspacePage mode="task-detail" />;
 }

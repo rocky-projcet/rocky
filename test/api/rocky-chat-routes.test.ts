@@ -214,7 +214,7 @@ function createRockyChatTestServer(stateRoot: string) {
           serviceTier: input.serviceTier,
         });
         const session = buildSession({
-          id: `session-${sessions.length + 1}`,
+          id: `session-${createSessionCalls.length}`,
           agentId: input.agentId,
           title: input.title,
           kind: input.kind,
@@ -763,6 +763,87 @@ test("rocky chat keeps task requests on Rocky Core", async () => {
     assert.equal(sendTurnCalls[1]?.sessionId, "session-1");
     assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");
     assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-1");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat starts a fresh Core session when the reusable session was deleted", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const {
+    createSessionCalls,
+    runs,
+    sendTurnCalls,
+    server,
+    sessions,
+  } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "회의록을 요약해줘.",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.dispatches[0]?.orchestration?.sessionId, "session-1");
+
+    sessions.splice(0, sessions.length);
+    runs.splice(0, runs.length);
+
+    const followUp = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${chat.id}/messages`,
+      payload: {
+        message: "액션 아이템도 덧붙여줘.",
+      },
+    });
+    assert.equal(followUp.statusCode, 201);
+    const updated = followUp.json<RockyChatRecord>();
+    assert.equal(createSessionCalls.length, 2);
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.id, "session-2");
+    assert.equal(runs.length, 1);
+    assert.equal(sendTurnCalls.at(-1)?.sessionId, "session-2");
+    assert.equal(updated.dispatches[1]?.orchestration?.status, "running");
+    assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-2");
+    assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-1");
+    assert.equal(updated.dispatches[1]?.orchestration?.error, null);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat refresh marks an active task failed when its backing run was deleted", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { runs, server, sessions } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "삭제된 세션 상태를 확인해줘.",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.orchestration?.status, "running");
+
+    sessions.splice(0, sessions.length);
+    runs.splice(0, runs.length);
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+    assert.equal(refreshed.orchestration?.status, "failed");
+    assert.match(refreshed.orchestration?.error ?? "", /연결된 실행 기록이 삭제되었습니다/u);
+    assert.equal(refreshed.dispatches[0]?.orchestration?.status, "failed");
   } finally {
     await server.close();
   }

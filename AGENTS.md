@@ -19,7 +19,7 @@ This file is an index only. Detailed workflows live in the referenced skills.
 
 ## Notion Defaults
 
-- Workspace/teamspace: `픽셀베리`
+- Workspace/teamspace: `pixel berry`
 - Default databases: `작업 트래커`, `문서 허브`
 - New ad-hoc implementation work: create one tracker entry and one related hub document
 - If the user provides an existing Notion link, treat that page as the source of truth

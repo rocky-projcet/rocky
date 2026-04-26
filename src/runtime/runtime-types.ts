@@ -176,6 +176,7 @@ export interface RuntimeArtifactRef {
   kind: "file";
   role: string;
   path: string;
+  workspaceRelativePath?: string | null;
 }
 
 export interface RuntimeWorkspaceFileSnapshotEntry {

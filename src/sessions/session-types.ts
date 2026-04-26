@@ -91,6 +91,7 @@ export interface AgentSessionArtifactManifestEntry {
   kind: "file";
   role: string;
   name: string;
+  workspaceRelativePath?: string | null;
   contentType: string;
   presentation: RuntimeArtifactPresentation;
   size: number | null;

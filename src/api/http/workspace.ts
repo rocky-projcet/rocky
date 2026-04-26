@@ -30,6 +30,7 @@ import {
   type NativeFileOpener,
   type NativeFileOpenRecord,
 } from "./native-open.js";
+import { contentDispositionHeader } from "./content-disposition.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 const MAX_TEXT_PREVIEW_BYTES = 64 * 1024;
@@ -528,7 +529,7 @@ export async function sendWorkspaceFileDownload(
   reply.header("Content-Type", contentTypeForArtifactPath(absolutePath));
   reply.header(
     "Content-Disposition",
-    `attachment; filename="${path.basename(absolutePath)}"`
+    contentDispositionHeader("attachment", path.basename(absolutePath))
   );
   reply.header("Content-Length", String(body.byteLength));
   reply.send(body);
@@ -579,7 +580,7 @@ export async function sendWorkspaceFilePreview(
     reply.header("Content-Type", "application/pdf");
     reply.header(
       "Content-Disposition",
-      `inline; filename="${path.basename(preview.path)}"`
+      contentDispositionHeader("inline", path.basename(preview.path))
     );
     reply.header("Content-Length", String(preview.body.byteLength));
     reply.send(preview.body);
@@ -621,7 +622,7 @@ export async function sendWorkspaceFilePreview(
     reply.header("Content-Type", contentType);
     reply.header(
       "Content-Disposition",
-      `inline; filename="${path.basename(absolutePath)}"`
+      contentDispositionHeader("inline", path.basename(absolutePath))
     );
     reply.header("Content-Length", String(range.end - range.start + 1));
     reply.header("Content-Range", `bytes ${range.start}-${range.end}/${size}`);
@@ -635,7 +636,7 @@ export async function sendWorkspaceFilePreview(
   reply.header("Content-Type", contentType);
   reply.header(
     "Content-Disposition",
-    `inline; filename="${path.basename(absolutePath)}"`
+    contentDispositionHeader("inline", path.basename(absolutePath))
   );
   reply.header("Content-Length", String(body.byteLength));
   reply.send(body);

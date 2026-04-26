@@ -10,6 +10,7 @@ import { AccountPage } from "../domains/codex/pages/account-page";
 import { AgentDetailPage } from "../domains/agent/pages/agent-detail-page";
 import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
+import { WorkspaceFilePreviewPage } from "../domains/agent/pages/workspace-file-preview-page";
 import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
 import { HomePage } from "../domains/rocky/pages/home-page";
 import {
@@ -90,5 +91,9 @@ export const router = createBrowserRouter([
         element: <Navigate to="/settings" replace />,
       }
     ],
+  },
+  {
+    path: "/workspace-preview",
+    element: <WorkspaceFilePreviewPage />,
   },
 ]);

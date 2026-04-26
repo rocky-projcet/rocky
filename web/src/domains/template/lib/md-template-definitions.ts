@@ -629,7 +629,9 @@ export function createUserTemplateRecord(input: {
     description: normalized.description,
     triggerLabel: normalized.triggerLabel,
     requiredInputs: normalized.requiredInputs,
+    inputFiles: input.existing?.inputFiles,
     outputFormatLabel: normalized.outputFormatLabel,
+    outputFiles: input.existing?.outputFiles,
     defaultInstructions: normalized.defaultInstructions,
     skill,
     sortOrder: input.existing?.sortOrder ?? Date.parse(input.now),
@@ -717,6 +719,10 @@ export function buildTemplateRunPrompt(
     options.selectedFileNames && options.selectedFileNames.length > 0
       ? options.selectedFileNames.map((name) => `- ${name}`).join("\n")
       : "- 아직 없음";
+  const outputFiles =
+    normalized.outputFiles && normalized.outputFiles.length > 0
+      ? normalized.outputFiles.map((name) => `- ${name}`).join("\n")
+      : "- 템플릿에 고정 output 파일 경로가 지정되지 않았습니다.";
   const userBrief = options.userBrief?.trim()
     ? options.userBrief.trim()
     : "추가 요청 없음";
@@ -741,6 +747,9 @@ export function buildTemplateRunPrompt(
     "",
     "필요한 입력값:",
     inputs,
+    "",
+    "템플릿 output 파일:",
+    outputFiles,
     "",
     "진행 방식:",
     "1. 사용자가 이미 올린 파일과 메시지를 먼저 확인합니다.",

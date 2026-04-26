@@ -25,7 +25,9 @@ export interface MdTemplateDefinition {
   description: string;
   triggerLabel: string;
   requiredInputs: string[];
+  inputFiles?: string[];
   outputFormatLabel: string;
+  outputFiles?: string[];
   defaultInstructions: string;
   skill: MdTemplateOpenAiSkill;
   sortOrder: number;

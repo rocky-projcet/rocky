@@ -1805,15 +1805,24 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
   const imagePath = path.join(agent.workspaceRoot, "diagram.png");
   const pdfPath = path.join(agent.workspaceRoot, "manual.pdf");
   const pptxPath = path.join(agent.workspaceRoot, "proposal.pptx");
+  const koreanPptxPath = path.join(
+    agent.workspaceRoot,
+    "uploads",
+    "rocky",
+    "input",
+    "플로깅-줍깅-플랫폼-해커톤-PPT.pptx"
+  );
   const audioPath = path.join(agent.workspaceRoot, "voice.mp3");
   const videoPath = path.join(agent.workspaceRoot, "clip.mp4");
   await mkdir(notesDir, { recursive: true });
+  await mkdir(path.dirname(koreanPptxPath), { recursive: true });
   await writeFile(notePath, "# Summary\nline two\n", "utf8");
   await writeFile(envTemplatePath, "OPENAI_API_KEY=\nMODEL=gpt-5.4\n", "utf8");
   await writeFile(htmlPath, "<!doctype html><title>Report</title><h1>Workspace</h1>", "utf8");
   await writeFile(imagePath, Buffer.from("fake-png-binary"), "utf8");
   await writeFile(pdfPath, Buffer.from("%PDF-fake"), "utf8");
   await writeFile(pptxPath, Buffer.from("fake-pptx-binary"), "utf8");
+  await writeFile(koreanPptxPath, Buffer.from("fake-korean-pptx-binary"), "utf8");
   await writeFile(audioPath, Buffer.from("fake-mp3-binary"), "utf8");
   await writeFile(videoPath, Buffer.from("fake-mp4-binary"), "utf8");
 
@@ -2047,6 +2056,25 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
     assert.equal(
       pptxPreviewMetadata.inlinePreviewUrl,
       `/agents/${agent.id}/workspace/file/preview?path=proposal.pptx`
+    );
+
+    const koreanPptxDownloadResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/file/content?path=${encodeURIComponent(
+        "uploads/rocky/input/플로깅-줍깅-플랫폼-해커톤-PPT.pptx"
+      )}`
+    );
+    assert.equal(koreanPptxDownloadResponse.status, 200);
+    assert.match(
+      koreanPptxDownloadResponse.headers.get("content-disposition") ?? "",
+      /^attachment;/
+    );
+    assert.match(
+      koreanPptxDownloadResponse.headers.get("content-disposition") ?? "",
+      /filename\*=UTF-8''%ED%94%8C%EB%A1%9C%EA%B9%85/u
+    );
+    assert.equal(
+      Buffer.from(await koreanPptxDownloadResponse.arrayBuffer()).toString("utf8"),
+      "fake-korean-pptx-binary"
     );
 
     const pptxNativeOpenResponse = await fetch(

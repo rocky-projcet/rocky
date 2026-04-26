@@ -160,6 +160,7 @@ export interface ArtifactRecord {
   kind: "file";
   role: string;
   name: string;
+  workspaceRelativePath?: string | null;
   contentType: string;
   presentation: "file" | "image" | "chart";
   size: number | null;

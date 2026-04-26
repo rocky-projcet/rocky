@@ -17,6 +17,7 @@ import {
   type NativeFileOpener,
   type NativeFileOpenRecord,
 } from "./native-open.js";
+import { contentDispositionHeader } from "./content-disposition.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 function ensureArtifactPathInRun(run: AgentRunRecord, artifactPath: string): string {
@@ -58,6 +59,9 @@ export async function buildArtifactRecords(
       kind: artifactRef.kind,
       role: artifactRef.role,
       name: view.name,
+      ...(artifactRef.workspaceRelativePath
+        ? { workspaceRelativePath: artifactRef.workspaceRelativePath }
+        : {}),
       contentType: view.contentType,
       presentation: view.presentation,
       size,
@@ -99,7 +103,7 @@ export async function sendArtifactDownload(
   reply.header("Content-Type", contentTypeForArtifactPath(artifactPath));
   reply.header(
     "Content-Disposition",
-    `attachment; filename="${path.basename(artifactPath)}"`
+    contentDispositionHeader("attachment", path.basename(artifactPath))
   );
   reply.header("Content-Length", String(body.byteLength));
   reply.send(body);
@@ -179,7 +183,7 @@ export async function sendArtifactPreview(
     reply.header("Content-Type", "application/pdf");
     reply.header(
       "Content-Disposition",
-      `inline; filename="${path.basename(preview.path)}"`
+      contentDispositionHeader("inline", path.basename(preview.path))
     );
     reply.header("Content-Length", String(preview.body.byteLength));
     reply.send(preview.body);
@@ -209,7 +213,7 @@ export async function sendArtifactPreview(
   reply.header("Content-Type", contentType);
   reply.header(
     "Content-Disposition",
-    `inline; filename="${path.basename(artifactPath)}"`
+    contentDispositionHeader("inline", path.basename(artifactPath))
   );
   reply.header("Content-Length", String(body.byteLength));
   reply.send(body);

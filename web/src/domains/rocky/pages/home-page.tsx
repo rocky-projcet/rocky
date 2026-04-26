@@ -7,10 +7,14 @@ import {
   type RefObject,
 } from "react";
 import { Link } from "react-router-dom";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   BarChart3,
+  Download,
+  ExternalLink,
+  FileInput,
+  FileOutput,
   FileText,
   History,
   LayoutTemplate,
@@ -19,6 +23,7 @@ import {
   PenLine,
   Presentation,
   Plus,
+  RefreshCw,
   Send,
   Square,
   Trash2,
@@ -61,6 +66,7 @@ import {
 } from "@/shared/ui/dialog";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
 import { agentEngineClient } from "@/shared/lib/api-client";
+import type { AgentWorkspaceFilePreviewRecord } from "@/shared/lib/agent-engine-client";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { useMdTemplates } from "@/domains/template/hooks";
@@ -91,6 +97,42 @@ type RockyPreviewPanelSource = {
   nativeOpenPath: string | null;
   previewHref?: string | null;
 };
+
+type TemplatePanelFileRole = "input" | "output";
+
+type TemplatePanelFile = {
+  key: string;
+  role: TemplatePanelFileRole;
+  name: string;
+  detail: string;
+  contentType: string | null;
+  size: number | null;
+  agentId: string | null;
+  workspacePath: string | null;
+  artifact: AgentSessionArtifactManifestEntry | null;
+  createdAt: string;
+  expected: boolean;
+};
+
+type TemplateFilePanelContext = {
+  title: string;
+  outputFormatLabel: string;
+  inputFiles: TemplatePanelFile[];
+  outputFiles: TemplatePanelFile[];
+  hasExplicitOutputFiles: boolean;
+  active: boolean;
+};
+
+const TEMPLATE_RUN_MARKER = "[Rocky 템플릿 실행]";
+
+type TemplateOutputKind = "powerpoint" | null;
+
+const TEXT_WORKSPACE_PREVIEW_KINDS = new Set([
+  "text",
+  "code",
+  "markdown",
+  "html",
+]);
 
 function formatFileSize(size: number): string {
   if (size < 1024) {
@@ -231,12 +273,196 @@ function markdownUrlEscape(value: string): string {
 }
 
 function compactTemplateRunMessage(value: string): string {
-  if (!value.startsWith("[Rocky 템플릿 실행]")) {
+  if (!value.startsWith(TEMPLATE_RUN_MARKER)) {
     return value;
   }
 
   const title = value.match(/^템플릿:\s*(.+)$/mu)?.[1]?.trim();
   return title ? `템플릿 실행: ${title}` : "템플릿 실행";
+}
+
+function parseMarkdownListSection(value: string, heading: string): string[] {
+  const lines = value.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => line.trim() === heading);
+  if (headingIndex < 0) {
+    return [];
+  }
+
+  const items: string[] = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      break;
+    }
+
+    if (!trimmed.startsWith("- ")) {
+      continue;
+    }
+
+    const item = trimmed.slice(2).trim();
+    if (!item || item.includes("고정 output 파일 경로가 지정되지 않았습니다")) {
+      continue;
+    }
+
+    items.push(item);
+  }
+
+  return items;
+}
+
+function parseTemplateRunMessage(value: string): {
+  title: string;
+  outputFiles: string[];
+  outputFormatLabel: string;
+} | null {
+  if (!value.startsWith(TEMPLATE_RUN_MARKER)) {
+    return null;
+  }
+
+  const title = value.match(/^템플릿:\s*(.+)$/mu)?.[1]?.trim();
+  if (!title) {
+    return null;
+  }
+
+  return {
+    title,
+    outputFiles: parseMarkdownListSection(value, "템플릿 output 파일:"),
+    outputFormatLabel:
+      value.match(/^최종 산출물:\s*(.+)$/mu)?.[1]?.trim() || "지정 없음",
+  };
+}
+
+function normalizeTemplateFilePath(value: string): string {
+  return value.trim().replace(/^\.\/+/, "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function templateFileName(value: string): string {
+  const normalized = normalizeTemplateFilePath(value);
+  return normalized.split("/").filter(Boolean).at(-1) ?? normalized;
+}
+
+function templateFileKey(value: string): string {
+  return normalizeTemplateFilePath(value).toLowerCase();
+}
+
+function latestCreatedAt(left: string, right: string): string {
+  const leftTime = new Date(left).getTime();
+  const rightTime = new Date(right).getTime();
+
+  return (Number.isFinite(rightTime) ? rightTime : 0) >
+    (Number.isFinite(leftTime) ? leftTime : 0)
+    ? right
+    : left;
+}
+
+function workspacePreviewPageHref(agentId: string, workspacePath: string): string {
+  const params = new URLSearchParams();
+  params.set("agentId", agentId);
+  params.set("path", workspacePath);
+  return `/workspace-preview?${params.toString()}`;
+}
+
+function inferTemplateOutputKind(value: string): TemplateOutputKind {
+  const normalized = value.toLowerCase().replace(/\s+/g, "");
+
+  if (
+    normalized.includes("ppt") ||
+    normalized.includes("powerpoint") ||
+    normalized.includes("파워포인트") ||
+    normalized.includes("프레젠테이션") ||
+    normalized.includes("발표자료")
+  ) {
+    return "powerpoint";
+  }
+
+  return null;
+}
+
+function matchesTemplateOutputKind(
+  artifact: AgentSessionArtifactManifestEntry,
+  outputKind: TemplateOutputKind
+): boolean {
+  if (!outputKind) {
+    return true;
+  }
+
+  if (outputKind === "powerpoint") {
+    return isPowerPointArtifact(artifact);
+  }
+
+  return true;
+}
+
+function trimOutputPathCandidate(value: string): string {
+  return normalizeTemplateFilePath(
+    value
+      .trim()
+      .replace(/^["'`]+|["'`]+$/g, "")
+      .replace(/[),.;:!?]+$/g, "")
+  );
+}
+
+function isTemplateOutputPath(
+  value: string,
+  outputKind: TemplateOutputKind
+): boolean {
+  const normalized = normalizeTemplateFilePath(value);
+  if (!normalized.startsWith("outputs/")) {
+    return false;
+  }
+
+  const filename = templateFileName(normalized);
+  if (!/\.[^/.]+$/u.test(filename)) {
+    return false;
+  }
+
+  if (outputKind === "powerpoint") {
+    return /\.pptx?$/iu.test(filename);
+  }
+
+  return true;
+}
+
+function extractTemplateOutputPathsFromText(
+  value: string | null | undefined,
+  outputKind: TemplateOutputKind
+): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const paths = new Set<string>();
+  const addCandidate = (candidate: string) => {
+    const normalized = trimOutputPathCandidate(candidate);
+    if (isTemplateOutputPath(normalized, outputKind)) {
+      paths.add(normalized);
+    }
+  };
+
+  for (const match of value.matchAll(/`([^`]*outputs\/[^`]*)`/giu)) {
+    addCandidate(match[1] ?? "");
+  }
+
+  for (const match of value.matchAll(
+    /(?:^|[\s([{"'])((?:\.\/)?outputs\/[^\s`"'<>)\]}]+)/giu
+  )) {
+    addCandidate(match[1] ?? "");
+  }
+
+  return [...paths];
+}
+
+function rememberObservedOutputPath(
+  outputPaths: Map<string, { path: string; createdAt: string }>,
+  workspacePath: string,
+  createdAt: string
+): void {
+  const key = templateFileKey(workspacePath);
+  const current = outputPaths.get(key);
+  outputPaths.set(key, {
+    path: current?.path ?? workspacePath,
+    createdAt: current ? latestCreatedAt(current.createdAt, createdAt) : createdAt,
+  });
 }
 
 function escapeRegExp(value: string): string {
@@ -322,7 +548,7 @@ function openRockyArtifact(
     }
 
     window.open(
-      agentEngineClient.resolveApiPath(artifact.downloadUrl),
+      previewPanelSource.previewHref ?? previewPanelSource.downloadHref,
       "_blank",
       "noopener,noreferrer"
     );
@@ -665,6 +891,356 @@ function findLatestAssistantMessage(
   return (
     [...transcript].reverse().find((entry) => entry.role === "assistant") ?? null
   );
+}
+
+function matchExplicitTemplateOutputPath(
+  artifact: AgentSessionArtifactManifestEntry,
+  workspacePath: string | null,
+  outputPaths: string[]
+): string | null {
+  if (outputPaths.length === 0) {
+    return null;
+  }
+
+  const artifactName = artifact.name.trim().toLowerCase();
+  return (
+    outputPaths.find((outputPath) => {
+      const normalized = normalizeTemplateFilePath(outputPath);
+      return (
+        normalized === workspacePath ||
+        templateFileName(normalized).toLowerCase() === artifactName
+      );
+    }) ?? null
+  );
+}
+
+function outputArtifactKey(input: {
+  artifact: AgentSessionArtifactManifestEntry;
+  explicitOutputPath: string | null;
+  workspacePath: string | null;
+}): string {
+  if (input.explicitOutputPath) {
+    return `output:${templateFileKey(input.explicitOutputPath)}`;
+  }
+
+  return `output:${templateFileName(
+    input.workspacePath ?? input.artifact.name
+  ).toLowerCase()}`;
+}
+
+function sortTemplateFilesByFreshness(
+  left: TemplatePanelFile,
+  right: TemplatePanelFile
+): number {
+  if (left.expected !== right.expected) {
+    return left.expected ? 1 : -1;
+  }
+
+  const leftTime = new Date(left.createdAt).getTime();
+  const rightTime = new Date(right.createdAt).getTime();
+  const safeLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
+  const safeRightTime = Number.isFinite(rightTime) ? rightTime : 0;
+
+  if (safeLeftTime !== safeRightTime) {
+    return safeRightTime - safeLeftTime;
+  }
+
+  return left.name.localeCompare(right.name, "ko");
+}
+
+function compareCreatedAtAscending(
+  left: { createdAt: string },
+  right: { createdAt: string }
+): number {
+  const leftTime = new Date(left.createdAt).getTime();
+  const rightTime = new Date(right.createdAt).getTime();
+
+  return (
+    (Number.isFinite(leftTime) ? leftTime : 0) -
+    (Number.isFinite(rightTime) ? rightTime : 0)
+  );
+}
+
+function buildTemplateFilePanelContext(input: {
+  chat: RockyChatRecord | null;
+  transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
+  userTemplates: MdTemplateDefinition[];
+}): TemplateFilePanelContext | null {
+  if (!input.chat) {
+    return null;
+  }
+
+  let templateMessage: RockyMessageRecord | null = null;
+  let parsedTemplate: ReturnType<typeof parseTemplateRunMessage> = null;
+
+  for (const message of [...input.chat.messages].reverse()) {
+    if (message.role !== "user") {
+      continue;
+    }
+
+    const parsed = parseTemplateRunMessage(message.text);
+    if (!parsed) {
+      continue;
+    }
+
+    templateMessage = message;
+    parsedTemplate = parsed;
+    break;
+  }
+
+  if (!templateMessage || !parsedTemplate) {
+    return null;
+  }
+
+  const template =
+    input.userTemplates.find(
+      (entry) =>
+        entry.title === parsedTemplate.title &&
+        entry.outputFormatLabel === parsedTemplate.outputFormatLabel
+    ) ??
+    input.userTemplates.find((entry) => entry.title === parsedTemplate.title) ??
+    null;
+  const templateDispatch =
+    input.chat.dispatches.find((dispatch) => dispatch.messageId === templateMessage.id) ??
+    null;
+  const templateDispatchIndex = templateDispatch
+    ? input.chat.dispatches.findIndex((dispatch) => dispatch.id === templateDispatch.id)
+    : -1;
+  const scopedDispatches =
+    templateDispatchIndex >= 0
+      ? input.chat.dispatches.slice(templateDispatchIndex)
+      : input.chat.dispatches.filter(
+          (dispatch) => dispatch.createdAt >= templateMessage.createdAt
+        );
+  scopedDispatches.sort(compareCreatedAtAscending);
+  const agentId =
+    templateDispatch?.orchestration?.agentId ??
+    scopedDispatches.find((dispatch) => dispatch.orchestration?.agentId)
+      ?.orchestration?.agentId ??
+    null;
+  const explicitInputPaths = (template?.inputFiles ?? [])
+    .map(normalizeTemplateFilePath)
+    .filter(Boolean);
+  const explicitOutputPaths = [
+    ...new Set(
+      [...(template?.outputFiles ?? []), ...parsedTemplate.outputFiles]
+        .map(normalizeTemplateFilePath)
+        .filter(Boolean)
+    ),
+  ];
+  const expectedOutputKind = inferTemplateOutputKind(
+    template?.outputFormatLabel ?? parsedTemplate.outputFormatLabel
+  );
+  const observedOutputPathMap = new Map<string, { path: string; createdAt: string }>();
+  for (const message of input.chat.messages) {
+    if (message.createdAt < templateMessage.createdAt) {
+      continue;
+    }
+
+    for (const outputPath of extractTemplateOutputPathsFromText(
+      message.text,
+      expectedOutputKind
+    )) {
+      rememberObservedOutputPath(
+        observedOutputPathMap,
+        outputPath,
+        message.createdAt
+      );
+    }
+  }
+  for (const dispatch of scopedDispatches) {
+    for (const outputPath of extractTemplateOutputPathsFromText(
+      dispatch.orchestration?.output,
+      expectedOutputKind
+    )) {
+      rememberObservedOutputPath(
+        observedOutputPathMap,
+        outputPath,
+        dispatch.orchestration?.endedAt ??
+          dispatch.orchestration?.updatedAt ??
+          dispatch.createdAt
+      );
+    }
+  }
+  for (const dispatch of scopedDispatches) {
+    const orchestration = dispatch.orchestration;
+    if (!orchestration?.sessionId) {
+      continue;
+    }
+
+    const transcriptMessage = findLatestAssistantMessage(
+      input.transcriptsBySessionId[orchestration.sessionId],
+      orchestration.runId
+    );
+    for (const outputPath of extractTemplateOutputPathsFromText(
+      transcriptMessage?.content,
+      expectedOutputKind
+    )) {
+      rememberObservedOutputPath(
+        observedOutputPathMap,
+        outputPath,
+        transcriptMessage?.createdAt ?? dispatch.createdAt
+      );
+    }
+  }
+  const observedOutputPaths = [...observedOutputPathMap.values()];
+  const outputPathsForMatching = [
+    ...new Set([
+      ...explicitOutputPaths,
+      ...observedOutputPaths.map((entry) => entry.path),
+    ]),
+  ];
+  const inputMap = new Map<string, TemplatePanelFile>();
+
+  for (const inputPath of explicitInputPaths) {
+    inputMap.set(`input:${inputPath}`, {
+      key: `input:${inputPath}`,
+      role: "input",
+      name: templateFileName(inputPath),
+      detail: inputPath,
+      contentType: null,
+      size: null,
+      agentId,
+      workspacePath: inputPath,
+      artifact: null,
+      createdAt: templateMessage.createdAt,
+      expected: true,
+    });
+  }
+
+  const inputAttachmentIds = new Set(
+    templateDispatch?.attachmentIds.length
+      ? templateDispatch.attachmentIds
+      : templateMessage.attachmentIds
+  );
+  for (const attachment of input.chat.attachments) {
+    if (!inputAttachmentIds.has(attachment.id)) {
+      continue;
+    }
+
+    const workspacePath = attachment.workspacePath
+      ? normalizeTemplateFilePath(attachment.workspacePath)
+      : null;
+    const key = `input:${workspacePath ?? attachment.id}`;
+    inputMap.set(key, {
+      key,
+      role: "input",
+      name: attachment.name,
+      detail: workspacePath ?? "업로드 원본",
+      contentType: attachment.contentType,
+      size: attachment.size,
+      agentId,
+      workspacePath,
+      artifact: null,
+      createdAt: attachment.addedAt,
+      expected: false,
+    });
+  }
+
+  const outputMap = new Map<string, TemplatePanelFile>();
+  for (const outputPath of explicitOutputPaths) {
+    const key = `output:${templateFileKey(outputPath)}`;
+    outputMap.set(key, {
+      key,
+      role: "output",
+      name: templateFileName(outputPath),
+      detail: outputPath,
+      contentType: null,
+      size: null,
+      agentId,
+      workspacePath: outputPath,
+      artifact: null,
+      createdAt: templateMessage.createdAt,
+      expected: true,
+    });
+  }
+  for (const observed of observedOutputPaths) {
+    const key = `output:${templateFileKey(observed.path)}`;
+    const existing = outputMap.get(key);
+    outputMap.set(key, {
+      key,
+      role: "output",
+      name: existing?.name ?? templateFileName(observed.path),
+      detail: observed.path,
+      contentType: existing?.contentType ?? null,
+      size: existing?.size ?? null,
+      agentId: existing?.agentId ?? agentId,
+      workspacePath: observed.path,
+      artifact: existing?.artifact ?? null,
+      createdAt: existing
+        ? latestCreatedAt(existing.createdAt, observed.createdAt)
+        : observed.createdAt,
+      expected: false,
+    });
+  }
+
+  for (const dispatch of scopedDispatches) {
+    const orchestration = dispatch.orchestration;
+    if (!orchestration?.sessionId) {
+      continue;
+    }
+
+    const transcriptMessage = findLatestAssistantMessage(
+      input.transcriptsBySessionId[orchestration.sessionId],
+      orchestration.runId
+    );
+    const artifacts = splitTranscriptArtifacts(transcriptMessage?.artifacts).visibleArtifacts;
+
+    for (const artifact of artifacts) {
+      const workspacePath = artifact.workspaceRelativePath
+        ? normalizeTemplateFilePath(artifact.workspaceRelativePath)
+        : null;
+      const explicitOutputPath = matchExplicitTemplateOutputPath(
+        artifact,
+        workspacePath,
+        outputPathsForMatching
+      );
+
+      if (outputPathsForMatching.length > 0 && !explicitOutputPath) {
+        continue;
+      }
+
+      if (!matchesTemplateOutputKind(artifact, expectedOutputKind)) {
+        continue;
+      }
+
+      const resolvedWorkspacePath = workspacePath ?? explicitOutputPath;
+      const key = outputArtifactKey({
+        artifact,
+        explicitOutputPath,
+        workspacePath: resolvedWorkspacePath,
+      });
+      const existing = outputMap.get(key);
+      const createdAt = transcriptMessage?.createdAt ?? dispatch.createdAt;
+      outputMap.set(key, {
+        key,
+        role: "output",
+        name: existing?.name ?? artifact.name,
+        detail: resolvedWorkspacePath ?? artifact.role,
+        contentType: artifact.contentType,
+        size: artifact.size,
+        agentId: orchestration.agentId ?? agentId,
+        workspacePath: resolvedWorkspacePath ?? existing?.workspacePath ?? null,
+        artifact,
+        createdAt: existing
+          ? latestCreatedAt(existing.createdAt, createdAt)
+          : createdAt,
+        expected: false,
+      });
+    }
+  }
+
+  return {
+    title: parsedTemplate.title,
+    outputFormatLabel: parsedTemplate.outputFormatLabel,
+    inputFiles: [...inputMap.values()],
+    outputFiles: [...outputMap.values()].sort(sortTemplateFilesByFreshness),
+    hasExplicitOutputFiles: explicitOutputPaths.length > 0,
+    active: scopedDispatches.some((dispatch) => {
+      const status = dispatch.orchestration?.status;
+      return status === "running" || status === "planned";
+    }),
+  };
 }
 
 function resolveRockyMessageState(
@@ -1653,6 +2229,7 @@ function ArtifactPreviewPanel({
   const nativeOpenLabel = nativeOpenPending
     ? "PowerPoint 여는 중"
     : "PowerPoint에서 열기";
+  const previewOpenHref = source.previewHref ?? source.downloadHref;
 
   function openNativePowerPoint(): void {
     if (!source.nativeOpenPath || nativeOpenPending) {
@@ -1691,6 +2268,14 @@ function ArtifactPreviewPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          <a
+            href={previewOpenHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground no-underline transition hover:bg-secondary"
+          >
+            새 창
+          </a>
           {source.nativeOpenPath ? (
             <button
               type="button"
@@ -1748,6 +2333,582 @@ function ArtifactPreviewPanel({
           />
         )}
       </div>
+    </aside>
+  );
+}
+
+function EmbeddedArtifactPreviewPanel({
+  onClose,
+  source,
+}: {
+  onClose: () => void;
+  source: RockyPreviewPanelSource;
+}) {
+  const [state, setState] = useState<
+    | { kind: "loading" }
+    | { kind: "ready"; html: string }
+    | { kind: "error"; message: string }
+  >({ kind: "loading" });
+  const previewOpenHref = source.previewHref ?? source.downloadHref;
+
+  useEffect(() => {
+    if (source.kind !== "html") {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    setState({ kind: "loading" });
+    fetch(source.downloadHref, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+
+        setState({ kind: "ready", html: await response.text() });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setState({
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "미리보기를 불러오지 못했습니다.",
+        });
+      });
+
+    return () => controller.abort();
+  }, [source.downloadHref, source.kind]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-label-md font-semibold uppercase text-muted-foreground">
+            {source.kind === "powerpoint" ? "PPT 뷰어" : "HTML 리포트"}
+          </div>
+          <div className="mt-1 truncate text-body-md font-semibold text-foreground">
+            {source.name}
+          </div>
+          <div className="mt-0.5 truncate text-label-md text-muted-foreground">
+            {source.detail}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="새 창에서 열기"
+            title="새 창에서 열기"
+            render={<a href={previewOpenHref} target="_blank" rel="noreferrer" />}
+          >
+            <ExternalLink className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="미리보기 닫기"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 bg-white">
+        {source.kind === "powerpoint" ? (
+          <div className="h-full bg-muted/40 p-4">
+            <PptxArtifactPreview
+              contentType={source.contentType}
+              downloadHref={source.downloadHref}
+              name={source.name}
+              previewHref={source.previewHref}
+            />
+          </div>
+        ) : state.kind === "loading" ? (
+          <div className="flex h-full items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+            미리보기를 불러오는 중입니다.
+          </div>
+        ) : state.kind === "error" ? (
+          <div className="flex h-full items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+            미리보기를 불러오지 못했습니다. {state.message}
+          </div>
+        ) : (
+          <iframe
+            title={`${source.name} 미리보기`}
+            srcDoc={state.html}
+            sandbox=""
+            className="h-full w-full border-0"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function templatePanelRoleLabel(role: TemplatePanelFileRole): string {
+  return role === "input" ? "Input" : "Output";
+}
+
+function TemplateFileRow({
+  file,
+  selected,
+  onSelect,
+}: {
+  file: TemplatePanelFile;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = file.role === "input" ? FileInput : FileOutput;
+  const tone =
+    file.role === "input"
+      ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-700"
+      : "border-sky-500/25 bg-sky-500/8 text-sky-700";
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "w-full rounded-lg border px-3 py-2.5 text-left transition",
+        selected
+          ? "border-primary/45 bg-primary/5 shadow-sm"
+          : "border-border bg-background hover:bg-secondary/60"
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span
+          className={cn(
+            "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md border",
+            tone
+          )}
+        >
+          <Icon className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-foreground">
+            {file.name}
+          </span>
+          <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+            {file.detail}
+          </span>
+          <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+            <span className="rounded-md bg-muted px-1.5 py-0.5">
+              {templatePanelRoleLabel(file.role)}
+            </span>
+            {file.expected ? (
+              <span className="rounded-md bg-muted px-1.5 py-0.5">대기</span>
+            ) : null}
+            {typeof file.size === "number" ? <span>{formatFileSize(file.size)}</span> : null}
+          </span>
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function TemplateFileSection({
+  emptyText,
+  files,
+  onSelect,
+  selectedKey,
+  title,
+}: {
+  emptyText: string;
+  files: TemplatePanelFile[];
+  onSelect: (file: TemplatePanelFile) => void;
+  selectedKey: string | null;
+  title: string;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase text-muted-foreground">
+          {title}
+        </h3>
+        <span className="text-[11px] text-muted-foreground">{files.length}</span>
+      </div>
+      {files.length > 0 ? (
+        <div className="space-y-2">
+          {files.map((file) => (
+            <TemplateFileRow
+              key={file.key}
+              file={file}
+              selected={selectedKey === file.key}
+              onSelect={() => onSelect(file)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
+          {emptyText}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WorkspacePreviewBody({
+  record,
+}: {
+  record: AgentWorkspaceFilePreviewRecord;
+}) {
+  const inlinePreviewHref = record.inlinePreviewUrl
+    ? agentEngineClient.resolveApiPath(record.inlinePreviewUrl)
+    : null;
+
+  if (
+    TEXT_WORKSPACE_PREVIEW_KINDS.has(record.previewKind) &&
+    typeof record.text === "string"
+  ) {
+    return (
+      <pre className="min-h-full whitespace-pre-wrap break-words p-4 font-mono text-xs leading-6 text-foreground">
+        {record.text || "빈 파일입니다."}
+      </pre>
+    );
+  }
+
+  if (record.previewKind === "image" && inlinePreviewHref) {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-muted/40 p-3">
+        <img
+          src={inlinePreviewHref}
+          alt={record.name}
+          className="max-h-full max-w-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  if (record.previewKind === "audio" && inlinePreviewHref) {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-muted/40 p-4">
+        <audio controls src={inlinePreviewHref} className="w-full" />
+      </div>
+    );
+  }
+
+  if (record.previewKind === "video" && inlinePreviewHref) {
+    return (
+      <video
+        controls
+        src={inlinePreviewHref}
+        className="h-full w-full bg-black object-contain"
+      />
+    );
+  }
+
+  if (isPowerPointFile(record.name, record.contentType)) {
+    return (
+      <div className="h-full bg-muted/40 p-3">
+        <PptxArtifactPreview
+          contentType={record.contentType}
+          downloadHref={agentEngineClient.resolveApiPath(record.downloadUrl)}
+          name={record.name}
+          previewHref={null}
+        />
+      </div>
+    );
+  }
+
+  if (inlinePreviewHref) {
+    return (
+      <iframe
+        title={`${record.name} 미리보기`}
+        src={inlinePreviewHref}
+        className="h-full w-full border-0 bg-white"
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+      이 형식은 바로 미리보기보다 다운로드로 확인하는 파일입니다.
+    </div>
+  );
+}
+
+function ArtifactFallbackPreview({
+  artifact,
+}: {
+  artifact: AgentSessionArtifactManifestEntry;
+}) {
+  const previewHref = artifact.previewUrl
+    ? agentEngineClient.resolveApiPath(artifact.previewUrl)
+    : null;
+  const downloadHref = agentEngineClient.resolveApiPath(artifact.downloadUrl);
+
+  if (artifact.presentation === "image" && previewHref) {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-muted/40 p-3">
+        <img
+          src={previewHref}
+          alt={artifact.name}
+          className="max-h-full max-w-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  if (isPowerPointArtifact(artifact)) {
+    return (
+      <div className="h-full bg-muted/40 p-3">
+        <PptxArtifactPreview
+          contentType={artifact.contentType}
+          downloadHref={downloadHref}
+          name={artifact.name}
+          previewHref={null}
+        />
+      </div>
+    );
+  }
+
+  if (previewHref) {
+    return (
+      <iframe
+        title={`${artifact.name} 미리보기`}
+        src={previewHref}
+        className="h-full w-full border-0 bg-white"
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+      이 output은 다운로드로 확인할 수 있습니다.
+    </div>
+  );
+}
+
+function TemplateSelectedFilePreview({
+  active,
+  file,
+  refreshKey,
+}: {
+  active: boolean;
+  file: TemplatePanelFile | null;
+  refreshKey: string;
+}) {
+  const workspacePreviewQuery = useQuery({
+    queryKey: [
+      "rocky-template-file-preview",
+      file?.agentId ?? "unknown",
+      file?.workspacePath ?? "",
+      refreshKey,
+    ],
+    queryFn: () =>
+      agentEngineClient.getAgentWorkspaceFilePreview(
+        file!.agentId!,
+        file!.workspacePath!
+      ),
+    enabled: Boolean(file?.agentId && file.workspacePath),
+    refetchInterval: active ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: active,
+  });
+
+  if (!file) {
+    return (
+      <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed bg-muted/30 px-4 text-center text-sm text-muted-foreground">
+        확인할 파일이 없습니다.
+      </div>
+    );
+  }
+
+  const downloadHref =
+    file.agentId && file.workspacePath
+      ? agentEngineClient.agentWorkspaceFileDownloadUrl(file.agentId, file.workspacePath)
+      : file.artifact
+        ? agentEngineClient.resolveApiPath(file.artifact.downloadUrl)
+        : null;
+  const openHref =
+    file.agentId && file.workspacePath
+      ? workspacePreviewPageHref(file.agentId, file.workspacePath)
+      : file.artifact?.previewUrl
+        ? agentEngineClient.resolveApiPath(file.artifact.previewUrl)
+        : downloadHref;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-background">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b px-3 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+            {file.role === "input" ? (
+              <FileInput className="size-3.5" />
+            ) : (
+              <FileOutput className="size-3.5" />
+            )}
+            {templatePanelRoleLabel(file.role)}
+          </div>
+          <div className="mt-1 truncate text-sm font-semibold text-foreground">
+            {file.name}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+            {file.detail}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {file.role === "output" && file.agentId && file.workspacePath ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="파일 새로고침"
+              title="파일 새로고침"
+              onClick={() => {
+                void workspacePreviewQuery.refetch();
+              }}
+            >
+              <RefreshCw className="size-4" />
+            </Button>
+          ) : null}
+          {openHref ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="새 창에서 열기"
+              title="새 창에서 열기"
+              render={<a href={openHref} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLink className="size-4" />
+            </Button>
+          ) : null}
+          {downloadHref ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="다운로드"
+              title="다운로드"
+              render={<a href={downloadHref} target="_blank" rel="noreferrer" />}
+            >
+              <Download className="size-4" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <div className="custom-scrollbar min-h-0 flex-1 overflow-auto">
+        {workspacePreviewQuery.isLoading ? (
+          <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            파일을 불러오는 중입니다.
+          </div>
+        ) : workspacePreviewQuery.isError ? (
+          <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            {file.expected ? "아직 생성되지 않았습니다." : "파일 내용을 불러오지 못했습니다."}
+          </div>
+        ) : workspacePreviewQuery.data ? (
+          <WorkspacePreviewBody record={workspacePreviewQuery.data} />
+        ) : file.artifact ? (
+          <ArtifactFallbackPreview artifact={file.artifact} />
+        ) : (
+          <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            파일 경로가 준비되지 않았습니다.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TemplateFilePanel({
+  context,
+  externalPreviewSource,
+  onClearExternalPreview,
+  refreshKey,
+}: {
+  context: TemplateFilePanelContext;
+  externalPreviewSource: RockyPreviewPanelSource | null;
+  onClearExternalPreview: () => void;
+  refreshKey: string;
+}) {
+  const allFiles = [...context.outputFiles, ...context.inputFiles];
+  const defaultSelectedKey =
+    context.outputFiles[0]?.key ?? context.inputFiles[0]?.key ?? null;
+  const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelectedKey);
+  const fileKeySignature = allFiles.map((file) => file.key).join("\n");
+  const selectedFile =
+    allFiles.find((file) => file.key === selectedKey) ??
+    allFiles.find((file) => file.key === defaultSelectedKey) ??
+    null;
+
+  useEffect(() => {
+    if (!defaultSelectedKey) {
+      setSelectedKey(null);
+      return;
+    }
+
+    setSelectedKey((current) =>
+      current && allFiles.some((file) => file.key === current)
+        ? current
+        : defaultSelectedKey
+    );
+  }, [defaultSelectedKey, fileKeySignature]);
+
+  return (
+    <aside className="flex h-[55vh] min-h-[24rem] shrink-0 flex-col border-t border-border bg-card shadow-sm lg:h-auto lg:min-h-0 lg:w-[min(42vw,42rem)] lg:border-l lg:border-t-0 xl:w-[40rem]">
+      <header className="shrink-0 border-b border-border px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-label-md font-semibold uppercase text-muted-foreground">
+              <LayoutTemplate className="size-3.5" />
+              템플릿 파일
+            </div>
+            <div className="mt-1 truncate text-body-md font-semibold text-foreground">
+              {context.title}
+            </div>
+            <div className="mt-0.5 truncate text-label-md text-muted-foreground">
+              {context.outputFormatLabel}
+            </div>
+          </div>
+          {context.active ? (
+            <Badge variant="secondary" className="shrink-0">
+              진행 중
+            </Badge>
+          ) : null}
+        </div>
+      </header>
+
+      {externalPreviewSource ? (
+        <EmbeddedArtifactPreviewPanel
+          source={externalPreviewSource}
+          onClose={onClearExternalPreview}
+        />
+      ) : (
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-rows-[minmax(10rem,0.7fr)_minmax(22rem,1.3fr)]">
+          <div className="custom-scrollbar min-h-0 space-y-5 overflow-y-auto border-b border-border px-4 py-4">
+            <TemplateFileSection
+              title="Output"
+              files={context.outputFiles}
+              selectedKey={selectedFile?.key ?? selectedKey}
+              emptyText={
+                context.hasExplicitOutputFiles
+                  ? "지정된 output 파일이 아직 생성되지 않았습니다."
+                  : "아직 생성된 output 파일이 없습니다."
+              }
+              onSelect={(file) => setSelectedKey(file.key)}
+            />
+            <TemplateFileSection
+              title="Input 원본"
+              files={context.inputFiles}
+              selectedKey={selectedFile?.key ?? selectedKey}
+              emptyText="연결된 input 파일이 없습니다."
+              onSelect={(file) => setSelectedKey(file.key)}
+            />
+          </div>
+          <div className="min-h-0 overflow-hidden p-4">
+            <TemplateSelectedFilePreview
+              active={context.active}
+              file={selectedFile}
+              refreshKey={refreshKey}
+            />
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -1849,6 +3010,16 @@ export function HomePage() {
   const transcriptRefreshMarker = transcriptQueries
     .map((query) => String(query.dataUpdatedAt ?? 0))
     .join(":");
+  const templateFilePanelContext = useMemo(
+    () =>
+      buildTemplateFilePanelContext({
+        chat,
+        transcriptsBySessionId,
+        userTemplates,
+      }),
+    [chat, transcriptRefreshMarker, userTemplates]
+  );
+  const templateFileRefreshKey = `${chat?.updatedAt ?? "no-chat"}:${transcriptRefreshMarker}`;
 
   const messageCount = chat?.messages.length ?? 0;
   const hasActiveOrchestration =
@@ -2263,7 +3434,14 @@ export function HomePage() {
         open={historyDialogOpen}
       />
 
-      {previewPanelSource ? (
+      {templateFilePanelContext ? (
+        <TemplateFilePanel
+          context={templateFilePanelContext}
+          externalPreviewSource={previewPanelSource}
+          onClearExternalPreview={() => setPreviewPanelSource(null)}
+          refreshKey={templateFileRefreshKey}
+        />
+      ) : previewPanelSource ? (
         <ArtifactPreviewPanel
           source={previewPanelSource}
           onClose={() => setPreviewPanelSource(null)}

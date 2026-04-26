@@ -274,6 +274,9 @@ export function buildArtifactManifestEntry(
     kind: artifactRef.kind,
     role: artifactRef.role,
     name: view.name,
+    ...(artifactRef.workspaceRelativePath
+      ? { workspaceRelativePath: artifactRef.workspaceRelativePath }
+      : {}),
     contentType: view.contentType,
     presentation: view.presentation,
     size,

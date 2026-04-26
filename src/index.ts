@@ -18,6 +18,9 @@ export {
   AgentRegistryService,
 } from "./agents/agent-registry-service.js";
 export {
+  AgentLocalSkillService,
+} from "./agents/agent-local-skill-service.js";
+export {
   SessionService,
 } from "./sessions/session-service.js";
 export {

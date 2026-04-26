@@ -1,6 +1,10 @@
 import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 
 import type { AgentServiceLike, SessionServiceLike } from "../api-types.js";
+import {
+  AgentLocalSkillService,
+  type AgentLocalSkillFileInput,
+} from "../../agents/agent-local-skill-service.js";
 import type {
   RuntimeKind,
   RuntimeOllamaLaunchTarget,
@@ -26,6 +30,7 @@ interface AgentRoutesOptions extends FastifyPluginOptions {
   agentService: AgentServiceLike;
   sessionService: SessionServiceLike;
   nativeFileOpener?: NativeFileOpener;
+  agentLocalSkillService?: AgentLocalSkillService;
 }
 
 function isRuntimeKind(value: unknown): value is RuntimeKind {
@@ -189,6 +194,58 @@ function parseWorkspaceUploadBody(body: unknown): {
   return {
     filename: input.filename.trim(),
     contentBase64: input.contentBase64.trim(),
+  };
+}
+
+function parseSkillUpsertBody(body: unknown): {
+  replace?: boolean;
+  files: AgentLocalSkillFileInput[];
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("Skill install requests require a JSON object body.");
+  }
+
+  const input = body as Record<string, unknown>;
+  if (!Array.isArray(input.files) || input.files.length === 0) {
+    throw badRequest("Skill install requests require a non-empty files array.");
+  }
+
+  const files = input.files.map((entry): AgentLocalSkillFileInput => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw badRequest("Skill file entries must be JSON objects.");
+    }
+    const file = entry as Record<string, unknown>;
+    if (typeof file.path !== "string" || !file.path.trim()) {
+      throw badRequest("Skill file entries require a non-empty path.");
+    }
+    if (typeof file.content !== "string") {
+      throw badRequest("Skill file entries require content.");
+    }
+    if (
+      file.encoding !== undefined &&
+      file.encoding !== "utf8" &&
+      file.encoding !== "base64"
+    ) {
+      throw badRequest("Skill file encoding must be utf8 or base64.");
+    }
+
+    return {
+      path: file.path.trim(),
+      content: file.content,
+      encoding: file.encoding as AgentLocalSkillFileInput["encoding"],
+    };
+  });
+
+  if (
+    input.replace !== undefined &&
+    typeof input.replace !== "boolean"
+  ) {
+    throw badRequest("replace must be a boolean when provided.");
+  }
+
+  return {
+    replace: input.replace as boolean | undefined,
+    files,
   };
 }
 
@@ -388,6 +445,9 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
   server,
   options
 ) => {
+  const agentLocalSkillService =
+    options.agentLocalSkillService ?? new AgentLocalSkillService();
+
   server.post("/agents", async (request, reply) => {
     const created = await options.agentService.createAgent(
       parseCreateAgentBody(request.body)
@@ -436,6 +496,46 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
     );
     await options.agentService.deleteAgent(agentId);
     reply.status(204).send();
+  });
+
+  server.get("/agents/:agentId/skills", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    sendJson(reply, 200, await agentLocalSkillService.listAgentLocalSkills(agent));
+  });
+
+  server.put("/agents/:agentId/skills/:skillId", async (request, reply) => {
+    const { agentId, skillId } = request.params as {
+      agentId: string;
+      skillId: string;
+    };
+    const agent = await options.agentService.getAgent(agentId);
+    const input = parseSkillUpsertBody(request.body);
+    sendJson(
+      reply,
+      200,
+      await agentLocalSkillService.upsertAgentLocalSkill(
+        agent,
+        skillId,
+        input.files,
+        {
+          replace: input.replace,
+        }
+      )
+    );
+  });
+
+  server.delete("/agents/:agentId/skills/:skillId", async (request, reply) => {
+    const { agentId, skillId } = request.params as {
+      agentId: string;
+      skillId: string;
+    };
+    const agent = await options.agentService.getAgent(agentId);
+    sendJson(
+      reply,
+      200,
+      await agentLocalSkillService.deleteAgentLocalSkill(agent, skillId)
+    );
   });
 
   server.get("/agents/:agentId/workspace", async (request, reply) => {

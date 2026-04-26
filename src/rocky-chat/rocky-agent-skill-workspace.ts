@@ -1,7 +1,10 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
-import { ensureWorkspaceSkillBridge } from "../agents/agent-workspace.js";
+import {
+  WORKSPACE_LOCAL_SKILL_AUTHORING_DIR,
+  ensureWorkspaceSkillBridge,
+} from "../agents/agent-workspace.js";
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import type {
@@ -21,6 +24,27 @@ function formatList(items: string[]): string {
   }
 
   return items.map((item) => `- ${item}`).join("\n");
+}
+
+function linkedSkillIds(skill: RockyOrchestrationSkill): string[] {
+  return skill.ability?.installableSkillIds ?? [];
+}
+
+function formatLinkedSkillInstructions(skill: RockyOrchestrationSkill): string[] {
+  const skillIds = linkedSkillIds(skill);
+  if (skillIds.length === 0) {
+    return [];
+  }
+
+  return [
+    "연결된 workspace-local skill:",
+    ...skillIds.map(
+      (skillId) =>
+        `- \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${skillId}/SKILL.md\`가 있으면 먼저 읽고, 해당 절차와 도구 사용 지침을 우선 적용합니다.`
+    ),
+    "- 연결된 skill 파일이 없으면 없는 상태를 명확히 밝히고, 현재 workspace와 사용 가능한 도구 범위 안에서 처리합니다.",
+    "",
+  ];
 }
 
 function formatAttachments(attachments: RockyAttachmentRecord[]): string {
@@ -79,6 +103,7 @@ export function buildRockyWorkspaceSkillMarkdown(
     "- 현재 turn의 첨부 메타데이터는 runtime system instructions에 지정된 context file에서 확인합니다.",
     "- 별도 템플릿 문서를 사용자 요청으로 다시 감싸지 않습니다.",
     "",
+    ...formatLinkedSkillInstructions(skill),
     "응답:",
     "- 한국어로 답하세요.",
     "- 사용자에게 바로 전달할 수 있는 최종 답변을 작성하세요.",
@@ -124,7 +149,11 @@ export async function syncRockyAgentSkillWorkspace(input: {
   agent: AgentRecord;
   skill: RockyOrchestrationSkill;
 }): Promise<string> {
-  const skillDir = path.join(input.agent.workspaceRoot, "skills", input.skill.id);
+  const skillDir = path.join(
+    input.agent.workspaceRoot,
+    WORKSPACE_LOCAL_SKILL_AUTHORING_DIR,
+    input.skill.id
+  );
   const skillPath = path.join(skillDir, "SKILL.md");
   await mkdir(skillDir, { recursive: true });
   await writeFile(skillPath, buildRockyWorkspaceSkillMarkdown(input.skill), "utf8");
@@ -168,7 +197,11 @@ export function buildRockyTurnSystemInstructions(input: {
   contextRelativePath: string;
 }): string[] {
   return [
-    `Use the workspace-local Rocky Core instructions in \`skills/${input.skill.id}/SKILL.md\` for this turn.`,
+    `Use the workspace-local Rocky Core instructions in \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${input.skill.id}/SKILL.md\` for this turn.`,
+    ...linkedSkillIds(input.skill).map(
+      (skillId) =>
+        `If \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${skillId}/SKILL.md\` exists, read it and apply it as the linked skill instructions for this turn.`
+    ),
     `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
     "Treat the current user message as the canonical original request.",
   ];

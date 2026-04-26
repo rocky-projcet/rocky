@@ -69,6 +69,9 @@ export interface RockyAbilityCardRecord {
   description: string;
   icon: RockyAbilityIcon;
   examples: string[];
+  matchedSkillIds: string[];
+  installedSkillIds: string[];
+  installed: boolean;
   sortOrder: number;
 }
 
@@ -154,6 +157,9 @@ export interface RockyCoreSkillRecord {
   displayName: string;
   description: string;
   workspacePath: string | null;
+  matchedSkillIds: string[];
+  installedSkillIds: string[];
+  installed: boolean;
   synchronized: boolean;
 }
 

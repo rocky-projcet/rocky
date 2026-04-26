@@ -24,6 +24,31 @@ export interface AgentRecord {
   updatedAt: string;
 }
 
+export interface AgentLocalSkillRecord {
+  id: string;
+  workspacePath: string;
+  skillPath: string;
+}
+
+export interface AgentLocalSkillDeleteResult {
+  id: string;
+  deleted: boolean;
+  deletedPaths: string[];
+  skills: AgentLocalSkillRecord[];
+}
+
+export interface AgentLocalSkillFileInput {
+  path: string;
+  content: string;
+  encoding?: "utf8" | "base64";
+}
+
+export interface AgentLocalSkillUpsertResult {
+  id: string;
+  skill: AgentLocalSkillRecord;
+  skills: AgentLocalSkillRecord[];
+}
+
 export interface AgentCreateInput {
   name: string;
   id?: string | null;
@@ -619,6 +644,9 @@ export interface RockyAbilityCardRecord {
   description: string;
   icon: RockyAbilityIcon;
   examples: string[];
+  matchedSkillIds: string[];
+  installedSkillIds: string[];
+  installed: boolean;
   sortOrder: number;
 }
 
@@ -704,6 +732,9 @@ export interface RockyCoreSkillRecord {
   displayName: string;
   description: string;
   workspacePath: string | null;
+  matchedSkillIds: string[];
+  installedSkillIds: string[];
+  installed: boolean;
   synchronized: boolean;
 }
 
@@ -1188,6 +1219,41 @@ export class AgentEngineClient {
 
   getAgent(agentId: string): Promise<AgentRecord> {
     return this.request<AgentRecord>(`/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  listAgentLocalSkills(agentId: string): Promise<AgentLocalSkillRecord[]> {
+    return this.request<AgentLocalSkillRecord[]>(
+      `/agents/${encodeURIComponent(agentId)}/skills`
+    );
+  }
+
+  upsertAgentLocalSkill(
+    agentId: string,
+    skillId: string,
+    input: {
+      replace?: boolean;
+      files: AgentLocalSkillFileInput[];
+    }
+  ): Promise<AgentLocalSkillUpsertResult> {
+    return this.request<AgentLocalSkillUpsertResult>(
+      `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  deleteAgentLocalSkill(
+    agentId: string,
+    skillId: string
+  ): Promise<AgentLocalSkillDeleteResult> {
+    return this.request<AgentLocalSkillDeleteResult>(
+      `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+      {
+        method: "DELETE",
+      }
+    );
   }
 
   updateAgent(agentId: string, input: AgentUpdateInput): Promise<AgentRecord> {

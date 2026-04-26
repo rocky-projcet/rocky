@@ -1519,11 +1519,11 @@ test("buildRuntimePrompt carries sandbox ground truth and preserves the user req
   assert.match(runtimePrompt, /sandbox=workspace-write/);
   assert.match(
     runtimePrompt,
-    /Available skill scopes in this session are limited to workspace-local skills under `skills\/` and the read-only system skills `openai-docs`, `skill-creator`, and `skill-installer`/
+    /Available skill scopes in this session are limited to workspace-local skills under `.agents\/skills\/` and the read-only system skills `openai-docs`, `skill-creator`, and `skill-installer`/
   );
   assert.match(
     runtimePrompt,
-    /In writable managed sessions, `skills\/` is the allowed authoring directory for agent-local skills/
+    /In writable managed sessions, `.agents\/skills\/` is the allowed authoring directory for agent-local skills/
   );
   assert.match(
     runtimePrompt,
@@ -1535,11 +1535,11 @@ test("buildRuntimePrompt carries sandbox ground truth and preserves the user req
   );
   assert.match(
     runtimePrompt,
-    /Only create agent-local skills under `skills\/<skill-id>\/` using a non-system skill id/
+    /Only create agent-local skills under `.agents\/skills\/<skill-id>\/` using a non-system skill id/
   );
   assert.match(
     runtimePrompt,
-    /Do not create or modify `skills\/\.system`, `\.agents\/skills\/\.system`, `system`, `system-\*`, `openai-docs`, `skill-creator`, or `skill-installer`/
+    /Do not create or modify `\.agents\/skills\/\.system`, `skills\/\.system`, `system`, `system-\*`, `openai-docs`, `skill-creator`, or `skill-installer`/
   );
   assert.match(
     runtimePrompt,

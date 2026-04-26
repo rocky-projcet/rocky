@@ -89,6 +89,7 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText(userPrompt)).toBeVisible();
   await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
+  await expect(page.getByRole("status").getByText(/^현재 /)).toBeVisible();
   await expect(page.getByText("최근 진행 내용")).toHaveCount(0);
   await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/반복 기준 후보/)).toHaveCount(0);
@@ -101,6 +102,7 @@ test("home keeps task requests inside one Rocky Core chat", async ({ page, reque
 
   await expect(page.getByText(userPrompt)).toBeVisible();
   await expect(page.getByRole("status").getByText("답변중")).toBeVisible();
+  await expect(page.getByRole("status").getByText(/^현재 /)).toBeVisible();
   await expect(page.getByText("최근 진행 내용")).toHaveCount(0);
   await expect(page.getByText("영양제 MD 담당", { exact: true })).toHaveCount(0);
   await expect(page.getByText("세션 열기")).toHaveCount(0);

@@ -4,6 +4,8 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AgentRecord } from "../agents/agent-types.js";
+import { AgentLocalSkillService } from "../agents/agent-local-skill-service.js";
+import { WORKSPACE_LOCAL_SKILL_AUTHORING_DIR } from "../agents/agent-workspace.js";
 import {
   deleteRockyChatRecord,
   listRockyChatPaths,
@@ -99,6 +101,7 @@ function titleFromMessage(message: string): string {
 
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
 const ROCKY_UPLOADS_DIRECTORY = "uploads/rocky";
+const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 
 function requestMessageOrAttachmentDefault(input: {
   message: string;
@@ -138,6 +141,31 @@ function isUnknownSessionError(error: unknown): boolean {
 
 function isRuntimeKind(value: unknown): value is RuntimeKind {
   return value === "codex-cli" || value === "claude-code" || value === "ollama";
+}
+
+function compactText(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function hasSkillDeleteSignal(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /스킬|skill/u.test(compact) && /삭제|지워|제거|delete|remove/u.test(compact);
+}
+
+function hasDeleteSignal(message: string): boolean {
+  return /삭제|지워|제거|delete|remove/u.test(compactText(message).toLowerCase());
+}
+
+function formatSkillList(skillIds: string[]): string {
+  if (skillIds.length === 0) {
+    return "- 없음";
+  }
+
+  return skillIds.map((skillId) => `- \`${skillId}\``).join("\n");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function normalizeReasoningEffort(
@@ -200,6 +228,7 @@ export class RockyChatService {
   private readonly agentService: RockyAgentServiceLike | undefined;
   private readonly sessionService: RockySessionServiceLike | undefined;
   private readonly orchestrator: RockyOrchestratorService;
+  private readonly agentLocalSkillService = new AgentLocalSkillService();
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
@@ -215,7 +244,9 @@ export class RockyChatService {
   }
 
   async listAbilityCards() {
-    return listRockySkillAbilityCards();
+    const agent = await this.findCoreAgent();
+    const installedSkillIds = await this.listInstalledSkillIds(agent);
+    return listRockySkillAbilityCards({ installedSkillIds });
   }
 
   async startAbilityGuide(abilityId: string): Promise<RockyChatRecord> {
@@ -286,6 +317,7 @@ export class RockyChatService {
       skill,
       selectionReason: selection.reason,
       reuseCoreSessionId: null,
+      awaitingSkillDelete: false,
       timestamp,
     });
     const userMessage = this.buildUserMessage({
@@ -486,6 +518,7 @@ export class RockyChatService {
       skill,
       selectionReason: selection.reason,
       reuseCoreSessionId,
+      awaitingSkillDelete: this.isAwaitingSkillDelete(existing),
       timestamp,
     });
     const newAttachments = routed.attachments.filter((attachment) =>
@@ -601,6 +634,7 @@ export class RockyChatService {
     skill: RockyOrchestrationSkill;
     selectionReason: string;
     reuseCoreSessionId: string | null;
+    awaitingSkillDelete: boolean;
     timestamp: string;
   }): Promise<{
     worker: RockyWorkerRecord | null;
@@ -618,6 +652,26 @@ export class RockyChatService {
       agent,
       attachments: input.attachments,
     });
+    const localSkillManagementMessage =
+      await this.tryHandleLocalSkillManagementMessage({
+        agent,
+        worker,
+        chatId: input.chatId,
+        domain: input.domain,
+        intent: input.intent,
+        message: input.message,
+        awaitingSkillDelete: input.awaitingSkillDelete,
+        timestamp: input.timestamp,
+      });
+    if (localSkillManagementMessage) {
+      return {
+        worker,
+        attachments,
+        skillCandidates: [],
+        dispatch: null,
+        rockyMessage: localSkillManagementMessage,
+      };
+    }
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
@@ -763,6 +817,129 @@ export class RockyChatService {
     return extraSystemInstructions;
   }
 
+  private protectedCoreSkillIds(): string[] {
+    return ROCKY_ORCHESTRATION_SKILLS.map((skill) => skill.id);
+  }
+
+  private isAwaitingSkillDelete(chat: RockyChatRecord): boolean {
+    const lastRockyMessage = [...chat.messages]
+      .reverse()
+      .find((message) => message.role === "rocky");
+
+    return Boolean(
+      lastRockyMessage?.text.includes(SKILL_DELETE_FOLLOWUP_MARKER)
+    );
+  }
+
+  private buildLocalRockyMessage(input: {
+    chatId: string;
+    domain: RockyChatDomain;
+    intent: RockyRoutingIntent;
+    worker: RockyWorkerRecord;
+    text: string;
+    timestamp: string;
+  }): RockyMessageRecord {
+    return {
+      id: `message-${this.idGenerator()}`,
+      chatId: input.chatId,
+      role: "rocky",
+      intent: input.intent,
+      text: input.text,
+      attachmentIds: [],
+      domain: input.domain,
+      workerId: input.worker.id,
+      skillCandidateIds: [],
+      dispatchId: null,
+      createdAt: input.timestamp,
+    };
+  }
+
+  private async tryHandleLocalSkillManagementMessage(input: {
+    agent: AgentRecord | null;
+    worker: RockyWorkerRecord;
+    chatId: string;
+    domain: RockyChatDomain;
+    intent: RockyRoutingIntent;
+    message: string;
+    awaitingSkillDelete: boolean;
+    timestamp: string;
+  }): Promise<RockyMessageRecord | null> {
+    if (!input.agent) {
+      return null;
+    }
+
+    const skills = await this.agentLocalSkillService.listAgentLocalSkills(input.agent);
+    const protectedSkillIds = new Set(this.protectedCoreSkillIds());
+    const deletableSkillIds = skills
+      .map((skill) => skill.id)
+      .filter((skillId) => !protectedSkillIds.has(skillId))
+      .sort((left, right) => left.localeCompare(right));
+    const normalizedMessage = compactText(input.message);
+    const lowerMessage = normalizedMessage.toLowerCase();
+    const requestedSkillId =
+      deletableSkillIds.find(
+        (skillId) => lowerMessage === skillId.toLowerCase()
+      ) ??
+      deletableSkillIds.find((skillId) =>
+        new RegExp(
+          `(^|\\s|\`)${escapeRegExp(skillId)}(\\s|\`|$)`,
+          "iu"
+        ).test(normalizedMessage)
+      ) ??
+      null;
+    const deleteRequested =
+      hasSkillDeleteSignal(input.message) ||
+      (Boolean(requestedSkillId) && hasDeleteSignal(input.message));
+
+    if (!deleteRequested && !(input.awaitingSkillDelete && requestedSkillId)) {
+      return null;
+    }
+
+    if (!requestedSkillId) {
+      return this.buildLocalRockyMessage({
+        chatId: input.chatId,
+        domain: input.domain,
+        intent: input.intent,
+        worker: input.worker,
+        timestamp: input.timestamp,
+        text: [
+          SKILL_DELETE_FOLLOWUP_MARKER,
+          "",
+          "현재 삭제 가능한 agent-local 스킬은:",
+          "",
+          formatSkillList(deletableSkillIds),
+        ].join("\n"),
+      });
+    }
+
+    const deleted = await this.agentLocalSkillService.deleteAgentLocalSkill(
+      input.agent,
+      requestedSkillId,
+      {
+        protectedSkillIds: this.protectedCoreSkillIds(),
+      }
+    );
+    const remainingDeletableSkillIds = deleted.skills
+      .map((skill) => skill.id)
+      .filter((skillId) => !protectedSkillIds.has(skillId))
+      .sort((left, right) => left.localeCompare(right));
+
+    return this.buildLocalRockyMessage({
+      chatId: input.chatId,
+      domain: input.domain,
+      intent: input.intent,
+      worker: input.worker,
+      timestamp: input.timestamp,
+      text: [
+        `\`${requestedSkillId}\` agent-local 스킬을 삭제했습니다.`,
+        "",
+        "남은 삭제 가능 스킬:",
+        "",
+        formatSkillList(remainingDeletableSkillIds),
+      ].join("\n"),
+    });
+  }
+
   private async readCoreSettings(): Promise<RockyCoreSettingsRecord> {
     const persisted = await readRockyCoreSettingsRecord(
       resolveRockyCoreSettingsPaths(this.stateRoot)
@@ -798,6 +975,15 @@ export class RockyChatService {
     return agents.find((agent) => agent.id === ROCKY_CORE_SKILL.agent.id) ?? null;
   }
 
+  private async listInstalledSkillIds(agent: AgentRecord | null): Promise<string[]> {
+    if (!agent) {
+      return [];
+    }
+
+    const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+    return skills.map((skill) => skill.id).sort((left, right) => left.localeCompare(right));
+  }
+
   private async listCoreSessions(): Promise<AgentSessionRecord[]> {
     if (!this.sessionService?.listAgentSessions) {
       return [];
@@ -828,13 +1014,21 @@ export class RockyChatService {
   private async buildCoreSkillRecords(
     agent: AgentRecord | null
   ): Promise<RockyCoreSkillRecord[]> {
+    const installedSkillIds = new Set(await this.listInstalledSkillIds(agent));
+
     return Promise.all(
       ROCKY_ORCHESTRATION_SKILLS.map(async (skill) => {
-        const workspacePath = agent ? `skills/${skill.id}/SKILL.md` : null;
+        const workspacePath = agent
+          ? `${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${skill.id}/SKILL.md`
+          : null;
         const absoluteSkillPath =
           agent && workspacePath
             ? `${agent.workspaceRoot}/${workspacePath}`
             : null;
+        const matchedSkillIds = skill.ability?.installableSkillIds ?? [];
+        const matchedInstalledSkillIds = matchedSkillIds.filter((skillId) =>
+          installedSkillIds.has(skillId)
+        );
 
         return {
           id: skill.id,
@@ -842,6 +1036,9 @@ export class RockyChatService {
           displayName: skill.displayName,
           description: skill.description,
           workspacePath,
+          matchedSkillIds,
+          installedSkillIds: matchedInstalledSkillIds,
+          installed: matchedInstalledSkillIds.length > 0,
           synchronized: absoluteSkillPath
             ? await this.fileExists(absoluteSkillPath)
             : false,

@@ -603,6 +603,13 @@ export function RockyAgentPage() {
                         <Badge variant={skill.synchronized ? "secondary" : "outline"}>
                           {skill.synchronized ? "동기화됨" : "미동기화"}
                         </Badge>
+                        {skill.matchedSkillIds.length > 0 ? (
+                          <Badge variant={skill.installed ? "secondary" : "outline"}>
+                            {skill.installed
+                              ? `${skill.installedSkillIds.join(", ")} 설치됨`
+                              : `${skill.matchedSkillIds.join(", ")} 미설치`}
+                          </Badge>
+                        ) : null}
                       </div>
                       <p className="mt-1 text-sm leading-5 text-muted-foreground">
                         {skill.description}
@@ -615,6 +622,14 @@ export function RockyAgentPage() {
                   <div className="mt-3 break-all font-mono text-xs text-muted-foreground">
                     {skill.workspacePath ?? "워크스페이스 생성 후 동기화 가능"}
                   </div>
+                  {skill.matchedSkillIds.length > 0 ? (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      연결된 설치 skill:{" "}
+                      {skill.installedSkillIds.length > 0
+                        ? skill.installedSkillIds.join(", ")
+                        : "없음"}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

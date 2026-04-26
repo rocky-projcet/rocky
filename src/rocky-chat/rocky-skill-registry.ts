@@ -43,6 +43,7 @@ export interface RockySkillAbilityDefinition {
   icon: RockyAbilityCardRecord["icon"];
   examples: string[];
   guideMarkdown: string;
+  installableSkillIds?: string[];
   sortOrder?: number;
 }
 
@@ -194,6 +195,7 @@ export const ROCKY_PRESENTATION_SKILL: RockyOrchestrationSkill = {
     title: "PPT 능력",
     description: "PPT 번역, 요약, 발표용 정리를 도와줍니다.",
     icon: "presentation",
+    installableSkillIds: ["slides"],
     examples: [
       "PPT 안의 텍스트를 번역합니다.",
       "슬라이드별 핵심 내용을 요약합니다.",
@@ -352,11 +354,20 @@ export function selectRockySkill(input: {
   };
 }
 
-export function listRockySkillAbilityCards(): RockyAbilityCardRecord[] {
+export function listRockySkillAbilityCards(input: {
+  installedSkillIds?: string[];
+} = {}): RockyAbilityCardRecord[] {
+  const installedSkillIds = new Set(input.installedSkillIds ?? []);
+
   return ROCKY_ORCHESTRATION_SKILLS.flatMap((skill) => {
     if (!skill.ability) {
       return [];
     }
+
+    const matchedSkillIds = skill.ability.installableSkillIds ?? [];
+    const matchedInstalledSkillIds = matchedSkillIds.filter((skillId) =>
+      installedSkillIds.has(skillId)
+    );
 
     return [
       {
@@ -366,6 +377,9 @@ export function listRockySkillAbilityCards(): RockyAbilityCardRecord[] {
         description: skill.ability.description,
         icon: skill.ability.icon,
         examples: skill.ability.examples,
+        matchedSkillIds,
+        installedSkillIds: matchedInstalledSkillIds,
+        installed: matchedInstalledSkillIds.length > 0,
         sortOrder: skill.ability.sortOrder ?? 100,
       },
     ];

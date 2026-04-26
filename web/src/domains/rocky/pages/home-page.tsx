@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -22,6 +23,7 @@ import { toast } from "sonner";
 
 import { ArtifactPreviewCard } from "@/domains/run/components/artifact-preview-card";
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
+import { RunEventsSource } from "@/domains/run/lib/run-events-source";
 import {
   useRockyAbilitiesQuery,
   useCreateRockyChatMutation,
@@ -31,6 +33,11 @@ import {
   useSendRockyMessageMutation,
   useStartRockyAbilityGuideMutation,
 } from "@/domains/rocky/hooks";
+import {
+  defaultRockyRunProgressLabel,
+  isTerminalRockyRunEvent,
+  rockyRunProgressLabelForEvent,
+} from "@/domains/rocky/lib/rocky-run-progress";
 import type {
   AgentSessionArtifactManifestEntry,
   AgentSessionMessage,
@@ -804,12 +811,14 @@ function MessageBubble({
   chat,
   message,
   onOpenPreviewPanel,
+  runProgressByRunId,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
   chat: RockyChatRecord;
   message: RockyMessageRecord;
   onOpenPreviewPanel: (source: RockyPreviewPanelSource) => void;
+  runProgressByRunId: Record<string, string>;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   const isRocky = message.role === "rocky";
@@ -833,6 +842,15 @@ function MessageBubble({
   );
 
   if (isRocky && rockyMessageState.kind === "pending") {
+    const runId = dispatch?.orchestration?.runId ?? null;
+    const progressLabel =
+      (runId ? runProgressByRunId[runId] : null) ??
+      defaultRockyRunProgressLabel({
+        attachmentCount: dispatch?.attachmentIds.length ?? attachments.length,
+        skillId: dispatch?.skillId ?? null,
+        status: dispatch?.orchestration?.status ?? null,
+      });
+
     return (
       <div className="flex w-full items-start justify-start gap-2.5">
         <RockyReplyMark />
@@ -848,6 +866,9 @@ function MessageBubble({
               <span className="ia-streaming-dot" />
               <span className="ia-streaming-dot" />
             </span>
+          </div>
+          <div className="mt-1 text-xs leading-5 text-muted-foreground/80">
+            현재 {progressLabel}
           </div>
         </article>
       </div>
@@ -916,12 +937,14 @@ function MessageList({
   chat,
   endRef,
   onOpenPreviewPanel,
+  runProgressByRunId,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
   chat: RockyChatRecord;
   endRef: RefObject<HTMLDivElement | null>;
   onOpenPreviewPanel: (source: RockyPreviewPanelSource) => void;
+  runProgressByRunId: Record<string, string>;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   return (
@@ -933,6 +956,7 @@ function MessageList({
           chat={chat}
           message={message}
           onOpenPreviewPanel={onOpenPreviewPanel}
+          runProgressByRunId={runProgressByRunId}
           transcriptsBySessionId={transcriptsBySessionId}
         />
       ))}
@@ -1383,8 +1407,12 @@ export function HomePage() {
   const [previewPanelSource, setPreviewPanelSource] =
     useState<RockyPreviewPanelSource | null>(null);
   const [suppressAutoSelect, setSuppressAutoSelect] = useState(false);
+  const [runProgressByRunId, setRunProgressByRunId] = useState<Record<string, string>>(
+    {}
+  );
   const submitInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
   const abilitiesQuery = useRockyAbilitiesQuery();
   const abilities = abilitiesQuery.data ?? [];
   const rockyChatsQuery = useRockyChatsQuery();
@@ -1463,6 +1491,26 @@ export function HomePage() {
       const status = dispatch.orchestration?.status;
       return status === "running" || status === "planned";
     }) ?? false;
+  const activeRunIds = useMemo(
+    () => [
+      ...new Set(
+        chat?.dispatches.flatMap((dispatch) => {
+          const orchestration = dispatch.orchestration;
+          if (
+            orchestration?.runId &&
+            (orchestration.status === "running" ||
+              orchestration.status === "planned")
+          ) {
+            return [orchestration.runId];
+          }
+
+          return [];
+        }) ?? []
+      ),
+    ],
+    [chat?.dispatches]
+  );
+  const activeRunIdsKey = activeRunIds.join("\n");
   const pending =
     submitInFlight ||
     createChatMutation.isPending ||
@@ -1511,6 +1559,79 @@ export function HomePage() {
 
     setChat(rockyChats[0]);
   }, [chat, rockyChats, suppressAutoSelect]);
+
+  useEffect(() => {
+    const active = new Set(
+      activeRunIdsKey ? activeRunIdsKey.split("\n").filter(Boolean) : []
+    );
+
+    for (const [runId, source] of runProgressSourcesRef.current) {
+      if (!active.has(runId)) {
+        source.close();
+        runProgressSourcesRef.current.delete(runId);
+      }
+    }
+
+    setRunProgressByRunId((current) => {
+      let next = current;
+      for (const runId of Object.keys(current)) {
+        if (!active.has(runId)) {
+          next = { ...next };
+          delete next[runId];
+        }
+      }
+      for (const runId of active) {
+        if (!next[runId]) {
+          next = { ...next, [runId]: "실행 연결 중" };
+        }
+      }
+      return next;
+    });
+
+    for (const runId of active) {
+      if (runProgressSourcesRef.current.has(runId)) {
+        continue;
+      }
+
+      const dispatch = chat?.dispatches.find(
+        (entry) => entry.orchestration?.runId === runId
+      );
+      const updateProgress = (label: string) => {
+        setRunProgressByRunId((current) =>
+          current[runId] === label ? current : { ...current, [runId]: label }
+        );
+      };
+      const source = new RunEventsSource(runId, {
+        onOpen: () => updateProgress("실행 연결 중"),
+        onError: () => updateProgress("상태 동기화 중"),
+        onEvent: (event) => {
+          const label = rockyRunProgressLabelForEvent(event, {
+            attachmentCount: dispatch?.attachmentIds.length ?? 0,
+            skillId: dispatch?.skillId ?? null,
+            status: dispatch?.orchestration?.status ?? null,
+          });
+          if (label) {
+            updateProgress(label);
+          }
+
+          if (isTerminalRockyRunEvent(event)) {
+            source.close();
+            runProgressSourcesRef.current.delete(runId);
+          }
+        },
+      });
+      runProgressSourcesRef.current.set(runId, source);
+    }
+  }, [activeRunIdsKey, chat?.dispatches]);
+
+  useEffect(() => {
+    return () => {
+      for (const source of runProgressSourcesRef.current.values()) {
+        source.close();
+      }
+      runProgressSourcesRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!chat?.id || !hasActiveOrchestration) {
@@ -1639,6 +1760,7 @@ export function HomePage() {
               chat={chat}
               endRef={messagesEndRef}
               onOpenPreviewPanel={setPreviewPanelSource}
+              runProgressByRunId={runProgressByRunId}
               transcriptsBySessionId={transcriptsBySessionId}
             />
           ) : (

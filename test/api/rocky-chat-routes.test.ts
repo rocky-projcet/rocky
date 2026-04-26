@@ -2,13 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 import { ROCKY_AGENT_REQUEST_CONTEXT_DIR } from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
 
 import type { AgentRecord } from "../../src/agents/agent-types.js";
-import type { RockyChatRecord } from "../../src/rocky-chat/rocky-chat-types.js";
+import type {
+  RockyAbilityCardRecord,
+  RockyChatRecord,
+} from "../../src/rocky-chat/rocky-chat-types.js";
 import type {
   AgentRunRecord,
   AgentSessionMessage,
@@ -370,17 +373,77 @@ test("rocky abilities expose skill-backed home cards", async () => {
       url: "/rocky/abilities",
     });
     assert.equal(response.statusCode, 200);
-    const abilities = response.json<Array<{
-      skillId: string;
-      title: string;
-      examples: string[];
-    }>>();
+    const abilities = response.json<RockyAbilityCardRecord[]>();
     const pptAbility = abilities.find(
       (ability) => ability.skillId === "rocky.presentation"
     );
     assert.ok(pptAbility);
     assert.equal(pptAbility.title, "PPT 능력");
+    assert.deepEqual(pptAbility.matchedSkillIds, ["slides"]);
+    assert.deepEqual(pptAbility.installedSkillIds, []);
+    assert.equal(pptAbility.installed, false);
     assert.ok(pptAbility.examples.some((example) => /번역/u.test(example)));
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky abilities mark installed slides skill as matched", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, server } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "rocky-core",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "rocky-core",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "rocky-core",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  await mkdir(path.join(workspaceRoot, ".agents", "skills", "slides"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(workspaceRoot, ".agents", "skills", "slides", "SKILL.md"),
+    "---\nname: slides\n---\n"
+  );
+
+  try {
+    const response = await server.inject({
+      method: "GET",
+      url: "/rocky/abilities",
+    });
+    assert.equal(response.statusCode, 200);
+    const pptAbility = response
+      .json<RockyAbilityCardRecord[]>()
+      .find((ability) => ability.skillId === "rocky.presentation");
+    assert.ok(pptAbility);
+    assert.deepEqual(pptAbility.matchedSkillIds, ["slides"]);
+    assert.deepEqual(pptAbility.installedSkillIds, ["slides"]);
+    assert.equal(pptAbility.installed, true);
+
+    const managementResponse = await server.inject({
+      method: "GET",
+      url: "/rocky/core",
+    });
+    assert.equal(managementResponse.statusCode, 200);
+    const managedPptSkill = managementResponse
+      .json()
+      .skills.find((skill: { id: string }) => skill.id === "rocky.presentation");
+    assert.ok(managedPptSkill);
+    assert.deepEqual(managedPptSkill.matchedSkillIds, ["slides"]);
+    assert.deepEqual(managedPptSkill.installedSkillIds, ["slides"]);
+    assert.equal(managedPptSkill.installed, true);
   } finally {
     await server.close();
   }
@@ -455,17 +518,39 @@ test("rocky chat accepts attachment-only PPT requests with a default prompt", as
     assert.equal(sendTurnCalls.length, 1);
     assert.equal(sendTurnCalls[0]?.prompt, "Please review the attached file.");
     assert.match(
-      sendTurnCalls[0]?.extraSystemInstructions[1] ?? "",
+      sendTurnCalls[0]?.extraSystemInstructions.find((instruction) =>
+        instruction.includes(".agents/skills/slides/SKILL.md")
+      ) ?? "",
+      /linked skill instructions/u
+    );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.find((instruction) =>
+        instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR)
+      ) ?? "",
       /\.agents\/rocky\/requests\//u
     );
     const contextPath =
-      sendTurnCalls[0]?.extraSystemInstructions[1]?.match(/`([^`]+)`/)?.[1] ??
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
       `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${chat.dispatches[0]!.id}.md`;
     const requestContext = await readFile(
       path.join(agents[0]!.workspaceRoot, contextPath),
       "utf8"
     );
     assert.match(requestContext, /workspace path: uploads\/rocky\//u);
+    const presentationSkill = await readFile(
+      path.join(
+        agents[0]!.workspaceRoot,
+        ".agents",
+        "skills",
+        "rocky.presentation",
+        "SKILL.md"
+      ),
+      "utf8"
+    );
+    assert.match(presentationSkill, /연결된 workspace-local skill:/u);
+    assert.match(presentationSkill, /\.agents\/skills\/slides\/SKILL\.md/u);
   } finally {
     await server.close();
   }
@@ -525,10 +610,16 @@ test("rocky chat keeps task requests on Rocky Core", async () => {
     );
     assert.match(
       sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
-      /Use the workspace-local Rocky Core instructions in `skills\/rocky\.core\/SKILL\.md`/
+      /Use the workspace-local Rocky Core instructions in `.agents\/skills\/rocky\.core\/SKILL\.md`/
     );
     const coreSkill = await readFile(
-      path.join(agents[0]!.workspaceRoot, "skills", "rocky.core", "SKILL.md"),
+      path.join(
+        agents[0]!.workspaceRoot,
+        ".agents",
+        "skills",
+        "rocky.core",
+        "SKILL.md"
+      ),
       "utf8"
     );
     assert.match(coreSkill, /Skill ID: rocky\.core/);
@@ -629,6 +720,73 @@ test("rocky core management stores default model settings for new home sessions"
   }
 });
 
+test("rocky chat deletes agent-local skills through server management without a codex run", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, sendTurnCalls, server } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "rocky-core",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "rocky-core",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "rocky-core",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  await mkdir(path.join(workspaceRoot, ".agents", "skills", "slides"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(workspaceRoot, ".agents", "skills", "slides", "SKILL.md"),
+    "---\nname: slides\n---\n"
+  );
+
+  try {
+    const promptResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "스킬 삭제해줘",
+      },
+    });
+    assert.equal(promptResponse.statusCode, 201);
+    const promptChat = promptResponse.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 0);
+    assert.equal(promptChat.executionStarted, false);
+    assert.match(promptChat.messages[1]?.text ?? "", /slides/u);
+
+    const deleteResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${promptChat.id}/messages`,
+      payload: {
+        message: "slides",
+      },
+    });
+    assert.equal(deleteResponse.statusCode, 201);
+    const deletedChat = deleteResponse.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 0);
+    assert.equal(deletedChat.executionStarted, false);
+    assert.match(deletedChat.messages.at(-1)?.text ?? "", /삭제했습니다/u);
+    await assert.rejects(
+      access(path.join(workspaceRoot, ".agents", "skills", "slides"))
+    );
+    await access(
+      path.join(workspaceRoot, ".agents", "skills", "rocky.core", "SKILL.md")
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat routes simple conversation through rocky core", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const { agents, runs, sendTurnCalls, server, sessions } =
@@ -668,10 +826,16 @@ test("rocky chat routes simple conversation through rocky core", async () => {
     assert.equal(sendTurnCalls[0]?.prompt, "안녕");
     assert.match(
       sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
-      /Use the workspace-local Rocky Core instructions in `skills\/rocky\.core\/SKILL\.md`/
+      /Use the workspace-local Rocky Core instructions in `.agents\/skills\/rocky\.core\/SKILL\.md`/
     );
     const coreSkill = await readFile(
-      path.join(agents[0]!.workspaceRoot, "skills", "rocky.core", "SKILL.md"),
+      path.join(
+        agents[0]!.workspaceRoot,
+        ".agents",
+        "skills",
+        "rocky.core",
+        "SKILL.md"
+      ),
       "utf8"
     );
     assert.match(coreSkill, /Skill ID: rocky\.core/);
@@ -798,7 +962,7 @@ test("rocky chat keeps chart and report requests on Rocky Core", async () => {
     assert.equal(sendTurnCalls.length, 1);
     assert.match(
       sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
-      /Use the workspace-local Rocky Core instructions in `skills\/rocky\.core\/SKILL\.md`/
+      /Use the workspace-local Rocky Core instructions in `.agents\/skills\/rocky\.core\/SKILL\.md`/
     );
     assert.doesNotMatch(
       sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
@@ -806,7 +970,13 @@ test("rocky chat keeps chart and report requests on Rocky Core", async () => {
     );
 
     const coreSkill = await readFile(
-      path.join(agents[0]!.workspaceRoot, "skills", "rocky.core", "SKILL.md"),
+      path.join(
+        agents[0]!.workspaceRoot,
+        ".agents",
+        "skills",
+        "rocky.core",
+        "SKILL.md"
+      ),
       "utf8"
     );
     assert.match(coreSkill, /Skill ID: rocky\.core/);

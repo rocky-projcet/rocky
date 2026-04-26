@@ -2,6 +2,7 @@ import path from "node:path";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
+  cp,
   mkdir,
   readdir,
   writeFile,
@@ -28,11 +29,10 @@ export const RUNTIME_HOME_LAYOUT_DIRS = Object.freeze([
 export const WORKSPACE_SCAFFOLD_DIRS = Object.freeze([
   ".agents",
   ".agents/skills",
-  "skills",
 ]);
 
-export const WORKSPACE_LOCAL_SKILL_AUTHORING_DIR = "skills";
-export const WORKSPACE_LEGACY_SKILL_AUTHORING_DIR = ".agents/skills";
+export const WORKSPACE_LOCAL_SKILL_AUTHORING_DIR = ".agents/skills";
+export const WORKSPACE_LEGACY_SKILL_AUTHORING_DIR = "skills";
 export const WORKSPACE_AGENT_CONFIG_FILENAME = "agent.config.json";
 export const WORKSPACE_ENV_TEMPLATE_FILENAME = ".env.template";
 export const WORKSPACE_AGENTS_OVERLAY_FILENAME = "AGENTS.md";
@@ -77,8 +77,8 @@ export function resolveWorkspaceScaffoldPaths(workspaceRoot: string): {
 } {
   return {
     agentsDir: path.join(workspaceRoot, ".agents"),
-    skillsDir: path.join(workspaceRoot, "skills"),
-    legacySkillsDir: path.join(workspaceRoot, ".agents", "skills"),
+    skillsDir: path.join(workspaceRoot, ".agents", "skills"),
+    legacySkillsDir: path.join(workspaceRoot, "skills"),
     agentConfigPath: path.join(
       workspaceRoot,
       ".agents",
@@ -202,7 +202,7 @@ export async function listWorkspaceLocalSkills(
   ]);
 
   const deduped = new Map<string, WorkspaceLocalSkillRecord>();
-  for (const skill of [...canonicalSkills, ...legacySkills]) {
+  for (const skill of [...legacySkills, ...canonicalSkills]) {
     deduped.set(skill.name, skill);
   }
 
@@ -219,6 +219,42 @@ export async function shouldManageWorkspaceSkillBridge(
     (await exists(scaffoldPaths.skillsDir)) ||
     (await exists(scaffoldPaths.legacySkillsDir))
   );
+}
+
+async function migrateLegacyWorkspaceSkills(
+  workspaceRoot: string
+): Promise<void> {
+  const scaffoldPaths = resolveWorkspaceScaffoldPaths(workspaceRoot);
+  if (!(await exists(scaffoldPaths.legacySkillsDir))) {
+    return;
+  }
+
+  const entries = await readdir(scaffoldPaths.legacySkillsDir, {
+    withFileTypes: true,
+  });
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || isReservedSystemSkillName(entry.name)) {
+      continue;
+    }
+
+    const legacySkillDir = path.join(scaffoldPaths.legacySkillsDir, entry.name);
+    const legacySkillPath = path.join(legacySkillDir, "SKILL.md");
+    if (!(await exists(legacySkillPath))) {
+      continue;
+    }
+
+    const canonicalSkillDir = path.join(scaffoldPaths.skillsDir, entry.name);
+    if (await exists(canonicalSkillDir)) {
+      continue;
+    }
+
+    await cp(legacySkillDir, canonicalSkillDir, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+    });
+  }
 }
 
 export function buildWorkspaceAgentsOverlay(
@@ -274,7 +310,7 @@ export async function ensureWorkspaceSkillBridge(workspaceRoot: string): Promise
   const scaffoldPaths = resolveWorkspaceScaffoldPaths(workspaceRoot);
   await mkdir(scaffoldPaths.agentsDir, { recursive: true });
   await mkdir(scaffoldPaths.skillsDir, { recursive: true });
-  await mkdir(scaffoldPaths.legacySkillsDir, { recursive: true });
+  await migrateLegacyWorkspaceSkills(workspaceRoot);
   const skills = await listWorkspaceLocalSkills(workspaceRoot);
 
   await writeFile(
@@ -314,7 +350,6 @@ export async function ensureAgentWorkspaceScaffold(
 
   await mkdir(scaffoldPaths.agentsDir, { recursive: true });
   await mkdir(scaffoldPaths.skillsDir, { recursive: true });
-  await mkdir(scaffoldPaths.legacySkillsDir, { recursive: true });
   await writeFile(
     scaffoldPaths.agentConfigPath,
     serializeJson(buildWorkspaceAgentConfig(agent))

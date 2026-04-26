@@ -567,6 +567,10 @@ export function buildTemplateInterviewAgentPrompt(
       ? "- 이번 단계에서는 인터뷰가 완료되었으므로 draft를 반드시 생성하거나 수정합니다."
       : "- 이번 단계는 인터뷰 진행 중이므로 draft는 null로 둡니다.",
     '- draft.category는 "document", "content", "data" 중 하나입니다.',
+    "- 사용자가 말한 업무 목적, 필요 자료, 최종 결과물 표현을 임의로 일반화하거나 다른 업무로 바꾸지 않습니다.",
+    "- title과 triggerLabel은 사용자의 업무 목적을 우선 보존합니다. 예: '유튜브 쇼츠 영상 생성'은 '영상 콘티 작성'으로 바꾸지 않습니다.",
+    "- outputFormatLabel은 사용자가 말한 결과물 형태를 우선 보존합니다. 예: '쇼츠용 영상 파일'은 '텍스트/PPT'로 바꾸지 않습니다.",
+    "- requiredInputs에는 사용자가 직접 말한 필요 자료를 먼저 넣고, 필요한 경우에만 실행에 필요한 값을 보강합니다.",
     "- requiredInputs는 사용자가 실행 전에 제공해야 하는 파일/값을 3-8개로 적습니다.",
     "- defaultInstructions는 Rocky가 실행 때 지킬 기준을 한국어로 적습니다.",
     "",
@@ -610,7 +614,6 @@ export function buildTemplateInterviewFallbackResult(
 
 export function parseTemplateInterviewAgentResult(input: {
   output: string | null;
-  fallback: Omit<RockyTemplateInterviewTurnResult, "agent" | "source">;
   requestedStepId: RockyTemplateInterviewStepId;
 }): Omit<RockyTemplateInterviewTurnResult, "agent" | "source"> | null {
   if (!input.output) {
@@ -622,17 +625,22 @@ export function parseTemplateInterviewAgentResult(input: {
     return null;
   }
 
-  const next = isTemplateStepId(parsed.nextStepId)
-    ? parsed.nextStepId
-    : input.fallback.nextStepId;
+  const next = isTemplateStepId(parsed.nextStepId) ? parsed.nextStepId : null;
   const summary =
     typeof parsed.summary === "string" && parsed.summary.trim()
       ? parsed.summary.trim()
-      : input.fallback.summary;
+      : null;
+  if (!summary || !next) {
+    return null;
+  }
+
   const draft =
     input.requestedStepId === "rules" || input.requestedStepId === "review"
-      ? normalizeDraft(parsed.draft) ?? input.fallback.draft
+      ? normalizeDraft(parsed.draft)
       : null;
+  if ((input.requestedStepId === "rules" || input.requestedStepId === "review") && !draft) {
+    return null;
+  }
 
   return {
     summary,

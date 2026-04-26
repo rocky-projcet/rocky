@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import { AgentLocalSkillService } from "../agents/agent-local-skill-service.js";
@@ -41,7 +42,6 @@ import {
 } from "./rocky-orchestrator-service.js";
 import {
   buildTemplateInterviewAgentPrompt,
-  buildTemplateInterviewFallbackResult,
   parseTemplateInterviewAgentResult,
 } from "./rocky-template-interview.js";
 
@@ -97,6 +97,18 @@ function notFound(message: string): Error & { statusCode: number } {
   });
 }
 
+function gatewayTimeout(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), {
+    statusCode: 504,
+  });
+}
+
+function badGateway(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), {
+    statusCode: 502,
+  });
+}
+
 function titleFromMessage(message: string): string {
   const compact = message.replace(/\s+/gu, " ").trim();
   if (!compact) {
@@ -109,6 +121,8 @@ function titleFromMessage(message: string): string {
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
 const ROCKY_UPLOADS_DIRECTORY = "uploads/rocky";
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
+const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
+const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
 
 function requestMessageOrAttachmentDefault(input: {
   message: string;
@@ -256,6 +270,20 @@ export class RockyChatService {
     });
   }
 
+  private async waitForTemplateInterviewAgent(
+    started: RockyOrchestrationRecord
+  ): Promise<RockyOrchestrationRecord> {
+    let current = await this.orchestrator.refresh(started);
+    const deadline = Date.now() + TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS;
+
+    while (isActiveOrchestrationStatus(current.status) && Date.now() < deadline) {
+      await sleep(TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS);
+      current = await this.orchestrator.refresh(current);
+    }
+
+    return current;
+  }
+
   async listAbilityCards() {
     const agent = await this.findCoreAgent();
     const installedSkillIds = await this.listInstalledSkillIds(agent);
@@ -311,7 +339,6 @@ export class RockyChatService {
   async processTemplateInterviewTurn(
     input: RockyTemplateInterviewTurnInput
   ): Promise<RockyTemplateInterviewTurnResult> {
-    const fallback = buildTemplateInterviewFallbackResult(input);
     const timestamp = this.now();
     const chatId = `rocky-template-interview-${this.idGenerator()}`;
     const messageId = `message-${this.idGenerator()}`;
@@ -364,17 +391,32 @@ export class RockyChatService {
       timestamp,
       extraSystemInstructions,
     });
-    const orchestration = await this.orchestrator.refresh(started);
+    const orchestration = await this.waitForTemplateInterviewAgent(started);
+    if (isActiveOrchestrationStatus(orchestration.status)) {
+      throw gatewayTimeout(
+        "Rocky Core가 템플릿 인터뷰 답변을 아직 완료하지 못했습니다. 잠시 뒤 다시 시도해 주세요."
+      );
+    }
+    if (orchestration.status !== "completed") {
+      throw badGateway(
+        orchestration.error ??
+          "Rocky Core가 템플릿 인터뷰 답변을 완료하지 못했습니다."
+      );
+    }
+
     const agentResult = parseTemplateInterviewAgentResult({
       output: orchestration.output,
-      fallback,
       requestedStepId: input.stepId,
     });
-    const result = agentResult ?? fallback;
+    if (!agentResult) {
+      throw badGateway(
+        "Rocky Core가 템플릿 인터뷰 결과를 읽을 수 있는 JSON으로 반환하지 않았습니다."
+      );
+    }
 
     return {
-      ...result,
-      source: agentResult ? "agent" : "fallback",
+      ...agentResult,
+      source: "agent",
       agent: {
         status: orchestration.status,
         sessionId: orchestration.sessionId,

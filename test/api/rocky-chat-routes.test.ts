@@ -500,9 +500,17 @@ test("rocky ability guide starts with a Rocky answer, not a user prompt", async 
   }
 });
 
-test("rocky template interview turn is dispatched to Rocky Core without early draft", async () => {
+test("rocky template interview turn waits for Rocky Core without early draft", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
-  const { runs, sendTurnCalls, server } = createRockyChatTestServer(stateRoot);
+  const { completedRunSummaries, runs, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot);
+  completedRunSummaries.push(
+    JSON.stringify({
+      summary: "업무 의도를 이해했습니다.",
+      nextStepId: "inputs",
+      draft: null,
+    })
+  );
 
   try {
     const response = await server.inject({
@@ -518,7 +526,8 @@ test("rocky template interview turn is dispatched to Rocky Core without early dr
 
     assert.equal(result.nextStepId, "inputs");
     assert.equal(result.draft, null);
-    assert.equal(result.agent.status, "running");
+    assert.equal(result.source, "agent");
+    assert.equal(result.agent.status, "completed");
     assert.equal(result.agent.runId, "run-1");
     assert.equal(sendTurnCalls.length, 1);
     assert.match(sendTurnCalls[0]?.prompt ?? "", /Rocky 템플릿 인터뷰 처리/u);
@@ -582,6 +591,70 @@ test("rocky template interview final turn can use agent JSON draft", async () =>
       "행사 상품 엑셀",
       "행사 기간",
     ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky template interview final draft preserves video generation intent", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot);
+  completedRunSummaries.push(
+    JSON.stringify({
+      summary: "Rocky가 유튜브 쇼츠 영상 생성 템플릿 초안을 만들었습니다.",
+      nextStepId: "review",
+      draft: {
+        category: "content",
+        title: "유튜브 쇼츠 영상 생성",
+        description: "콘티를 바탕으로 유튜브 쇼츠용 영상을 생성합니다.",
+        triggerLabel: "유튜브 쇼츠 영상 생성",
+        requiredInputs: ["콘티", "채널명", "영상 길이", "제품 정보"],
+        outputFormatLabel: "쇼츠용 영상 파일",
+        defaultInstructions:
+          "콘티를 우선 확인하고 쇼츠 규격에 맞는 영상 파일 결과물을 생성합니다.",
+      },
+    })
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/template-interview/turn",
+      payload: {
+        stepId: "rules",
+        answer: "없음",
+        answers: [
+          {
+            stepId: "intent",
+            answer: "유튜브 쇼츠 영상 생성",
+          },
+          {
+            stepId: "inputs",
+            answer: "콘티",
+          },
+          {
+            stepId: "output",
+            answer: "쇼츠용 영상 파일",
+          },
+        ],
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    const result = response.json();
+
+    assert.equal(result.source, "agent");
+    assert.equal(result.draft.title, "유튜브 쇼츠 영상 생성");
+    assert.equal(result.draft.triggerLabel, "유튜브 쇼츠 영상 생성");
+    assert.equal(result.draft.outputFormatLabel, "쇼츠용 영상 파일");
+    assert.deepEqual(result.draft.requiredInputs, [
+      "콘티",
+      "채널명",
+      "영상 길이",
+      "제품 정보",
+    ]);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /임의로 일반화하거나 다른 업무로 바꾸지 않습니다/u);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /쇼츠용 영상 파일/u);
   } finally {
     await server.close();
   }

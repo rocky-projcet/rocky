@@ -35,7 +35,6 @@ import { RunEventsSource } from "@/domains/run/lib/run-events-source";
 import {
   useCancelRockyChatMutation,
   useCreateRockyChatMutation,
-  useRockyChatsQuery,
   useRockyChatQuery,
   useSendRockyMessageMutation,
 } from "@/domains/rocky/hooks";
@@ -65,15 +64,6 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
-import {
-  formatRockyTaskDateTime,
-  getRockyTaskSummary,
-  getRockyTaskTemplateTitle,
-  getRockyTaskStatus,
-  rockyTaskStatusLabel,
-  rockyTaskStatusTone,
-} from "@/domains/rocky/lib/rocky-task-model";
-
 import type {
   RockyAttachmentRecord,
   RockyChatRecord,
@@ -660,12 +650,10 @@ function templateTone(category: MdTemplateCategory): string {
 function TemplateCardGrid({
   disabled,
   onSelectTemplate,
-  recentTasksByTemplateTitle,
   userTemplates,
 }: {
   disabled: boolean;
   onSelectTemplate: (template: MdTemplateDefinition) => void;
-  recentTasksByTemplateTitle: Map<string, RockyChatRecord>;
   userTemplates: MdTemplateDefinition[];
 }) {
   return (
@@ -689,7 +677,6 @@ function TemplateCardGrid({
             <TemplateLaunchCard
               key={template.id}
               disabled={disabled}
-              recentTask={recentTasksByTemplateTitle.get(template.title) ?? null}
               template={template}
               onSelectTemplate={onSelectTemplate}
             />
@@ -716,16 +703,12 @@ function TemplateCardGrid({
 function TemplateLaunchCard({
   disabled,
   onSelectTemplate,
-  recentTask,
   template,
 }: {
   disabled: boolean;
   onSelectTemplate: (template: MdTemplateDefinition) => void;
-  recentTask: RockyChatRecord | null;
   template: MdTemplateDefinition;
 }) {
-  const recentStatus = recentTask ? getRockyTaskStatus(recentTask) : null;
-
   return (
     <button
       type="button"
@@ -755,35 +738,6 @@ function TemplateLaunchCard({
       <div className="mt-4 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
         <span className="truncate">{template.outputFormatLabel}</span>
       </div>
-      <div className="mt-4 rounded-md bg-muted/55 px-3 py-2">
-        {recentTask && recentStatus ? (
-          <>
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-semibold text-muted-foreground">
-                최근 작업
-              </span>
-              <span
-                className={cn(
-                  "inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-medium",
-                  rockyTaskStatusTone(recentStatus)
-                )}
-              >
-                {rockyTaskStatusLabel(recentStatus)}
-              </span>
-            </div>
-            <div className="mt-1 line-clamp-1 text-xs text-foreground">
-              {getRockyTaskSummary(recentTask)}
-            </div>
-            <div className="mt-1 text-[11px] text-muted-foreground">
-              {formatRockyTaskDateTime(recentTask.updatedAt)}
-            </div>
-          </>
-        ) : (
-          <div className="text-xs text-muted-foreground">
-            이 템플릿으로 시작한 최근 작업이 없습니다.
-          </div>
-        )}
-      </div>
     </button>
   );
 }
@@ -791,12 +745,10 @@ function TemplateLaunchCard({
 function EmptyChatState({
   disabled,
   onSelectTemplate,
-  recentTasksByTemplateTitle,
   userTemplates,
 }: {
   disabled: boolean;
   onSelectTemplate: (template: MdTemplateDefinition) => void;
-  recentTasksByTemplateTitle: Map<string, RockyChatRecord>;
   userTemplates: MdTemplateDefinition[];
 }) {
   return (
@@ -810,7 +762,6 @@ function EmptyChatState({
       <TemplateCardGrid
         disabled={disabled}
         onSelectTemplate={onSelectTemplate}
-        recentTasksByTemplateTitle={recentTasksByTemplateTitle}
         userTemplates={userTemplates}
       />
     </div>
@@ -2740,20 +2691,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
   const { userTemplates } = useMdTemplates();
-  const rockyChatsQuery = useRockyChatsQuery();
-  const rockyChats = rockyChatsQuery.data ?? [];
-  const recentTasksByTemplateTitle = useMemo(() => {
-    const tasksByTitle = new Map<string, RockyChatRecord>();
-    [...rockyChats]
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .forEach((entry) => {
-        const templateTitle = getRockyTaskTemplateTitle(entry);
-        if (templateTitle && !tasksByTitle.has(templateTitle)) {
-          tasksByTitle.set(templateTitle, entry);
-        }
-      });
-    return tasksByTitle;
-  }, [rockyChats]);
   const createChatMutation = useCreateRockyChatMutation();
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
   const cancelRockyChatMutation = useCancelRockyChatMutation(chat?.id ?? null);
@@ -3132,7 +3069,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               onSelectTemplate={(template) => {
                 setTemplateExecutionTemplate(template);
               }}
-              recentTasksByTemplateTitle={recentTasksByTemplateTitle}
               userTemplates={userTemplates}
             />
           )}

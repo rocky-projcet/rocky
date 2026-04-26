@@ -58,6 +58,7 @@ export interface RockySessionServiceLike {
   getRun?(runId: string): Promise<AgentRunRecord>;
   getRunResult?(runId: string): Promise<RuntimeRunResult>;
   getTranscript?(sessionId: string): Promise<AgentSessionMessage[]>;
+  cancelRun?(runId: string): Promise<void>;
   deleteSession?(sessionId: string): Promise<void>;
   stopSessionRuns?(sessionId: string): Promise<string[]>;
 }

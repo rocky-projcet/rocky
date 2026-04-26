@@ -1432,6 +1432,15 @@ export class AgentEngineClient {
     );
   }
 
+  cancelRockyChat(chatId: string): Promise<RockyChatRecord> {
+    return this.request<RockyChatRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}/cancel`,
+      {
+        method: "POST",
+      }
+    );
+  }
+
   async deleteRockyChat(chatId: string): Promise<void> {
     await this.request<Record<string, never> | null>(
       `/rocky/chats/${encodeURIComponent(chatId)}`,

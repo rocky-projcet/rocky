@@ -296,6 +296,14 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
     }
   );
 
+  server.post<{ Params: { chatId: string } }>(
+    "/rocky/chats/:chatId/cancel",
+    async (request, reply) => {
+      const chat = await options.rockyChatService.cancelChat(request.params.chatId);
+      sendJson(reply, 200, chat);
+    }
+  );
+
   server.delete<{ Params: { chatId: string } }>(
     "/rocky/chats/:chatId",
     async (request, reply) => {

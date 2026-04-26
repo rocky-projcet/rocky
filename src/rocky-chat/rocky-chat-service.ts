@@ -118,6 +118,12 @@ function requestMessageOrAttachmentDefault(input: {
   throw badRequest("message or attachments are required.");
 }
 
+function isActiveOrchestrationStatus(
+  status: RockyOrchestrationRecord["status"]
+): boolean {
+  return status === "planned" || status === "running";
+}
+
 function sanitizeUploadedFilename(filename: string): string {
   const basename = path.basename(filename.trim()).normalize("NFKC");
   const sanitized = basename
@@ -370,6 +376,60 @@ export class RockyChatService {
         right.createdAt.localeCompare(left.createdAt) ||
         left.id.localeCompare(right.id)
     );
+  }
+
+  async cancelChat(chatId: string): Promise<RockyChatRecord> {
+    const existing = await this.refreshChat(await this.requireChat(chatId), {
+      persist: true,
+    });
+    const timestamp = this.now();
+    let changed = false;
+
+    const dispatches = await Promise.all(
+      existing.dispatches.map(async (dispatch) => {
+        const orchestration = dispatch.orchestration;
+        if (!orchestration || !isActiveOrchestrationStatus(orchestration.status)) {
+          return dispatch;
+        }
+
+        if (orchestration.runId && this.sessionService?.cancelRun) {
+          await this.sessionService.cancelRun(orchestration.runId);
+        } else if (
+          orchestration.sessionId &&
+          this.sessionService?.stopSessionRuns
+        ) {
+          await this.sessionService.stopSessionRuns(orchestration.sessionId);
+        }
+
+        changed = true;
+        return {
+          ...dispatch,
+          orchestration: {
+            ...orchestration,
+            status: "cancelled",
+            endedAt: orchestration.endedAt ?? timestamp,
+            updatedAt: timestamp,
+          } satisfies RockyOrchestrationRecord,
+        };
+      })
+    );
+
+    if (!changed) {
+      return existing;
+    }
+
+    const orchestration =
+      [...dispatches].reverse().find((dispatch) => dispatch.orchestration)
+        ?.orchestration ?? null;
+    const chat: RockyChatRecord = {
+      ...existing,
+      dispatches,
+      orchestration,
+      updatedAt: timestamp,
+    };
+
+    await this.writeChat(chat);
+    return chat;
   }
 
   async getCoreManagement(): Promise<RockyCoreManagementRecord> {

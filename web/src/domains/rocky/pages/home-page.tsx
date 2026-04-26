@@ -14,6 +14,7 @@ import {
   Paperclip,
   Presentation,
   Send,
+  Square,
   Trash2,
   X,
 } from "lucide-react";
@@ -21,11 +22,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 
-import { ArtifactPreviewCard } from "@/domains/run/components/artifact-preview-card";
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
 import { RunEventsSource } from "@/domains/run/lib/run-events-source";
 import {
   useRockyAbilitiesQuery,
+  useCancelRockyChatMutation,
   useCreateRockyChatMutation,
   useDeleteRockyChatMutation,
   useRockyChatsQuery,
@@ -475,7 +476,7 @@ function EmptyChatState({
         무엇을 도와드릴까요?
       </h1>
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
-        필요한 일을 편하게 말해 주세요.
+        PPT나 자료를 올리고 필요한 일을 편하게 말해 주세요.
       </p>
       <AbilityCardGrid
         abilities={abilities}
@@ -741,25 +742,33 @@ function RockyArtifactGrid({
   }
 
   return (
-    <div className="mt-4 grid gap-3">
-      {artifacts.map((artifact) => (
-        <ArtifactPreviewCard
-          key={artifact.role}
-          artifact={artifact}
-          onPreview={
-            buildArtifactPreviewPanelSource(artifact)
-              ? () => {
-                  const source = buildArtifactPreviewPanelSource(artifact);
-                  if (source) {
-                    onOpenPreviewPanel(source);
-                  }
-                  return true;
-                }
-              : undefined
-          }
-          showInspectLink={false}
-        />
-      ))}
+    <div className="mt-3 flex flex-wrap gap-2">
+      {artifacts.map((artifact) => {
+        const isPowerPoint = isPowerPointArtifact(artifact);
+        const artifactLabel = isPowerPoint
+          ? "PPT"
+          : isHtmlArtifact(artifact)
+            ? "HTML"
+            : artifact.presentation === "image"
+              ? "이미지"
+              : "파일";
+        const ArtifactIcon = isPowerPoint ? Presentation : FileText;
+
+        return (
+          <button
+            key={artifact.role}
+            type="button"
+            onClick={() => openRockyArtifact(artifact, onOpenPreviewPanel)}
+            className="inline-flex h-9 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground shadow-sm transition hover:bg-secondary"
+          >
+            <ArtifactIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="max-w-56 truncate">{artifact.name}</span>
+            <span className="shrink-0 rounded-md bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+              {artifactLabel}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -978,26 +987,32 @@ function SelectedFileList({
 
   return (
     <div className="mb-2 flex flex-wrap gap-2 px-1 pt-1">
-      {files.map((file) => (
-        <span
-          key={`${file.name}-${file.size}`}
-          className="inline-flex max-w-full items-center gap-2 rounded-lg border bg-background px-3 py-2 text-xs"
-        >
-          <FileText className="size-3 shrink-0" />
-          <span className="truncate">{file.name}</span>
-          <span className="shrink-0 text-muted-foreground">
-            {formatFileSize(file.size)}
-          </span>
-          <button
-            type="button"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label={`${file.name} 제거`}
-            onClick={() => onRemove(file)}
+      {files.map((file) => {
+        const FileIcon = isPowerPointFile(file.name, file.type)
+          ? Presentation
+          : FileText;
+
+        return (
+          <span
+            key={`${file.name}-${file.size}`}
+            className="inline-flex max-w-full items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-xs"
           >
-            <X className="size-3" />
-          </button>
-        </span>
-      ))}
+            <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{file.name}</span>
+            <span className="shrink-0 text-muted-foreground">
+              {formatFileSize(file.size)}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={`${file.name} 제거`}
+              onClick={() => onRemove(file)}
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -1006,6 +1021,7 @@ function ChatComposer({
   canSend,
   canClearChat,
   canLoadHistory,
+  canStop,
   chatStarted,
   errorMessage,
   files,
@@ -1014,12 +1030,15 @@ function ChatComposer({
   onFileRemove,
   onClearChat,
   onOpenHistory,
+  onStop,
   onMessageChange,
   onSubmit,
+  stopPending,
 }: {
   canSend: boolean;
   canClearChat: boolean;
   canLoadHistory: boolean;
+  canStop: boolean;
   chatStarted: boolean;
   errorMessage: string | undefined;
   files: File[];
@@ -1028,8 +1047,10 @@ function ChatComposer({
   onFileRemove: (file: File) => void;
   onClearChat: () => void;
   onOpenHistory: () => void;
+  onStop: () => void;
   onMessageChange: (message: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  stopPending: boolean;
 }) {
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
@@ -1087,7 +1108,7 @@ function ChatComposer({
           <Textarea
             value={message}
             onChange={(event) => onMessageChange(event.target.value)}
-            placeholder="자료를 넣고 원하는 일을 말해보세요."
+            placeholder="PPT나 자료를 넣고 원하는 일을 말해보세요."
             aria-label="Rocky에게 말하기"
             className="max-h-36 min-h-10 flex-1 border-0 bg-transparent px-2 py-2.5 text-sm leading-5 shadow-none focus-visible:ring-0"
             onKeyDown={(event) => {
@@ -1097,6 +1118,20 @@ function ChatComposer({
               }
             }}
           />
+          {canStop || stopPending ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={!canStop || stopPending}
+              aria-label={stopPending ? "중지 중" : "응답 중지"}
+              title={stopPending ? "중지 중" : "응답 중지"}
+              className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={onStop}
+            >
+              <Square className="size-4" />
+            </Button>
+          ) : null}
           <Button
             type="submit"
             size="icon"
@@ -1421,6 +1456,7 @@ export function HomePage() {
   const createChatMutation = useCreateRockyChatMutation();
   const deleteHistoryChatMutation = useDeleteRockyChatMutation(null);
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
+  const cancelRockyChatMutation = useCancelRockyChatMutation(chat?.id ?? null);
   const startAbilityGuideMutation = useStartRockyAbilityGuideMutation();
   const { data: refreshedChat, refetch: refetchRockyChat } = useRockyChatQuery(
     chat?.id ?? null
@@ -1511,14 +1547,24 @@ export function HomePage() {
     [chat?.dispatches]
   );
   const activeRunIdsKey = activeRunIds.join("\n");
-  const pending =
+  const mutationPending =
     submitInFlight ||
     createChatMutation.isPending ||
     sendMessageMutation.isPending ||
     startAbilityGuideMutation.isPending ||
     deleteHistoryChatMutation.isPending;
-  const canSend = (message.trim().length > 0 || files.length > 0) && !pending;
-  const canClearChat = Boolean(chat && messageCount > 0) && !pending;
+  const pending = mutationPending || cancelRockyChatMutation.isPending;
+  const canSend =
+    (message.trim().length > 0 || files.length > 0) &&
+    !mutationPending &&
+    !cancelRockyChatMutation.isPending &&
+    !hasActiveOrchestration;
+  const canStop =
+    Boolean(chat?.id) &&
+    hasActiveOrchestration &&
+    !cancelRockyChatMutation.isPending;
+  const canClearChat =
+    Boolean(chat && messageCount > 0) && !pending && !hasActiveOrchestration;
   const historyQueryErrorMessage = rockyChatsQuery.error
     ? getErrorMessage(
         rockyChatsQuery.error,
@@ -1544,6 +1590,7 @@ export function HomePage() {
   const errorMessage =
     createChatMutation.error?.message ??
     sendMessageMutation.error?.message ??
+    cancelRockyChatMutation.error?.message ??
     startAbilityGuideMutation.error?.message;
 
   useEffect(() => {
@@ -1702,6 +1749,22 @@ export function HomePage() {
     }
   };
 
+  const stopActiveResponse = async () => {
+    if (!chat?.id || !hasActiveOrchestration || cancelRockyChatMutation.isPending) {
+      return;
+    }
+
+    try {
+      const nextChat = await cancelRockyChatMutation.mutateAsync();
+      setChat(nextChat);
+      toast.success("요청을 중지했습니다.");
+    } catch (error) {
+      toast.error("요청을 중지하지 못했습니다.", {
+        description: getErrorMessage(error, "잠시 후 다시 시도해 주세요."),
+      });
+    }
+  };
+
   const clearConversation = async () => {
     if (!chat?.id || !canClearChat) {
       return;
@@ -1779,6 +1842,7 @@ export function HomePage() {
           canSend={canSend}
           canClearChat={canClearChat}
           canLoadHistory={canLoadHistory}
+          canStop={canStop}
           chatStarted={Boolean(chat)}
           errorMessage={errorMessage}
           files={files}
@@ -1791,8 +1855,12 @@ export function HomePage() {
             void clearConversation();
           }}
           onOpenHistory={() => setHistoryDialogOpen(true)}
+          onStop={() => {
+            void stopActiveResponse();
+          }}
           onMessageChange={setMessage}
           onSubmit={submit}
+          stopPending={cancelRockyChatMutation.isPending}
         />
       </section>
 

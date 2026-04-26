@@ -142,6 +142,7 @@ function createRockyChatTestServer(stateRoot: string) {
   const runs: AgentRunRecord[] = [];
   const transcriptOverrides = new Map<string, AgentSessionMessage[]>();
   const deletedSessionIds: string[] = [];
+  const cancelledRunIds: string[] = [];
   const createSessionCalls: Array<{
     agentId: string;
     title?: string | null;
@@ -343,7 +344,19 @@ function createRockyChatTestServer(stateRoot: string) {
         }
         return run;
       },
-      async cancelRun() {},
+      async cancelRun(runId) {
+        cancelledRunIds.push(runId);
+        const index = runs.findIndex((entry) => entry.id === runId);
+        const run = index >= 0 ? runs[index] : null;
+        if (run?.status === "running") {
+          runs[index] = {
+            ...run,
+            status: "cancelled",
+            endedAt: "2026-04-21T00:00:30.000Z",
+            summary: run.summary ?? "cancelled",
+          };
+        }
+      },
       async stopAgentRuns() {
         return [];
       },
@@ -352,6 +365,7 @@ function createRockyChatTestServer(stateRoot: string) {
 
   return {
     agents,
+    cancelledRunIds,
     createSessionCalls,
     deletedSessionIds,
     runs,
@@ -654,6 +668,47 @@ test("rocky chat keeps task requests on Rocky Core", async () => {
     assert.equal(sendTurnCalls[1]?.sessionId, "session-1");
     assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");
     assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-1");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat cancellation stops the active home run and persists chat state", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-cancel-"));
+  const { cancelledRunIds, runs, server } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const createResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "첨부한 PPT를 슬라이드별로 요약해줘.",
+      },
+    });
+    assert.equal(createResponse.statusCode, 201);
+    const chat = createResponse.json<RockyChatRecord>();
+    assert.equal(chat.dispatches[0]?.orchestration?.status, "running");
+    assert.equal(chat.dispatches[0]?.orchestration?.runId, "run-1");
+
+    const cancelResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${chat.id}/cancel`,
+    });
+    assert.equal(cancelResponse.statusCode, 200);
+    const cancelled = cancelResponse.json<RockyChatRecord>();
+    assert.deepEqual(cancelledRunIds, ["run-1"]);
+    assert.equal(runs[0]?.status, "cancelled");
+    assert.equal(cancelled.orchestration?.status, "cancelled");
+    assert.equal(cancelled.dispatches[0]?.orchestration?.status, "cancelled");
+
+    const persistedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chat.id}`,
+    });
+    assert.equal(persistedResponse.statusCode, 200);
+    const persisted = persistedResponse.json<RockyChatRecord>();
+    assert.equal(persisted.orchestration?.status, "cancelled");
+    assert.equal(persisted.dispatches[0]?.orchestration?.status, "cancelled");
   } finally {
     await server.close();
   }

@@ -214,5 +214,6 @@ export interface RockyChatServiceLike {
     chatId: string,
     input: RockyChatMessageInput
   ): Promise<RockyChatRecord>;
+  cancelChat(chatId: string): Promise<RockyChatRecord>;
   deleteChat(chatId: string): Promise<void>;
 }

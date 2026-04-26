@@ -6,6 +6,10 @@ import type {
   RockyCoreSettingsUpdateInput,
   RockyAttachmentInput,
   RockyChatServiceLike,
+  RockyTemplateDraft,
+  RockyTemplateInterviewAnswer,
+  RockyTemplateInterviewStepId,
+  RockyTemplateInterviewTurnInput,
 } from "../../rocky-chat/rocky-chat-types.js";
 import type {
   RuntimeKind,
@@ -170,6 +174,105 @@ function parseMessageBody(body: unknown): {
   };
 }
 
+function isTemplateStepId(value: unknown): value is RockyTemplateInterviewStepId {
+  return (
+    value === "intent" ||
+    value === "inputs" ||
+    value === "output" ||
+    value === "rules" ||
+    value === "review"
+  );
+}
+
+function parseTemplateDraft(value: unknown): RockyTemplateDraft | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw badRequest("draft must be an object or null.");
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    record.category !== "document" &&
+    record.category !== "content" &&
+    record.category !== "data"
+  ) {
+    throw badRequest("draft.category must be document, content, or data.");
+  }
+
+  return {
+    category: record.category,
+    title: typeof record.title === "string" ? record.title : "",
+    description: typeof record.description === "string" ? record.description : "",
+    triggerLabel:
+      typeof record.triggerLabel === "string" ? record.triggerLabel : "",
+    requiredInputs: Array.isArray(record.requiredInputs)
+      ? record.requiredInputs.filter(
+          (entry): entry is string => typeof entry === "string"
+        )
+      : [],
+    outputFormatLabel:
+      typeof record.outputFormatLabel === "string" ? record.outputFormatLabel : "",
+    defaultInstructions:
+      typeof record.defaultInstructions === "string"
+        ? record.defaultInstructions
+        : "",
+  };
+}
+
+function parseTemplateInterviewAnswers(
+  value: unknown
+): RockyTemplateInterviewAnswer[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest("answers must be an array when provided.");
+  }
+
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw badRequest("answer entries must be objects.");
+    }
+    const record = entry as Record<string, unknown>;
+    if (!isTemplateStepId(record.stepId)) {
+      throw badRequest("answer.stepId is invalid.");
+    }
+    if (typeof record.answer !== "string" || !record.answer.trim()) {
+      throw badRequest("answer.answer is required.");
+    }
+
+    return {
+      stepId: record.stepId,
+      answer: record.answer.trim(),
+    };
+  });
+}
+
+function parseTemplateInterviewTurnBody(
+  body: unknown
+): RockyTemplateInterviewTurnInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("Template interview requests require a JSON object body.");
+  }
+
+  const input = body as Record<string, unknown>;
+  if (!isTemplateStepId(input.stepId)) {
+    throw badRequest("stepId is invalid.");
+  }
+  if (typeof input.answer !== "string" || !input.answer.trim()) {
+    throw badRequest("answer is required.");
+  }
+
+  return {
+    stepId: input.stepId,
+    answer: input.answer.trim(),
+    answers: parseTemplateInterviewAnswers(input.answers),
+    draft: parseTemplateDraft(input.draft),
+  };
+}
+
 function parseCoreSettingsPatchBody(body: unknown): RockyCoreSettingsUpdateInput {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw badRequest("Rocky Core settings requests require a JSON object body.");
@@ -237,6 +340,13 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
       sendJson(reply, 201, chat);
     }
   );
+
+  server.post("/rocky/template-interview/turn", async (request, reply) => {
+    const result = await options.rockyChatService.processTemplateInterviewTurn(
+      parseTemplateInterviewTurnBody(request.body)
+    );
+    sendJson(reply, 200, result);
+  });
 
   server.get("/rocky/core", async (_request, reply) => {
     sendJson(reply, 200, await options.rockyChatService.getCoreManagement());

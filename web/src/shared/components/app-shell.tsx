@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { ChevronDown, Home, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Home, LayoutTemplate, SlidersHorizontal } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
 import { NavAgents } from "@/domains/agent/components/nav-agents";
@@ -44,6 +44,10 @@ function isRockyHomeRoute(pathname: string): boolean {
   return pathname === "/";
 }
 
+function isTemplatesRoute(pathname: string): boolean {
+  return pathname.startsWith("/templates");
+}
+
 function isAdvancedManagementRoute(pathname: string): boolean {
   return (
     pathname.startsWith("/agents") ||
@@ -57,6 +61,7 @@ export function AppShell() {
   const boundedCanvas = usesBoundedCanvas(location.pathname);
   const compactRoute = isCompactRoute(location.pathname);
   const rockyHomeRoute = isRockyHomeRoute(location.pathname);
+  const templatesRoute = isTemplatesRoute(location.pathname);
   const advancedManagementRoute = isAdvancedManagementRoute(location.pathname);
   const [advancedManagementOpen, setAdvancedManagementOpen] = useState(
     () => advancedManagementRoute,
@@ -87,6 +92,16 @@ export function AppShell() {
                   >
                     <Home />
                     <span>홈</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="템플릿"
+                    isActive={templatesRoute}
+                    render={<NavLink to="/templates" />}
+                  >
+                    <LayoutTemplate />
+                    <span>템플릿</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>

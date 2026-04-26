@@ -6,13 +6,19 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
+import { Link } from "react-router-dom";
 import { useQueries } from "@tanstack/react-query";
 import {
+  ArrowRight,
+  BarChart3,
   FileText,
   History,
+  LayoutTemplate,
   MessageSquare,
   Paperclip,
+  PenLine,
   Presentation,
+  Plus,
   Send,
   Square,
   Trash2,
@@ -57,6 +63,8 @@ import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-
 import { agentEngineClient } from "@/shared/lib/api-client";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
+import { useMdTemplates } from "@/domains/template/hooks";
+import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
 
 import type {
   RockyAbilityCardRecord,
@@ -64,6 +72,10 @@ import type {
   RockyChatRecord,
   RockyMessageRecord,
 } from "@/domains/rocky/types";
+import type {
+  MdTemplateCategory,
+  MdTemplateDefinition,
+} from "@/domains/template/types";
 
 const LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS = 1500;
 const PPT_CONTENT_TYPE = "application/vnd.ms-powerpoint";
@@ -216,6 +228,15 @@ function markdownLinkEscape(value: string): string {
 
 function markdownUrlEscape(value: string): string {
   return value.replace(/[()\\]/g, (match) => `\\${match}`);
+}
+
+function compactTemplateRunMessage(value: string): string {
+  if (!value.startsWith("[Rocky 템플릿 실행]")) {
+    return value;
+  }
+
+  const title = value.match(/^템플릿:\s*(.+)$/mu)?.[1]?.trim();
+  return title ? `템플릿 실행: ${title}` : "템플릿 실행";
 }
 
 function escapeRegExp(value: string): string {
@@ -393,6 +414,125 @@ function RockyAbilityIcon({ icon }: { icon: RockyAbilityCardRecord["icon"] }) {
   return <MessageSquare className="size-4" />;
 }
 
+function TemplateCategoryIcon({ category }: { category: MdTemplateCategory }) {
+  if (category === "content") {
+    return <PenLine className="size-4" />;
+  }
+
+  if (category === "data") {
+    return <BarChart3 className="size-4" />;
+  }
+
+  return <FileText className="size-4" />;
+}
+
+function templateTone(category: MdTemplateCategory): string {
+  if (category === "content") {
+    return "border-rose-500/30 bg-rose-500/8 text-rose-700";
+  }
+
+  if (category === "data") {
+    return "border-sky-500/30 bg-sky-500/8 text-sky-700";
+  }
+
+  return "border-emerald-500/30 bg-emerald-500/8 text-emerald-700";
+}
+
+function TemplateCardGrid({
+  disabled,
+  onSelectTemplate,
+  userTemplates,
+}: {
+  disabled: boolean;
+  onSelectTemplate: (template: MdTemplateDefinition) => void;
+  userTemplates: MdTemplateDefinition[];
+}) {
+  return (
+    <div className="mt-8 w-full text-left">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">저장한 템플릿</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            카드를 누르면 Rocky가 필요한 값을 순서대로 묻습니다.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" render={<Link to="/templates/new" />}>
+          <Plus className="size-4" />
+          템플릿 만들기
+        </Button>
+      </div>
+
+      {userTemplates.length > 0 ? (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {userTemplates.map((template) => (
+            <TemplateLaunchCard
+              key={template.id}
+              disabled={disabled}
+              template={template}
+              onSelectTemplate={onSelectTemplate}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center">
+          <div className="text-sm font-medium text-foreground">
+            저장한 템플릿이 없습니다.
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            템플릿 메뉴에서 Rocky에게 업무 방식을 알려주면 홈 카드로 실행할 수 있습니다.
+          </p>
+          <Button className="mt-3" variant="outline" size="sm" render={<Link to="/templates/new" />}>
+            <Plus className="size-4" />
+            새 템플릿 만들기
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TemplateLaunchCard({
+  disabled,
+  onSelectTemplate,
+  template,
+}: {
+  disabled: boolean;
+  onSelectTemplate: (template: MdTemplateDefinition) => void;
+  template: MdTemplateDefinition;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onSelectTemplate(template)}
+      className="group min-h-40 rounded-lg border bg-card p-4 text-left shadow-sm transition hover:border-primary/40 hover:bg-secondary/50 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <span
+          className={cn(
+            "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-medium",
+            templateTone(template.category)
+          )}
+        >
+          <TemplateCategoryIcon category={template.category} />
+          <span className="truncate">{template.triggerLabel}</span>
+        </span>
+        <ArrowRight className="mt-1 size-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-foreground" />
+      </div>
+
+      <div className="mt-4 text-sm font-semibold text-foreground">
+        {template.title}
+      </div>
+      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+        {template.description}
+      </p>
+      <div className="mt-4 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
+        <span className="truncate">{template.outputFormatLabel}</span>
+      </div>
+    </button>
+  );
+}
+
 function AbilityCardGrid({
   abilities,
   disabled,
@@ -464,20 +604,37 @@ function EmptyChatState({
   abilitiesLoading,
   disabled,
   onSelectAbility,
+  onSelectTemplate,
+  userTemplates,
 }: {
   abilities: RockyAbilityCardRecord[];
   abilitiesLoading: boolean;
   disabled: boolean;
   onSelectAbility: (ability: RockyAbilityCardRecord) => void;
+  onSelectTemplate: (template: MdTemplateDefinition) => void;
+  userTemplates: MdTemplateDefinition[];
 }) {
   return (
-    <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center pb-16 text-center">
+    <div className="mx-auto flex min-h-full max-w-5xl flex-col items-center justify-center pb-16 text-center">
       <h1 className="text-2xl font-semibold tracking-normal md:text-3xl">
         무엇을 도와드릴까요?
       </h1>
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
         PPT나 자료를 올리고 필요한 일을 편하게 말해 주세요.
       </p>
+      <TemplateCardGrid
+        disabled={disabled}
+        onSelectTemplate={onSelectTemplate}
+        userTemplates={userTemplates}
+      />
+      <div className="mt-8 flex w-full items-center gap-3">
+        <div className="h-px flex-1 bg-border" />
+        <div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <LayoutTemplate className="size-3.5" />
+          Rocky 기본 능력
+        </div>
+        <div className="h-px flex-1 bg-border" />
+      </div>
       <AbilityCardGrid
         abilities={abilities}
         disabled={disabled}
@@ -886,7 +1043,7 @@ function MessageBubble({
 
   const bubbleText =
     !isRocky || rockyMessageState.kind === "pending"
-      ? message.text
+      ? compactTemplateRunMessage(message.text)
       : rockyMessageState.text;
   const bubbleTone =
     isRocky && rockyMessageState.kind === "error"
@@ -1150,6 +1307,168 @@ function ChatComposer({
         ) : null}
       </form>
     </footer>
+  );
+}
+
+function TemplateExecutionDialog({
+  disabled,
+  files,
+  onFileRemove,
+  onFilesChange,
+  onOpenChange,
+  onStart,
+  open,
+  template,
+}: {
+  disabled: boolean;
+  files: File[];
+  onFileRemove: (file: File) => void;
+  onFilesChange: (files: File[]) => void;
+  onOpenChange: (open: boolean) => void;
+  onStart: (template: MdTemplateDefinition, userBrief: string) => void;
+  open: boolean;
+  template: MdTemplateDefinition | null;
+}) {
+  const [userBrief, setUserBrief] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setUserBrief("");
+    }
+  }, [open, template?.id]);
+
+  if (!template) {
+    return null;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(88vh,44rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
+          <DialogTitle>템플릿 실행 준비</DialogTitle>
+          <DialogDescription>
+            파일과 추가 조건을 먼저 확인한 뒤 Rocky가 필요한 값만 이어서 묻습니다.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div
+                  className={cn(
+                    "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-medium",
+                    templateTone(template.category)
+                  )}
+                >
+                  <TemplateCategoryIcon category={template.category} />
+                  <span className="truncate">{template.triggerLabel}</span>
+                </div>
+                <h2 className="mt-3 text-base font-semibold text-foreground">
+                  {template.title}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  {template.description}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_17rem]">
+            <section className="rounded-lg border bg-card p-4">
+              <h3 className="text-sm font-semibold text-foreground">실행 전 확인값</h3>
+              <ol className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+                {template.requiredInputs.map((input, index) => (
+                  <li key={input} className="flex gap-2 rounded-lg bg-muted/50 px-3 py-2">
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <span>{input}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+
+            <section className="rounded-lg border bg-card p-4">
+              <h3 className="text-sm font-semibold text-foreground">진행 단계</h3>
+              <ol className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+                {["파일 확인", "누락값 질문", "초안 생성", "수정 반영"].map((step) => (
+                  <li key={step} className="flex items-center gap-2">
+                    <span className="size-1.5 rounded-full bg-primary" />
+                    {step}
+                  </li>
+                ))}
+              </ol>
+              <div className="mt-4 rounded-lg bg-muted/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                최종 산출물: {template.outputFormatLabel}
+              </div>
+            </section>
+          </div>
+
+          <section className="mt-4 rounded-lg border bg-card p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">자료 파일</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  레퍼런스 문서와 원본 자료를 함께 올려도 됩니다.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={<label />}
+              >
+                <Paperclip className="size-4" />
+                파일 추가
+                <input
+                  type="file"
+                  multiple
+                  className="sr-only"
+                  aria-label="템플릿 실행 자료 파일 선택"
+                  onChange={(event) => {
+                    onFilesChange(Array.from(event.target.files ?? []));
+                  }}
+                />
+              </Button>
+            </div>
+            <div className="mt-3">
+              <SelectedFileList files={files} onRemove={onFileRemove} />
+              {files.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/30 px-3 py-4 text-center text-sm text-muted-foreground">
+                  아직 선택한 파일이 없습니다.
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="mt-4 rounded-lg border bg-card p-4">
+            <h3 className="text-sm font-semibold text-foreground">이번 작업 추가 조건</h3>
+            <Textarea
+              value={userBrief}
+              onChange={(event) => setUserBrief(event.target.value)}
+              placeholder="예: 4월 행사 기준으로, GS 양식 그대로 맞추고 누락된 가격은 질문해줘."
+              className="mt-3 min-h-24"
+            />
+          </section>
+        </div>
+
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border px-6 py-4">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            취소
+          </Button>
+          <Button
+            type="button"
+            disabled={disabled}
+            onClick={() => onStart(template, userBrief)}
+          >
+            템플릿 실행
+            <ArrowRight className="size-4" />
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1433,12 +1752,21 @@ function ArtifactPreviewPanel({
   );
 }
 
+function chatHasActiveOrchestration(chat: RockyChatRecord): boolean {
+  return chat.dispatches.some((dispatch) => {
+    const status = dispatch.orchestration?.status;
+    return status === "running" || status === "planned";
+  });
+}
+
 export function HomePage() {
   const [chat, setChat] = useState<RockyChatRecord | null>(null);
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [submitInFlight, setSubmitInFlight] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [templateExecutionTemplate, setTemplateExecutionTemplate] =
+    useState<MdTemplateDefinition | null>(null);
   const [previewPanelSource, setPreviewPanelSource] =
     useState<RockyPreviewPanelSource | null>(null);
   const [suppressAutoSelect, setSuppressAutoSelect] = useState(false);
@@ -1450,6 +1778,7 @@ export function HomePage() {
   const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
   const abilitiesQuery = useRockyAbilitiesQuery();
   const abilities = abilitiesQuery.data ?? [];
+  const { userTemplates } = useMdTemplates();
   const rockyChatsQuery = useRockyChatsQuery();
   const rockyChats = rockyChatsQuery.data;
   const previousChats = rockyChats ?? [];
@@ -1604,7 +1933,10 @@ export function HomePage() {
       return;
     }
 
-    setChat(rockyChats[0]);
+    const activeChat = rockyChats.find(chatHasActiveOrchestration);
+    if (activeChat) {
+      setChat(activeChat);
+    }
   }, [chat, rockyChats, suppressAutoSelect]);
 
   useEffect(() => {
@@ -1696,9 +2028,8 @@ export function HomePage() {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messageCount, transcriptRefreshMarker]);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!canSend || submitInFlightRef.current) {
+  const sendRockyInput = async (inputMessage: string, inputFiles: File[]) => {
+    if (submitInFlightRef.current) {
       return;
     }
 
@@ -1706,7 +2037,7 @@ export function HomePage() {
     setSubmitInFlight(true);
     try {
       const attachments = await Promise.all(
-        files.map(async (file) => ({
+        inputFiles.map(async (file) => ({
           name: file.name,
           contentType: file.type || null,
           size: file.size,
@@ -1714,7 +2045,7 @@ export function HomePage() {
         }))
       );
       const input = {
-        message: message.trim(),
+        message: inputMessage.trim(),
         attachments,
       };
       const nextChat = chat
@@ -1728,6 +2059,33 @@ export function HomePage() {
       submitInFlightRef.current = false;
       setSubmitInFlight(false);
     }
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSend) {
+      return;
+    }
+
+    await sendRockyInput(message, files);
+  };
+
+  const startTemplate = async (
+    template: MdTemplateDefinition,
+    userBrief: string
+  ) => {
+    if (pending || hasActiveOrchestration) {
+      return;
+    }
+
+    await sendRockyInput(
+      buildTemplateRunPrompt(template, {
+        selectedFileNames: files.map((file) => file.name),
+        userBrief,
+      }),
+      files
+    );
+    setTemplateExecutionTemplate(null);
   };
 
   const startAbilityGuide = async (ability: RockyAbilityCardRecord) => {
@@ -1774,6 +2132,7 @@ export function HomePage() {
     setChat(null);
     setMessage("");
     setFiles([]);
+    setTemplateExecutionTemplate(null);
     setPreviewPanelSource(null);
   };
 
@@ -1785,6 +2144,7 @@ export function HomePage() {
     setChat(selectedChat);
     setSuppressAutoSelect(false);
     setPreviewPanelSource(null);
+    setTemplateExecutionTemplate(null);
     setMessage("");
     setFiles([]);
     setHistoryDialogOpen(false);
@@ -1808,6 +2168,7 @@ export function HomePage() {
       setSuppressAutoSelect(true);
       setChat(null);
       setPreviewPanelSource(null);
+      setTemplateExecutionTemplate(null);
       setMessage("");
       setFiles([]);
     }
@@ -1834,6 +2195,10 @@ export function HomePage() {
               onSelectAbility={(ability) => {
                 void startAbilityGuide(ability);
               }}
+              onSelectTemplate={(template) => {
+                setTemplateExecutionTemplate(template);
+              }}
+              userTemplates={userTemplates}
             />
           )}
         </main>
@@ -1863,6 +2228,25 @@ export function HomePage() {
           stopPending={cancelRockyChatMutation.isPending}
         />
       </section>
+
+      <TemplateExecutionDialog
+        disabled={pending}
+        files={files}
+        onFileRemove={(file) =>
+          setFiles((current) => current.filter((item) => item !== file))
+        }
+        onFilesChange={setFiles}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTemplateExecutionTemplate(null);
+          }
+        }}
+        onStart={(template, userBrief) => {
+          void startTemplate(template, userBrief);
+        }}
+        open={Boolean(templateExecutionTemplate)}
+        template={templateExecutionTemplate}
+      />
 
       <PreviousChatsDialog
         chats={previousChats}

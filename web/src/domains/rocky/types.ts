@@ -17,5 +17,12 @@ export type {
   RockyOrchestrationStatus,
   RockyRoutingIntent,
   RockySkillCandidateRecord,
+  RockyTemplateCategory,
+  RockyTemplateDraft,
+  RockyTemplateInterviewAgentRecord,
+  RockyTemplateInterviewAnswer,
+  RockyTemplateInterviewStepId,
+  RockyTemplateInterviewTurnInput,
+  RockyTemplateInterviewTurnResult,
   RockyWorkerRecord,
 } from "@/shared/lib/agent-engine-client";

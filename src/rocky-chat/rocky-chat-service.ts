@@ -39,6 +39,11 @@ import {
   type RockyAgentServiceLike,
   type RockySessionServiceLike,
 } from "./rocky-orchestrator-service.js";
+import {
+  buildTemplateInterviewAgentPrompt,
+  buildTemplateInterviewFallbackResult,
+  parseTemplateInterviewAgentResult,
+} from "./rocky-template-interview.js";
 
 import type {
   RockyAttachmentInput,
@@ -56,6 +61,8 @@ import type {
   RockyOrchestrationRecord,
   RockyRoutingIntent,
   RockySkillCandidateRecord,
+  RockyTemplateInterviewTurnInput,
+  RockyTemplateInterviewTurnResult,
   RockyWorkerRecord,
 } from "./rocky-chat-types.js";
 import type {
@@ -299,6 +306,83 @@ export class RockyChatService {
 
     await this.writeChat(chat);
     return chat;
+  }
+
+  async processTemplateInterviewTurn(
+    input: RockyTemplateInterviewTurnInput
+  ): Promise<RockyTemplateInterviewTurnResult> {
+    const fallback = buildTemplateInterviewFallbackResult(input);
+    const timestamp = this.now();
+    const chatId = `rocky-template-interview-${this.idGenerator()}`;
+    const messageId = `message-${this.idGenerator()}`;
+    const prompt = buildTemplateInterviewAgentPrompt(input);
+    const { agent, worker } = await this.ensureCoreWorker({
+      skill: ROCKY_CORE_SKILL,
+      reason: "템플릿 인터뷰 답변을 Rocky Core에서 처리합니다.",
+      timestamp,
+    });
+    const dispatch = this.buildDispatch({
+      chatId,
+      messageId,
+      skill: ROCKY_CORE_SKILL,
+      intent: "conversation",
+      domain: "general",
+      workerId: worker.id,
+      attachments: [],
+      message: prompt,
+      skillCandidates: [],
+      timestamp,
+    });
+    const extraSystemInstructions = await this.buildExtraSystemInstructions({
+      agent,
+      chatId,
+      dispatch,
+      domain: "general",
+      skill: ROCKY_CORE_SKILL,
+      message: prompt,
+      attachments: [],
+      skillCandidates: [],
+      timestamp,
+    });
+    const settings = await this.readCoreSettings();
+    const started = await this.orchestrator.start({
+      chatId,
+      domain: "general",
+      message: prompt,
+      worker,
+      dispatch,
+      attachments: [],
+      skillCandidates: [],
+      skill: ROCKY_CORE_SKILL,
+      protectionHints: dispatch.protectionHints,
+      reuseSessionId: null,
+      defaultRuntimeKind: settings.defaultRuntimeKind,
+      defaultOllamaLaunchTarget: settings.defaultOllamaLaunchTarget,
+      defaultModel: settings.defaultModel,
+      defaultReasoningEffort: settings.defaultReasoningEffort,
+      defaultServiceTier: settings.defaultServiceTier,
+      timestamp,
+      extraSystemInstructions,
+    });
+    const orchestration = await this.orchestrator.refresh(started);
+    const agentResult = parseTemplateInterviewAgentResult({
+      output: orchestration.output,
+      fallback,
+      requestedStepId: input.stepId,
+    });
+    const result = agentResult ?? fallback;
+
+    return {
+      ...result,
+      source: agentResult ? "agent" : "fallback",
+      agent: {
+        status: orchestration.status,
+        sessionId: orchestration.sessionId,
+        runId: orchestration.runId,
+        output: orchestration.output,
+        error: orchestration.error,
+      },
+    };
   }
 
   async createChat(input: RockyChatCreateInput): Promise<RockyChatRecord> {

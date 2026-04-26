@@ -143,6 +143,7 @@ function createRockyChatTestServer(stateRoot: string) {
   const transcriptOverrides = new Map<string, AgentSessionMessage[]>();
   const deletedSessionIds: string[] = [];
   const cancelledRunIds: string[] = [];
+  const completedRunSummaries: string[] = [];
   const createSessionCalls: Array<{
     agentId: string;
     title?: string | null;
@@ -331,6 +332,12 @@ function createRockyChatTestServer(stateRoot: string) {
           sessionId: session.id,
           prompt: input.prompt,
         });
+        const completedSummary = completedRunSummaries.shift();
+        if (completedSummary) {
+          run.status = "completed";
+          run.endedAt = "2026-04-21T00:00:05.000Z";
+          run.summary = completedSummary;
+        }
         runs.push(run);
         return run;
       },
@@ -368,6 +375,7 @@ function createRockyChatTestServer(stateRoot: string) {
     cancelledRunIds,
     createSessionCalls,
     deletedSessionIds,
+    completedRunSummaries,
     runs,
     sendTurnCalls,
     server,
@@ -487,6 +495,93 @@ test("rocky ability guide starts with a Rocky answer, not a user prompt", async 
     );
     assert.equal(chat.dispatches.length, 0);
     assert.equal(chat.executionStarted, false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky template interview turn is dispatched to Rocky Core without early draft", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { runs, sendTurnCalls, server } = createRockyChatTestServer(stateRoot);
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/template-interview/turn",
+      payload: {
+        stepId: "intent",
+        answer: "GS 프로모션 양식에 맞춰 행사 상품 엑셀을 매달 정리하고 싶어",
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    const result = response.json();
+
+    assert.equal(result.nextStepId, "inputs");
+    assert.equal(result.draft, null);
+    assert.equal(result.agent.status, "running");
+    assert.equal(result.agent.runId, "run-1");
+    assert.equal(sendTurnCalls.length, 1);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /Rocky 템플릿 인터뷰 처리/u);
+    assert.match(sendTurnCalls[0]?.prompt ?? "", /GS 프로모션 양식/u);
+    assert.equal(runs.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky template interview final turn can use agent JSON draft", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { completedRunSummaries, server } = createRockyChatTestServer(stateRoot);
+  completedRunSummaries.push(
+    JSON.stringify({
+      summary: "Rocky가 인터뷰 내용을 바탕으로 초안을 만들었습니다.",
+      nextStepId: "review",
+      draft: {
+        category: "document",
+        title: "GS 프로모션 양식 작성",
+        description: "GS 프로모션 양식에 맞춰 행사 상품 엑셀을 정리합니다.",
+        triggerLabel: "프로모션 양식 작성",
+        requiredInputs: ["GS 양식", "행사 상품 엑셀", "행사 기간"],
+        outputFormatLabel: "엑셀",
+        defaultInstructions: "GS 제출 양식을 유지하고 누락값은 먼저 질문합니다.",
+      },
+    })
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/template-interview/turn",
+      payload: {
+        stepId: "rules",
+        answer: "GS 제출 양식을 그대로 유지하고, 누락 가격은 질문해줘.",
+        answers: [
+          {
+            stepId: "intent",
+            answer: "GS 프로모션 양식에 맞춰 행사 상품 엑셀을 정리하고 싶어",
+          },
+          {
+            stepId: "inputs",
+            answer: "GS 양식, 행사 상품 엑셀, 행사 기간",
+          },
+          {
+            stepId: "output",
+            answer: "엑셀",
+          },
+        ],
+      },
+    });
+    assert.equal(response.statusCode, 200);
+    const result = response.json();
+
+    assert.equal(result.source, "agent");
+    assert.equal(result.nextStepId, "review");
+    assert.equal(result.draft.title, "GS 프로모션 양식 작성");
+    assert.deepEqual(result.draft.requiredInputs, [
+      "GS 양식",
+      "행사 상품 엑셀",
+      "행사 기간",
+    ]);
   } finally {
     await server.close();
   }

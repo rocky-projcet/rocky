@@ -769,6 +769,53 @@ export interface RockyChatCreateInput {
   attachments?: RockyAttachmentInput[];
 }
 
+export type RockyTemplateCategory = "document" | "content" | "data";
+
+export type RockyTemplateInterviewStepId =
+  | "intent"
+  | "inputs"
+  | "output"
+  | "rules"
+  | "review";
+
+export interface RockyTemplateDraft {
+  category: RockyTemplateCategory;
+  title: string;
+  description: string;
+  triggerLabel: string;
+  requiredInputs: string[];
+  outputFormatLabel: string;
+  defaultInstructions: string;
+}
+
+export interface RockyTemplateInterviewAnswer {
+  stepId: RockyTemplateInterviewStepId;
+  answer: string;
+}
+
+export interface RockyTemplateInterviewTurnInput {
+  stepId: RockyTemplateInterviewStepId;
+  answer: string;
+  answers?: RockyTemplateInterviewAnswer[];
+  draft?: RockyTemplateDraft | null;
+}
+
+export interface RockyTemplateInterviewAgentRecord {
+  status: RockyOrchestrationStatus;
+  sessionId: string | null;
+  runId: string | null;
+  output: string | null;
+  error: string | null;
+}
+
+export interface RockyTemplateInterviewTurnResult {
+  summary: string;
+  nextStepId: RockyTemplateInterviewStepId;
+  draft: RockyTemplateDraft | null;
+  source: "agent" | "fallback";
+  agent: RockyTemplateInterviewAgentRecord | null;
+}
+
 export interface AgentSessionDeleteOptions {
   stopRunningRuns?: boolean;
 }
@@ -1398,6 +1445,18 @@ export class AgentEngineClient {
       `/rocky/abilities/${encodeURIComponent(abilityId)}/guide`,
       {
         method: "POST",
+      }
+    );
+  }
+
+  processRockyTemplateInterviewTurn(
+    input: RockyTemplateInterviewTurnInput
+  ): Promise<RockyTemplateInterviewTurnResult> {
+    return this.request<RockyTemplateInterviewTurnResult>(
+      "/rocky/template-interview/turn",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       }
     );
   }

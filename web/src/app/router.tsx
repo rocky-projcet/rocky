@@ -12,6 +12,10 @@ import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
 import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
 import { HomePage } from "../domains/rocky/pages/home-page";
+import {
+  TemplateBuilderPage,
+  TemplatesPage,
+} from "../domains/template/pages/templates-page";
 import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
 import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
 
@@ -27,6 +31,18 @@ export const router = createBrowserRouter([
       {
         path: "agents",
         element: <AgentsPage />,
+      },
+      {
+        path: "templates",
+        element: <TemplatesPage />,
+      },
+      {
+        path: "templates/new",
+        element: <TemplateBuilderPage />,
+      },
+      {
+        path: "templates/:templateId/edit",
+        element: <TemplateBuilderPage />,
       },
       {
         path: "agents/archived",

@@ -852,8 +852,10 @@ function findLatestPreviewableArtifact(
   chat: RockyChatRecord,
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>
 ): AgentSessionArtifactManifestEntry | null {
-  let bestArtifact: AgentSessionArtifactManifestEntry | null = null;
-  let bestUpdatedAt = "";
+  let bestOutput: AgentSessionArtifactManifestEntry | null = null;
+  let bestOutputAt = "";
+  let bestInput: AgentSessionArtifactManifestEntry | null = null;
+  let bestInputAt = "";
 
   for (const dispatch of chat.dispatches) {
     const orchestration = dispatch.orchestration;
@@ -865,16 +867,63 @@ function findLatestPreviewableArtifact(
     const messageUpdatedAt = message.createdAt ?? "";
 
     for (const artifact of artifacts) {
-      if (artifact.role !== "output") continue;
       if (!buildArtifactPreviewPanelSource(artifact)) continue;
-      if (messageUpdatedAt >= bestUpdatedAt) {
-        bestArtifact = artifact;
-        bestUpdatedAt = messageUpdatedAt;
+      if (artifact.role === "output") {
+        if (messageUpdatedAt >= bestOutputAt) {
+          bestOutput = artifact;
+          bestOutputAt = messageUpdatedAt;
+        }
+      } else if (artifact.role === "input") {
+        if (messageUpdatedAt >= bestInputAt) {
+          bestInput = artifact;
+          bestInputAt = messageUpdatedAt;
+        }
       }
     }
   }
 
-  return bestArtifact;
+  return bestOutput ?? bestInput;
+}
+
+function buildChatAttachmentPreviewSource(
+  chat: RockyChatRecord
+): RockyPreviewPanelSource | null {
+  const dispatch = chat.dispatches.find(
+    (entry) => entry.orchestration?.agentId,
+  );
+  const agentId = dispatch?.orchestration?.agentId ?? null;
+  if (!agentId) return null;
+
+  const candidates = [...chat.attachments]
+    .filter((attachment) => attachment.workspacePath)
+    .sort((left, right) => right.addedAt.localeCompare(left.addedAt));
+
+  for (const attachment of candidates) {
+    if (!attachment.workspacePath) continue;
+    const synthetic: AgentSessionArtifactManifestEntry = {
+      kind: "file",
+      role: "input",
+      name: attachment.name,
+      workspaceRelativePath: attachment.workspacePath,
+      contentType: attachment.contentType ?? "application/octet-stream",
+      presentation: "file",
+      size: attachment.size,
+      previewable: true,
+      previewUrl: agentEngineClient.agentWorkspaceFilePreviewUrl(
+        agentId,
+        attachment.workspacePath,
+      ),
+      downloadUrl: agentEngineClient.agentWorkspaceFileDownloadUrl(
+        agentId,
+        attachment.workspacePath,
+      ),
+      preferredAction: "preview",
+    };
+    const source = buildArtifactPreviewPanelSource(synthetic);
+    if (source) return source;
+  }
+
+  return null;
 }
 
 function findLatestAssistantMessage(
@@ -2971,9 +3020,9 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     if (templateFilePanelContext) return;
 
     const latest = findLatestPreviewableArtifact(chat, transcriptsBySessionId);
-    if (!latest) return;
-
-    const source = buildArtifactPreviewPanelSource(latest);
+    const source = latest
+      ? buildArtifactPreviewPanelSource(latest)
+      : buildChatAttachmentPreviewSource(chat);
     if (!source) return;
 
     autoPreviewedTaskIdRef.current = chat.id;

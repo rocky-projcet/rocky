@@ -281,7 +281,7 @@ function ArchiveMenuItem({
           <PopoverContent
             side="right"
             align="start"
-            sideOffset={8}
+            sideOffset={-4}
             className="w-56 gap-1 p-1.5"
           >
             <NavLink

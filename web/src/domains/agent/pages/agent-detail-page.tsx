@@ -505,34 +505,34 @@ function SkillPickerDialog({
             장착 가능한 스킬이 없어요. 새 스킬을 만들어 추가해보세요.
           </div>
         ) : (
-          <ul className="custom-scrollbar grid max-h-[28rem] min-h-[28rem] auto-rows-min content-start gap-3 overflow-y-auto sm:grid-cols-2">
+          <ul className="custom-scrollbar grid max-h-[28rem] min-h-[28rem] auto-rows-[7.5rem] content-start gap-3 overflow-y-auto sm:grid-cols-2">
             {available.map((skill) => {
               const theme = skillKindTheme(skill);
               const Icon = theme.Icon;
               return (
-                <li key={skill.id}>
+                <li key={skill.id} className="h-full">
                   <button
                     type="button"
                     onClick={() => {
                       onAttach(skill.id);
                       onOpenChange(false);
                     }}
-                    className="flex w-full items-start gap-3 rounded-xl border border-border/70 bg-background p-4 text-left transition hover:border-foreground/40 hover:bg-muted/40"
+                    className="flex h-full w-full items-start gap-3 overflow-hidden rounded-xl border border-border/70 bg-background p-4 text-left transition hover:border-foreground/40 hover:bg-muted/40"
                   >
-                    <div className={cn("flex size-10 items-center justify-center rounded-xl", theme.icon)}>
+                    <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", theme.icon)}>
                       <Icon className="size-5" />
                     </div>
-                    <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
                       <span
                         className={cn(
-                          "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                          "inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
                           theme.chip,
                         )}
                       >
                         {skill.triggerLabel}
                       </span>
-                      <p className="mt-1 truncate text-sm font-medium text-foreground">{skill.title}</p>
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
+                      <p className="truncate text-sm font-medium text-foreground">{skill.title}</p>
+                      <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
                         {skill.description}
                       </p>
                     </div>

@@ -71,7 +71,7 @@ function SkillSummaryCard({ template }: { template: MdTemplateDefinition }) {
   return (
     <Link
       to={`/skills/${encodeURIComponent(template.id)}`}
-      className="group flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+      className="group flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-2">
         <div className={cn("flex size-10 items-center justify-center rounded-xl", theme.icon)}>

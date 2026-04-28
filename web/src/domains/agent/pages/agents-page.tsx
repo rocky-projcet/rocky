@@ -1,18 +1,15 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 
-import { AgentGridView, AgentViewModeToggle, type ViewMode } from "../components/agent-grid-view";
+import { AgentCard } from "../components/agent-card";
 import { useAgentsQuery } from "../hooks";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Button } from "@/shared/ui/button";
 import { Card } from "@/shared/ui/card";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
-import { Separator } from "@/shared/ui/separator";
 
 export function AgentsPage() {
   const agentsQuery = useAgentsQuery();
-  const [viewMode, setViewMode] = useState<ViewMode>("card");
 
   if (agentsQuery.isLoading) {
     return (
@@ -45,7 +42,9 @@ export function AgentsPage() {
     );
   }
 
-  const agents = filterUserManagedAgents(agentsQuery.data ?? []);
+  const agents = filterUserManagedAgents(agentsQuery.data ?? []).filter(
+    (agent) => agent.lifecycle === "active",
+  );
 
   if (agents.length === 0) {
     return (
@@ -77,12 +76,13 @@ export function AgentsPage() {
         }
       />
 
-      <div className="flex items-center gap-3">
-        <Separator className="flex-1" />
-        <AgentViewModeToggle viewMode={viewMode} onViewModeChange={setViewMode} />
-      </div>
-
-      <AgentGridView agents={agents} viewMode={viewMode} />
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {agents.map((agent) => (
+          <li key={agent.id}>
+            <AgentCard agent={agent} />
+          </li>
+        ))}
+      </ul>
     </PageContainer>
   );
 }

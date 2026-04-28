@@ -23,7 +23,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAgentQuery, useUpdateAgentMutation } from "../hooks";
+import {
+  useAgentQuery,
+  useDeleteAgentMutation,
+  useUpdateAgentMutation,
+} from "../hooks";
 import { useAgentSessionsQuery } from "@/domains/session/hooks";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
@@ -67,6 +71,7 @@ export function AgentDetailPage() {
   const agentQuery = useAgentQuery(agentId);
   const updateMutation = useUpdateAgentMutation(agentId);
   const createChatMutation = useCreateRockyChatMutation();
+  const deleteMutation = useDeleteAgentMutation();
   const { skillIds, attachSkill, detachSkill } = useAgentSkills(agentId);
   const { userTemplates } = useMdTemplates();
   const sessionsQuery = useAgentSessionsQuery(agentId, { includeArchived: true });
@@ -133,13 +138,37 @@ export function AgentDetailPage() {
       {
         onSuccess: () => {
           toast.success(next === "archived" ? "에이전트를 보관했습니다." : "에이전트를 복원했습니다.");
-          if (next === "archived") {
-            navigate("/agents", { replace: true });
-          }
+          navigate(next === "archived" ? "/agents" : `/agents/${encodeURIComponent(agent!.id)}`, {
+            replace: true,
+          });
         },
       },
     );
   }
+
+  function handleDelete() {
+    if (!agent) return;
+    const ok = window.confirm(
+      `"${agent.name}" 에이전트를 영구 삭제할까요? 되돌릴 수 없어요.`,
+    );
+    if (!ok) return;
+    deleteMutation.mutate(
+      { agentId: agent.id, stopRunningSessions: true },
+      {
+        onSuccess: () => {
+          toast.success("에이전트를 삭제했습니다.");
+          navigate("/agents/archived", { replace: true });
+        },
+        onError: (error) => {
+          toast.error("삭제하지 못했습니다.", {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        },
+      },
+    );
+  }
+
+  const archived = agent.lifecycle === "archived";
 
 
   return (
@@ -149,63 +178,101 @@ export function AgentDetailPage() {
           className="-ml-2 self-start"
           variant="ghost"
           size="sm"
-          render={<Link to="/agents" />}
+          render={<Link to={archived ? "/agents/archived" : "/agents"} />}
         >
           <ArrowLeft className="size-4" />
-          내 에이전트
+          {archived ? "내 에이전트 보관함" : "내 에이전트"}
         </Button>
 
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-4">
-            <AgentEmojiPicker
-              emoji={emoji}
-              color={agent.color}
-              onChangeEmoji={setEmoji}
-              onChangeColor={(next) => updateMutation.mutate({ color: next })}
-              trigger={
-                <button
-                  type="button"
-                  aria-label="캐릭터 변경"
-                  className="group cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <AgentAvatar
-                    emoji={emoji}
-                    color={agent.color}
-                    size="xl"
-                    className="[&>span]:transition-transform group-hover:[&>span]:scale-110"
-                  />
-                </button>
-              }
-            />
-            <div className="min-w-0">
-              <EditableTitle
-                value={agent.name}
-                onSave={(next) => updateMutation.mutate({ name: next })}
+            {archived ? (
+              <AgentAvatar
+                emoji={emoji}
+                color={agent.color}
+                size="xl"
+                className="opacity-80"
               />
-              <div className="mt-2 max-w-2xl">
-                <EditableDescription
-                  value={agent.description}
-                  onSave={(next) =>
-                    updateMutation.mutate({ description: next || null })
-                  }
+            ) : (
+              <AgentEmojiPicker
+                emoji={emoji}
+                color={agent.color}
+                onChangeEmoji={setEmoji}
+                onChangeColor={(next) => updateMutation.mutate({ color: next })}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label="캐릭터 변경"
+                    className="group cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <AgentAvatar
+                      emoji={emoji}
+                      color={agent.color}
+                      size="xl"
+                      className="[&>span]:transition-transform group-hover:[&>span]:scale-110"
+                    />
+                  </button>
+                }
+              />
+            )}
+            <div className="min-w-0">
+              {archived ? (
+                <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+                  {agent.name}
+                </h1>
+              ) : (
+                <EditableTitle
+                  value={agent.name}
+                  onSave={(next) => updateMutation.mutate({ name: next })}
                 />
+              )}
+              <div className="mt-2 max-w-2xl">
+                {archived ? (
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    {agent.description || "설명이 없어요."}
+                  </p>
+                ) : (
+                  <EditableDescription
+                    value={agent.description}
+                    onSave={(next) =>
+                      updateMutation.mutate({ description: next || null })
+                    }
+                  />
+                )}
               </div>
+              {archived ? (
+                <span className="mt-3 inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  보관됨
+                </span>
+              ) : null}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={toggleArchive} disabled={updateMutation.isPending}>
-              {agent.lifecycle === "archived" ? (
-                <>
+            {archived ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
+                  className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  aria-label="에이전트 영구 삭제"
+                  title="에이전트 영구 삭제"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+                <Button variant="outline" onClick={toggleArchive} disabled={updateMutation.isPending}>
                   <ArchiveRestore className="size-4" />
                   복원
-                </>
-              ) : (
-                <>
-                  <Archive className="size-4" />
-                  보관
-                </>
-              )}
-            </Button>
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" onClick={toggleArchive} disabled={updateMutation.isPending}>
+                <Archive className="size-4" />
+                보관
+              </Button>
+            )}
           </div>
         </header>
 
@@ -224,11 +291,13 @@ export function AgentDetailPage() {
                   {equippedSkills.length}개
                 </span>
               </h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                아래 채팅창에 자연어로 일을 요청하면 이 에이전트가 알맞은 스킬을 골라 발사해요.
-              </p>
+              {archived ? null : (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  아래 채팅창에 자연어로 일을 요청하면 이 에이전트가 알맞은 스킬을 골라 발사해요.
+                </p>
+              )}
             </div>
-            {availableSkills.length > 0 ? (
+            {!archived && availableSkills.length > 0 ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -240,19 +309,23 @@ export function AgentDetailPage() {
             ) : null}
           </header>
 
-          <SkillPickerDialog
-            open={skillPickerOpen}
-            onOpenChange={setSkillPickerOpen}
-            available={availableSkills}
-            onAttach={(skillId) => {
-              attachSkill(skillId);
-              toast.success("스킬을 장착했습니다.");
-            }}
-          />
+          {archived ? null : (
+            <SkillPickerDialog
+              open={skillPickerOpen}
+              onOpenChange={setSkillPickerOpen}
+              available={availableSkills}
+              onAttach={(skillId) => {
+                attachSkill(skillId);
+                toast.success("스킬을 장착했습니다.");
+              }}
+            />
+          )}
 
           {equippedSkills.length === 0 ? (
             <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
-              아직 장착된 스킬이 없어요. 위에서 스킬을 골라 장착해보세요.
+              {archived
+                ? "장착된 스킬이 없는 채로 보관되었어요."
+                : "아직 장착된 스킬이 없어요. 위에서 스킬을 골라 장착해보세요."}
             </div>
           ) : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -260,6 +333,7 @@ export function AgentDetailPage() {
                 <li key={skill.id}>
                   <EquippedSkillCard
                     skill={skill}
+                    readOnly={archived}
                     onDetach={() => {
                       const ok = window.confirm(
                         `"${skill.title}"을(를) 이 에이전트에서 제거할까요? 스킬 자체는 사라지지 않습니다.`,
@@ -284,30 +358,36 @@ export function AgentDetailPage() {
         </section>
       </div>
 
-      <AgentChatComposer
-        agentId={agent.id}
-        agentName={agent.name}
-        equippedSkills={equippedSkills}
-        creatingChat={createChatMutation.isPending}
-        onSubmit={async ({ message, files, skill }) => {
-          const fileNames = files.map((file) => file.name);
-          const composedMessage = skill
-            ? composeSkillRunPrompt(skill, message, fileNames)
-            : composeFreeFormPrompt(message, fileNames);
-          try {
-            const chat = await createChatMutation.mutateAsync({
-              message: composedMessage,
-            });
-            rememberTaskAgent(chat.id, agent.id);
-            toast.success(`${agent.name}이(가) 작업을 시작했어요.`);
-            navigate(`/tasks/${encodeURIComponent(chat.id)}`);
-          } catch (error) {
-            toast.error("작업을 시작하지 못했습니다.", {
-              description: error instanceof Error ? error.message : undefined,
-            });
-          }
-        }}
-      />
+      {archived ? (
+        <div className="shrink-0 rounded-2xl border border-dashed border-border/70 bg-muted/40 p-4 text-center text-sm text-muted-foreground">
+          보관된 에이전트는 작업을 받을 수 없어요. 다시 사용하려면 위에서 복원해주세요.
+        </div>
+      ) : (
+        <AgentChatComposer
+          agentId={agent.id}
+          agentName={agent.name}
+          equippedSkills={equippedSkills}
+          creatingChat={createChatMutation.isPending}
+          onSubmit={async ({ message, files, skill }) => {
+            const fileNames = files.map((file) => file.name);
+            const composedMessage = skill
+              ? composeSkillRunPrompt(skill, message, fileNames)
+              : composeFreeFormPrompt(message, fileNames);
+            try {
+              const chat = await createChatMutation.mutateAsync({
+                message: composedMessage,
+              });
+              rememberTaskAgent(chat.id, agent.id);
+              toast.success(`${agent.name}이(가) 작업을 시작했어요.`);
+              navigate(`/tasks/${encodeURIComponent(chat.id)}`);
+            } catch (error) {
+              toast.error("작업을 시작하지 못했습니다.", {
+                description: error instanceof Error ? error.message : undefined,
+              });
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -367,9 +447,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 function EquippedSkillCard({
   skill,
   onDetach,
+  readOnly = false,
 }: {
   skill: MdTemplateDefinition;
   onDetach: () => void;
+  readOnly?: boolean;
 }) {
   const theme = skillKindTheme(skill);
   const Icon = theme.Icon;
@@ -404,17 +486,19 @@ function EquippedSkillCard({
         </p>
       </div>
 
-      <div className="mt-3 flex justify-end">
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={onDetach}
-          className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-        >
-          <Trash2 />
-          삭제
-        </Button>
-      </div>
+      {readOnly ? null : (
+        <div className="mt-3 flex justify-end">
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={onDetach}
+            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 />
+            삭제
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

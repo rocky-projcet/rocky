@@ -282,30 +282,30 @@ function ArchiveMenuItem({
             side="right"
             align="start"
             sideOffset={-4}
-            className="w-56 gap-1 p-1.5"
+            className="w-40 gap-0.5 rounded-xl p-1"
           >
             <NavLink
               to="/skills/archived"
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground transition hover:bg-muted",
+                  "flex items-center gap-1.5 rounded px-2 py-1.5 text-xs text-foreground transition hover:bg-muted",
                   isActive && "bg-muted font-medium",
                 )
               }
             >
-              <Sparkles className="size-4 text-muted-foreground" />
+              <Sparkles className="size-3.5 text-muted-foreground" />
               <span>스킬 보관함</span>
             </NavLink>
             <NavLink
               to="/agents/archived"
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground transition hover:bg-muted",
+                  "flex items-center gap-1.5 rounded px-2 py-1.5 text-xs text-foreground transition hover:bg-muted",
                   isActive && "bg-muted font-medium",
                 )
               }
             >
-              <Bot className="size-4 text-muted-foreground" />
+              <Bot className="size-3.5 text-muted-foreground" />
               <span>내 에이전트 보관함</span>
             </NavLink>
           </PopoverContent>

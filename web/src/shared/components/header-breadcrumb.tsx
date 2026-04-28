@@ -1,4 +1,5 @@
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Fragment } from "react";
+import { Link, useLocation, useMatches } from "react-router-dom";
 
 import {
   Breadcrumb,
@@ -10,106 +11,210 @@ import {
 } from "@/shared/ui/breadcrumb";
 import { useAgentQuery } from "@/domains/agent/hooks";
 import { useSessionQuery } from "@/domains/session/hooks";
+import { useRockyChatQuery } from "@/domains/rocky/hooks";
+import { useMdTemplates } from "@/domains/template/hooks";
+import {
+  SKILL_TEMPLATES,
+  type SkillKind,
+} from "@/domains/skill/lib/skill-template-catalog";
 
-function truncate(text: string, max: number) {
+const SKILL_KINDS: SkillKind[] = [
+  "document",
+  "content",
+  "data",
+  "translation",
+  "research",
+  "summary",
+  "message",
+];
+
+function isSkillKind(value: string): value is SkillKind {
+  return (SKILL_KINDS as string[]).includes(value);
+}
+
+function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+interface Crumb {
+  label: string;
+  to?: string;
+}
+
+export function isNestedRoute(pathname: string): boolean {
+  if (/^\/skills\/(?!archived(?:\/|$)).+/.test(pathname)) return true;
+  if (/^\/agents\/(?!archived(?:\/|$)).+/.test(pathname)) return true;
+  if (/^\/tasks\/.+/.test(pathname)) return true;
+  if (/^\/templates\/(?!archived(?:\/|$)).+/.test(pathname)) return true;
+  if (/^\/runs\/.+/.test(pathname)) return true;
+  return false;
+}
+
+interface RouteParams {
+  agentId?: string;
+  sessionId?: string;
+  skillId?: string;
+  taskId?: string;
+  kind?: string;
+  runId?: string;
 }
 
 export function HeaderBreadcrumb() {
   const location = useLocation();
-  const params = useParams<{ agentId?: string; sessionId?: string }>();
+  const matches = useMatches();
+  const params: RouteParams = matches.reduce<RouteParams>((acc, match) => {
+    return { ...acc, ...(match.params as RouteParams) };
+  }, {});
+
   const agentQuery = useAgentQuery(params.agentId);
   const sessionQuery = useSessionQuery(params.sessionId);
-  const agentName = agentQuery.data?.name ?? params.agentId ?? "";
-  const sessionLabel = sessionQuery.data?.title
-    ? truncate(sessionQuery.data.title, 20)
-    : params.sessionId ?? "";
+  const taskQuery = useRockyChatQuery(params.taskId ?? null);
+  const { allTemplates } = useMdTemplates();
 
-  // /agents/:agentId/sessions/:sessionId
-  if (params.agentId && params.sessionId) {
-    const isArchived = agentQuery.data?.lifecycle === "archived";
-    const rootLabel = isArchived ? "보관함" : "에이전트";
-    const rootPath = isArchived ? "/agents/archived" : "/agents";
+  const crumbs = resolveCrumbs({
+    pathname: location.pathname,
+    params,
+    agentName: agentQuery.data?.name,
+    agentLifecycle: agentQuery.data?.lifecycle,
+    sessionTitle: sessionQuery.data?.title ?? undefined,
+    taskTitle: taskQuery.data?.title,
+    skillTitle: params.skillId
+      ? allTemplates.find((entry) => entry.id === params.skillId)?.title
+      : undefined,
+  });
 
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to={rootPath} />}>
-              {rootLabel}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to={`/agents/${params.agentId}`} />}>
-              {agentName}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>작업 요청</BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>{sessionLabel}</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
+  if (!crumbs || crumbs.length === 0) {
+    return null;
   }
-
-  // /agents/:agentId
-  if (params.agentId) {
-    const isArchived = agentQuery.data?.lifecycle === "archived";
-    const rootLabel = isArchived ? "보관함" : "에이전트";
-    const rootPath = isArchived ? "/agents/archived" : "/agents";
-
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink render={<Link to={rootPath} />}>
-              {rootLabel}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>{agentName}</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
-  }
-
-  // 그 외 페이지도 breadcrumb 스타일로 통일
-  const pathname = location.pathname;
-  let title = "Rocky";
-  if (pathname === "/") title = "홈";
-  if (pathname === "/agents/archived") title = "내 에이전트 보관함";
-  else if (pathname === "/skills/archived") title = "스킬 보관함";
-  else if (pathname === "/tasks") title = "작업";
-  else if (pathname.startsWith("/tasks/")) title = "작업 상세";
-  else if (pathname.startsWith("/skills")) title = "스킬";
-  else if (pathname.startsWith("/templates")) title = "스킬 템플릿";
-  else if (pathname.startsWith("/admin/rocky") || pathname.startsWith("/rocky/agent"))
-    title = "Rocky 관리";
-  else if (pathname.startsWith("/runs/")) title = "대화 상세";
-  else if (
-    pathname.startsWith("/admin/settings") ||
-    pathname.startsWith("/settings") ||
-    pathname.startsWith("/account")
-  )
-    title = "설정";
-  else if (pathname.startsWith("/admin")) title = "관리";
-  else if (pathname.startsWith("/agents")) title = "내 에이전트";
 
   return (
     <Breadcrumb>
       <BreadcrumbList>
-        <BreadcrumbItem>
-          <BreadcrumbPage>{title}</BreadcrumbPage>
-        </BreadcrumbItem>
+        {crumbs.map((crumb, index) => {
+          const isLast = index === crumbs.length - 1;
+          return (
+            <Fragment key={`${index}-${crumb.label}`}>
+              <BreadcrumbItem>
+                {!isLast && crumb.to ? (
+                  <BreadcrumbLink render={<Link to={crumb.to} />}>
+                    {crumb.label}
+                  </BreadcrumbLink>
+                ) : (
+                  <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                )}
+              </BreadcrumbItem>
+              {!isLast ? <BreadcrumbSeparator /> : null}
+            </Fragment>
+          );
+        })}
       </BreadcrumbList>
     </Breadcrumb>
   );
+}
+
+function resolveCrumbs(args: {
+  pathname: string;
+  params: RouteParams;
+  agentName?: string;
+  agentLifecycle?: string;
+  sessionTitle?: string;
+  taskTitle?: string;
+  skillTitle?: string;
+}): Crumb[] | null {
+  const { pathname, params } = args;
+
+  // /agents/:agentId/sessions/:sessionId
+  if (params.agentId && params.sessionId) {
+    const archived = args.agentLifecycle === "archived";
+    const rootLabel = archived ? "보관함" : "내 에이전트";
+    const rootPath = archived ? "/agents/archived" : "/agents";
+    const agentLabel = args.agentName ?? params.agentId;
+    const sessionLabel = args.sessionTitle
+      ? truncate(args.sessionTitle, 20)
+      : params.sessionId;
+    return [
+      { label: rootLabel, to: rootPath },
+      { label: agentLabel, to: `/agents/${params.agentId}` },
+      { label: "작업 요청" },
+      { label: sessionLabel },
+    ];
+  }
+
+  // /agents/new
+  if (pathname === "/agents/new") {
+    return [
+      { label: "내 에이전트", to: "/agents" },
+      { label: "새 에이전트" },
+    ];
+  }
+
+  // /agents/:agentId
+  if (params.agentId) {
+    const archived = args.agentLifecycle === "archived";
+    const rootLabel = archived ? "보관함" : "내 에이전트";
+    const rootPath = archived ? "/agents/archived" : "/agents";
+    const agentLabel = args.agentName ?? params.agentId;
+    return [
+      { label: rootLabel, to: rootPath },
+      { label: agentLabel },
+    ];
+  }
+
+  // /skills/new
+  if (pathname === "/skills/new") {
+    return [
+      { label: "스킬", to: "/skills" },
+      { label: "새 스킬" },
+    ];
+  }
+
+  // /skills/:skillId
+  if (params.skillId) {
+    const skillLabel = args.skillTitle
+      ? truncate(args.skillTitle, 30)
+      : params.skillId;
+    return [
+      { label: "스킬", to: "/skills" },
+      { label: skillLabel },
+    ];
+  }
+
+  // /tasks/:taskId
+  if (params.taskId) {
+    const taskLabel = args.taskTitle
+      ? truncate(args.taskTitle, 30)
+      : params.taskId;
+    return [
+      { label: "작업", to: "/tasks" },
+      { label: taskLabel },
+    ];
+  }
+
+  // /templates/new
+  if (pathname === "/templates/new") {
+    return [
+      { label: "스킬 템플릿", to: "/templates" },
+      { label: "새 템플릿" },
+    ];
+  }
+
+  // /templates/:kind
+  if (params.kind) {
+    const kindLabel =
+      isSkillKind(params.kind) ? SKILL_TEMPLATES[params.kind].label : params.kind;
+    return [
+      { label: "스킬 템플릿", to: "/templates" },
+      { label: kindLabel },
+    ];
+  }
+
+  // /runs/:runId
+  if (params.runId) {
+    return [
+      { label: "실행 기록" },
+      { label: truncate(params.runId, 20) },
+    ];
+  }
+
+  return null;
 }

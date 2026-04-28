@@ -1686,30 +1686,24 @@ function SelectedFileList({
 
 function ChatComposer({
   canSend,
-  canClearChat,
   canStop,
-  chatStarted,
   errorMessage,
   files,
   message,
   onFilesChange,
   onFileRemove,
-  onClearChat,
   onStop,
   onMessageChange,
   onSubmit,
   stopPending,
 }: {
   canSend: boolean;
-  canClearChat: boolean;
   canStop: boolean;
-  chatStarted: boolean;
   errorMessage: string | undefined;
   files: File[];
   message: string;
   onFilesChange: (files: File[]) => void;
   onFileRemove: (file: File) => void;
-  onClearChat: () => void;
   onStop: () => void;
   onMessageChange: (message: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -1717,20 +1711,6 @@ function ChatComposer({
 }) {
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
-      <div className="mx-auto mb-2 flex w-full max-w-4xl justify-end gap-2">
-        {chatStarted ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!canClearChat}
-            onClick={onClearChat}
-          >
-            대화 정리
-          </Button>
-        ) : null}
-      </div>
-
       <form
         className="mx-auto w-full max-w-4xl rounded-2xl border bg-card p-2 shadow-sm"
         onSubmit={onSubmit}
@@ -1789,7 +1769,7 @@ function ChatComposer({
             type="submit"
             size="icon"
             disabled={!canSend}
-            aria-label={chatStarted ? "보내기" : "시작하기"}
+            aria-label="보내기"
             className="shrink-0"
           >
             <Send />
@@ -2846,8 +2826,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     Boolean(chat?.id) &&
     hasActiveOrchestration &&
     !cancelRockyChatMutation.isPending;
-  const canClearChat =
-    isTaskDetail && Boolean(chat && messageCount > 0) && !pending && !hasActiveOrchestration;
   const errorMessage =
     createChatMutation.error?.message ??
     sendMessageMutation.error?.message ??
@@ -3056,19 +3034,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   };
 
-  const clearConversation = async () => {
-    if (!chat?.id || !canClearChat) {
-      return;
-    }
-
-    setChat(null);
-    setMessage("");
-    setFiles([]);
-    setTemplateExecutionTemplate(null);
-    setPreviewPanelSource(null);
-    navigate("/");
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background lg:flex-row">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -3113,9 +3078,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
 
         <ChatComposer
           canSend={canSend}
-          canClearChat={canClearChat}
           canStop={canStop}
-          chatStarted={isTaskDetail && Boolean(chat)}
           errorMessage={errorMessage}
           files={files}
           message={message}
@@ -3123,9 +3086,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
           onFileRemove={(file) =>
             setFiles((current) => current.filter((item) => item !== file))
           }
-          onClearChat={() => {
-            void clearConversation();
-          }}
           onStop={() => {
             void stopActiveResponse();
           }}

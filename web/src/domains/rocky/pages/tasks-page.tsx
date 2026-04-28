@@ -474,17 +474,10 @@ function TaskCard({
 
 function NewTaskForAgentRow({ agent }: { agent: AgentRecord }) {
   const { emoji } = useAgentEmoji(agent.id);
-  const tinted = agent.color
-    ? {
-        borderColor: `color-mix(in srgb, ${agent.color} 32%, var(--border))`,
-        backgroundColor: `color-mix(in srgb, ${agent.color} 7%, var(--card))`,
-      }
-    : undefined;
   return (
     <Link
       to={`/agents/${encodeURIComponent(agent.id)}`}
-      style={tinted}
-      className="flex items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="group flex items-center gap-3 rounded-2xl border-2 border-dashed border-border/70 bg-muted/30 px-4 py-3 no-underline transition hover:border-primary/50 hover:bg-muted/60"
     >
       <AgentAvatar emoji={emoji} color={agent.color} size="md" />
       <div className="min-w-0 flex-1">
@@ -495,7 +488,7 @@ function NewTaskForAgentRow({ agent }: { agent: AgentRecord }) {
           {agent.name}에게 새로운 작업 부탁하기
         </div>
       </div>
-      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+      <ArrowRight className="size-4 shrink-0 text-muted-foreground transition group-hover:text-primary" />
     </Link>
   );
 }

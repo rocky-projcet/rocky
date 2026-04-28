@@ -63,7 +63,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { useAgentSkills } from "../lib/agent-skill-store";
 import { useAgentEmoji } from "../lib/agent-avatar-store";
-import { rememberTaskAgent } from "../lib/task-agent-store";
+import { readAllTaskAgentMap, rememberTaskAgent } from "../lib/task-agent-store";
 import { AgentAvatar } from "../components/agent-avatar";
 import { AgentEmojiPicker } from "../components/agent-emoji-picker";
 
@@ -348,7 +348,7 @@ export function AgentDetailPage() {
             <ListTodo className="size-4 text-muted-foreground" />
             이 에이전트가 한 작업
           </h2>
-          <AgentTaskList />
+          <AgentTaskList agentId={agent.id} />
         </section>
       </div>
 
@@ -600,9 +600,10 @@ function SkillPickerDialog({
   );
 }
 
-function AgentTaskList() {
+function AgentTaskList({ agentId }: { agentId: string }) {
   const chatsQuery = useRockyChatsQuery();
   const chats = chatsQuery.data ?? [];
+  const taskAgentMap = useMemo(() => readAllTaskAgentMap(), [chats]);
 
   if (chatsQuery.isLoading) {
     return (
@@ -613,6 +614,7 @@ function AgentTaskList() {
   }
 
   const items = chats
+    .filter((chat) => taskAgentMap[chat.id] === agentId)
     .map((chat) => ({
       id: chat.id,
       title: chat.title || getRockyTaskRequest(chat) || "제목 없음",

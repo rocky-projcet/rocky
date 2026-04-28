@@ -14,7 +14,15 @@ import {
 import { SKILL_KIND_THEME } from "../lib/skill-kind-theme";
 
 function isSkillKind(value: string | undefined): value is SkillKind {
-  return value === "document" || value === "content" || value === "data" || value === "translation";
+  return (
+    value === "document" ||
+    value === "content" ||
+    value === "data" ||
+    value === "translation" ||
+    value === "research" ||
+    value === "summary" ||
+    value === "message"
+  );
 }
 
 function fieldKindDescription(field: SkillField): string {

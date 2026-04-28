@@ -2,7 +2,10 @@ import {
   BarChart3,
   FileText,
   Languages,
+  Mail,
+  NotebookPen,
   PenLine,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 
@@ -56,6 +59,30 @@ export const SKILL_KIND_THEME: Record<SkillKind, SkillKindTheme> = {
     accent: "bg-violet-500",
     Icon: Languages,
   },
+  research: {
+    icon: "bg-indigo-100 text-indigo-600",
+    iconText: "text-indigo-600",
+    chip: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    hoverRing: "hover:border-indigo-300 hover:bg-indigo-50/30",
+    accent: "bg-indigo-500",
+    Icon: Search,
+  },
+  summary: {
+    icon: "bg-amber-100 text-amber-700",
+    iconText: "text-amber-700",
+    chip: "bg-amber-50 text-amber-800 border-amber-200",
+    hoverRing: "hover:border-amber-300 hover:bg-amber-50/30",
+    accent: "bg-amber-500",
+    Icon: NotebookPen,
+  },
+  message: {
+    icon: "bg-teal-100 text-teal-700",
+    iconText: "text-teal-700",
+    chip: "bg-teal-50 text-teal-800 border-teal-200",
+    hoverRing: "hover:border-teal-300 hover:bg-teal-50/30",
+    accent: "bg-teal-500",
+    Icon: Mail,
+  },
 };
 
 /**
@@ -68,6 +95,9 @@ export function inferSkillKind(template: Pick<MdTemplateDefinition, "triggerLabe
   if (trigger === "콘텐츠 제작") return "content";
   if (trigger === "데이터 분석") return "data";
   if (trigger === "문서 자동화") return "document";
+  if (trigger === "리서치") return "research";
+  if (trigger === "요약 정리") return "summary";
+  if (trigger === "메시지·이메일 작성") return "message";
 
   if (template.category === "content") return "content";
   if (template.category === "data") return "data";

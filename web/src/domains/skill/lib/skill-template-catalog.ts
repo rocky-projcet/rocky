@@ -1,6 +1,13 @@
 import type { MdTemplateCategory } from "@/domains/template/types";
 
-export type SkillKind = "document" | "content" | "data" | "translation";
+export type SkillKind =
+  | "document"
+  | "content"
+  | "data"
+  | "translation"
+  | "research"
+  | "summary"
+  | "message";
 
 export type SkillFieldKind =
   | "single-select"
@@ -541,11 +548,413 @@ const TRANSLATION_TEMPLATE: SkillTemplate = {
   ],
 };
 
+const RESEARCH_TEMPLATE: SkillTemplate = {
+  kind: "research",
+  label: "리서치 스킬",
+  description: "시장·경쟁사·트렌드·문헌 등을 조사하고 핵심을 정리해요.",
+  fallbackCategory: "document",
+  steps: [
+    {
+      id: "research-subject",
+      title: "무엇을 리서치할까요?",
+      helper: "가장 가까운 항목을 골라주세요. 없으면 직접 입력할 수 있어요.",
+      fields: [
+        {
+          id: "researchSubject",
+          kind: "single-select",
+          label: "조사 주제",
+          allowCustom: true,
+          options: [
+            { id: "market-competitor", label: "시장·경쟁사 동향" },
+            { id: "product-tech", label: "제품·기술 정보" },
+            { id: "policy-regulation", label: "정책·법령·규제" },
+            { id: "trend-consumer", label: "트렌드·소비자 인사이트" },
+            { id: "company-people", label: "인물·기업 프로필" },
+            { id: "academic", label: "학술 문헌·논문" },
+            { id: "industry-case", label: "업계 사례·벤치마크" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "research-sources",
+      title: "어디에서 찾아볼까요?",
+      helper: "여러 채널을 골라도 좋아요.",
+      fields: [
+        {
+          id: "sourceChannels",
+          kind: "multi-select",
+          label: "참고 채널",
+          allowCustom: true,
+          options: [
+            { id: "web-search", label: "웹 일반 검색" },
+            { id: "news", label: "뉴스 기사" },
+            { id: "public-stats", label: "공공 보고서·통계" },
+            { id: "academic-source", label: "학술 논문·DB" },
+            { id: "industry-media", label: "산업 협회·전문 매체" },
+            { id: "company-disclosure", label: "기업 공시·IR" },
+            { id: "attached-only", label: "첨부한 자료만 사용" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "research-reference",
+      title: "참고할 자료를 먼저 올려주세요",
+      helper: "내부 문서나 좋은 레퍼런스 URL이 있으면 첨부해주세요. 없으면 건너뛰어도 됩니다.",
+      skippable: true,
+      fields: [
+        {
+          id: "referenceMaterial",
+          kind: "url-or-file",
+          label: "참고 자료",
+          optional: true,
+        },
+      ],
+    },
+    {
+      id: "research-output",
+      title: "결과물 형식",
+      fields: [
+        {
+          id: "outputFormats",
+          kind: "multi-select",
+          label: "파일 형식",
+          options: [
+            { id: "summary-md", label: "핵심 요약 (5~7줄)" },
+            { id: "report-md", label: "상세 보고서 (Markdown)" },
+            { id: "compare-xlsx", label: "비교표 (Excel)" },
+            { id: "pdf", label: "PDF 보고서" },
+            { id: "ppt", label: "슬라이드 (PPT)" },
+            { id: "citations", label: "인용·출처 목록" },
+            {
+              id: "all",
+              label: "모두 (시간이 더 걸려요)",
+              description: "여러 형식을 동시에 만들면 처리가 길어질 수 있어요.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "research-rules",
+      title: "지키거나 피할 규칙이 있나요?",
+      skippable: true,
+      fields: [
+        {
+          id: "rules",
+          kind: "multi-select",
+          label: "제약",
+          allowCustom: true,
+          options: [
+            { id: "no-speculation", label: "출처 없는 추측은 적지 않기" },
+            { id: "korea-only", label: "한국 시장 한정" },
+            { id: "recent-1y", label: "1년 이내 자료만 사용" },
+            { id: "ko-only", label: "한국어 자료 위주" },
+            { id: "no-competitor-bash", label: "경쟁사 비방 표현 금지" },
+            { id: "redact-personal", label: "개인정보 마스킹" },
+            { id: "include-citations", label: "주장마다 출처 표기" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const SUMMARY_TEMPLATE: SkillTemplate = {
+  kind: "summary",
+  label: "요약 정리 스킬",
+  description: "회의 녹음·긴 문서·기사·강의 등을 짧게 정리해요.",
+  fallbackCategory: "document",
+  steps: [
+    {
+      id: "summary-source",
+      title: "무엇을 정리할까요?",
+      helper: "원본의 종류를 골라주세요.",
+      fields: [
+        {
+          id: "sourceKind",
+          kind: "single-select-with-detail",
+          label: "원본 종류",
+          allowCustom: true,
+          options: [
+            {
+              id: "meeting",
+              label: "회의·대화",
+              detailLabel: "어떤 회의인가요?",
+              detailOptions: [
+                { id: "regular", label: "정기 회의" },
+                { id: "sales", label: "영업 미팅" },
+                { id: "interview", label: "고객·사용자 인터뷰" },
+                { id: "workshop", label: "워크샵·브레인스토밍" },
+                { id: "one-on-one", label: "1:1 미팅" },
+                { id: "hiring", label: "면접" },
+              ],
+            },
+            { id: "long-doc", label: "긴 문서·보고서" },
+            { id: "article", label: "기사·블로그 글" },
+            { id: "video", label: "동영상·강의" },
+            { id: "chat-log", label: "채팅·메시지 로그" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "summary-files",
+      title: "원본을 올려주세요",
+      helper: "녹음(.m4a/.wav/.mp4), 텍스트, 문서 모두 가능해요.",
+      fields: [
+        {
+          id: "sourceFiles",
+          kind: "file-with-role",
+          label: "원본 파일",
+          helper: "예: 2025-12-회의록.m4a → 회의 녹음 / report.pdf → 분기 보고서",
+        },
+      ],
+    },
+    {
+      id: "summary-output",
+      title: "결과물 형식",
+      helper: "여러 개 골라도 돼요.",
+      fields: [
+        {
+          id: "outputFormats",
+          kind: "multi-select",
+          label: "정리 형식",
+          options: [
+            { id: "one-line", label: "한 줄 요약" },
+            { id: "bullets-5", label: "핵심 요점 5개" },
+            { id: "section-detail", label: "섹션별 상세 정리" },
+            { id: "action-items", label: "액션 아이템·다음 단계" },
+            { id: "speakers", label: "참석자별 발언·의견" },
+            { id: "qa", label: "Q&A 정리" },
+            { id: "decisions", label: "결정·합의 사항" },
+            {
+              id: "all",
+              label: "모두 (시간이 더 걸려요)",
+              description: "여러 정리를 동시에 만들면 처리가 길어질 수 있어요.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "summary-tone",
+      title: "톤과 길이",
+      fields: [
+        {
+          id: "tone",
+          kind: "single-select",
+          label: "말투",
+          options: [
+            { id: "formal", label: "격식체·보고용" },
+            { id: "neutral", label: "보통 (중립적)" },
+            { id: "casual", label: "친근·일상체" },
+          ],
+        },
+        {
+          id: "length",
+          kind: "single-select",
+          label: "길이",
+          options: [
+            { id: "tight", label: "짧고 핵심만" },
+            { id: "balanced", label: "보통 (3~5문단)" },
+            { id: "thorough", label: "상세 (전체 흐름 보존)" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "summary-rules",
+      title: "지키거나 피할 규칙이 있나요?",
+      skippable: true,
+      fields: [
+        {
+          id: "rules",
+          kind: "multi-select",
+          label: "제약",
+          allowCustom: true,
+          options: [
+            { id: "anonymize", label: "이름은 모두 익명화" },
+            { id: "title-only", label: "직책만 표기 (이름 제거)" },
+            { id: "exclude-pricing", label: "가격·인사 등 민감 정보 제외" },
+            { id: "external-share", label: "외부 공유용 (간결·전문적)" },
+            { id: "internal", label: "내부용 (구체·솔직)" },
+            { id: "no-interpretation", label: "추측·해석 추가하지 않기" },
+            { id: "preserve-quotes", label: "원문 인용은 그대로 유지" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const MESSAGE_TEMPLATE: SkillTemplate = {
+  kind: "message",
+  label: "메시지·이메일 스킬",
+  description: "이메일·메신저·문자를 상황과 톤에 맞게 작성해요.",
+  fallbackCategory: "content",
+  steps: [
+    {
+      id: "message-channel",
+      title: "어떤 메시지를 작성할까요?",
+      helper: "보낼 채널과 종류를 골라주세요.",
+      fields: [
+        {
+          id: "channel",
+          kind: "single-select-with-detail",
+          label: "메시지 종류",
+          allowCustom: true,
+          options: [
+            {
+              id: "email",
+              label: "이메일",
+              detailLabel: "어떤 이메일인가요?",
+              detailOptions: [
+                { id: "outbound", label: "외부 영업·아웃리치" },
+                { id: "inbound-reply", label: "문의 회신" },
+                { id: "internal-notice", label: "사내 공지" },
+                { id: "follow-up", label: "회의·미팅 후속" },
+                { id: "thank-you", label: "감사·인사" },
+              ],
+            },
+            { id: "kakao", label: "카카오톡·메신저" },
+            { id: "slack", label: "슬랙·팀 메시지" },
+            { id: "sms", label: "문자 (SMS/MMS)" },
+            { id: "letter", label: "공식 서신·공문" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "message-recipient",
+      title: "누구에게 보내나요?",
+      fields: [
+        {
+          id: "recipient",
+          kind: "single-select",
+          label: "받는 사람",
+          allowCustom: true,
+          options: [
+            { id: "cold", label: "처음 연락하는 사람·콜드 아웃리치" },
+            { id: "existing-customer", label: "기존 고객·거래처" },
+            { id: "team", label: "사내 팀원" },
+            { id: "executive", label: "임원·결정권자" },
+            { id: "partner", label: "파트너사·외부 협력" },
+            { id: "vendor", label: "벤더·공급사" },
+            { id: "candidate", label: "구직자·면접 대상" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "message-purpose",
+      title: "어떤 목적인가요?",
+      helper: "여러 개 골라도 좋아요.",
+      fields: [
+        {
+          id: "purpose",
+          kind: "multi-select",
+          label: "목적",
+          allowCustom: true,
+          options: [
+            { id: "request-meeting", label: "미팅 요청" },
+            { id: "pitch", label: "제안·세일즈" },
+            { id: "follow-up", label: "회의·미팅 후속" },
+            { id: "announce", label: "안내·공지" },
+            { id: "reply-inquiry", label: "문의 회신" },
+            { id: "apology", label: "사과·이슈 대응" },
+            { id: "thanks", label: "감사·인사" },
+            { id: "remind", label: "리마인드·재요청" },
+            { id: "negotiate", label: "협의·조율" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "message-reference",
+      title: "참고할 자료가 있나요?",
+      helper: "이전에 보낸 좋은 메일이나 가이드 문서를 올려주시면 톤을 맞춰드려요.",
+      skippable: true,
+      fields: [
+        {
+          id: "reference",
+          kind: "url-or-file",
+          label: "참고 자료",
+          optional: true,
+        },
+        {
+          id: "attachments",
+          kind: "file-with-role",
+          label: "메시지에 첨부할 파일",
+          helper: "예: 제안서.pdf → 본문에서 안내, 가격표.xlsx → 별첨",
+          optional: true,
+        },
+      ],
+    },
+    {
+      id: "message-tone",
+      title: "말투와 길이",
+      fields: [
+        {
+          id: "tone",
+          kind: "single-select",
+          label: "말투",
+          options: [
+            { id: "formal", label: "격식체·비즈니스" },
+            { id: "polite", label: "공손한 경어" },
+            { id: "friendly", label: "친근한 일상체" },
+            { id: "firm", label: "단호하고 명확" },
+            { id: "persuasive", label: "설득적·세일즈" },
+          ],
+        },
+        {
+          id: "length",
+          kind: "single-select",
+          label: "길이",
+          options: [
+            { id: "short", label: "짧게 (3~5줄)" },
+            { id: "medium", label: "보통 (1~2문단)" },
+            { id: "long", label: "길게 (3문단 이상·자세히)" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "message-rules",
+      title: "지키거나 피할 규칙이 있나요?",
+      skippable: true,
+      fields: [
+        {
+          id: "rules",
+          kind: "multi-select",
+          label: "제약",
+          allowCustom: true,
+          options: [
+            { id: "no-price-commit", label: "가격·할인 직접 약속 금지" },
+            { id: "no-promise", label: "확약·일정 단정 금지" },
+            { id: "include-cta", label: "행동 유도(CTA) 한 줄 포함" },
+            { id: "include-deadline", label: "회신 일정·마감 명시" },
+            { id: "preserve-name", label: "이름·직책 정확히 표기" },
+            { id: "include-attachment-note", label: "첨부 파일 안내 문구 포함" },
+            { id: "no-emoji", label: "이모지 사용하지 않기" },
+            { id: "no-other-brand", label: "타 브랜드 언급 금지" },
+            { id: "include-signature", label: "서명·연락처 포함" },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 export const SKILL_TEMPLATES: Record<SkillKind, SkillTemplate> = {
   document: DOCUMENT_TEMPLATE,
   content: CONTENT_TEMPLATE,
   data: DATA_TEMPLATE,
   translation: TRANSLATION_TEMPLATE,
+  research: RESEARCH_TEMPLATE,
+  summary: SUMMARY_TEMPLATE,
+  message: MESSAGE_TEMPLATE,
 };
 
 export const SKILL_TEMPLATE_LIST: SkillTemplate[] = [
@@ -553,6 +962,9 @@ export const SKILL_TEMPLATE_LIST: SkillTemplate[] = [
   CONTENT_TEMPLATE,
   DATA_TEMPLATE,
   TRANSLATION_TEMPLATE,
+  RESEARCH_TEMPLATE,
+  SUMMARY_TEMPLATE,
+  MESSAGE_TEMPLATE,
 ];
 
 export const LANGUAGE_OPTIONS: SkillFieldOption[] = [

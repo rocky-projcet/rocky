@@ -22,7 +22,15 @@ import {
 } from "../lib/skill-template-catalog";
 
 function parseKind(value: string | null): SkillKind | null {
-  if (value === "document" || value === "content" || value === "data" || value === "translation") {
+  if (
+    value === "document" ||
+    value === "content" ||
+    value === "data" ||
+    value === "translation" ||
+    value === "research" ||
+    value === "summary" ||
+    value === "message"
+  ) {
     return value;
   }
   return null;
@@ -304,6 +312,18 @@ function pickTitle(template: SkillTemplate, answers: SkillWizardAnswers): string
     const pair = answers["languagePair"];
     return `${describeAnswer(template, "languagePair", pair)} 번역`;
   }
+  if (template.kind === "research") {
+    const subject = answers["researchSubject"];
+    return `${describeAnswer(template, "researchSubject", subject)} 리서치`;
+  }
+  if (template.kind === "summary") {
+    const sourceKind = answers["sourceKind"];
+    return `${describeAnswer(template, "sourceKind", sourceKind)} 요약`;
+  }
+  if (template.kind === "message") {
+    const channel = answers["channel"];
+    return `${describeAnswer(template, "channel", channel)} 작성`;
+  }
   return "새 스킬";
 }
 
@@ -317,6 +337,12 @@ function pickTriggerLabel(template: SkillTemplate): string {
       return "데이터 분석";
     case "translation":
       return "번역";
+    case "research":
+      return "리서치";
+    case "summary":
+      return "요약 정리";
+    case "message":
+      return "메시지·이메일 작성";
   }
 }
 

@@ -736,12 +736,12 @@ function AgentChatComposer({
       {pinnedSkill ? (
         <div className="mb-2 flex items-center gap-2 rounded-xl bg-muted/40 px-3 py-1.5 text-xs text-foreground">
           <Sparkles className="size-3.5 text-muted-foreground" />
-          <span className="font-medium">필살기:</span>
+          <span className="font-medium">스킬:</span>
           <span className="truncate">{pinnedSkill.title}</span>
           <button
             type="button"
             onClick={() => setPinnedSkillId(null)}
-            aria-label="필살기 해제"
+            aria-label="스킬 고정 해제"
             className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <X className="size-3.5" />
@@ -823,7 +823,7 @@ function AgentChatComposer({
 }
 
 const AUTO_VALUE = "__auto__";
-const AUTO_LABEL = "필살기 자동 선택";
+const AUTO_LABEL = "스킬 자동 선택";
 
 function SkillPinSelect({
   options,
@@ -844,7 +844,7 @@ function SkillPinSelect({
     >
       <SelectTrigger
         size="sm"
-        aria-label="필살기로 사용할 스킬 고정"
+        aria-label="이 작업에 사용할 스킬 고정"
         className="min-w-[10rem]"
       >
         <SelectValue>{displayLabel}</SelectValue>

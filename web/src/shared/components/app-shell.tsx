@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Home,
   LayoutTemplate,
+  ListTodo,
   Search,
   Sparkles,
 } from "lucide-react";
@@ -64,6 +65,10 @@ function isSearchRoute(pathname: string): boolean {
   return pathname.startsWith("/search");
 }
 
+function isTasksListRoute(pathname: string): boolean {
+  return pathname === "/tasks" || pathname.startsWith("/tasks?");
+}
+
 function isSkillsRoute(pathname: string): boolean {
   return pathname === "/skills" || pathname.startsWith("/skills/");
 }
@@ -99,6 +104,7 @@ function AppShellInner() {
   const searchRoute = isSearchRoute(location.pathname);
   const skillsRoute = isSkillsRoute(location.pathname);
   const agentsRoute = isAgentsRoute(location.pathname);
+  const tasksListRoute = isTasksListRoute(location.pathname);
   const archiveRoute = isArchiveRoute(location.pathname);
   const [archiveOpen, setArchiveOpen] = useState(() => archiveRoute);
 
@@ -157,6 +163,16 @@ function AppShellInner() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
+                    tooltip="작업"
+                    isActive={tasksListRoute}
+                    render={<NavLink to="/tasks" />}
+                  >
+                    <ListTodo />
+                    <span>작업</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     tooltip="스킬"
                     isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
                     render={<NavLink to="/skills" />}
@@ -167,22 +183,22 @@ function AppShellInner() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    tooltip="스킬 템플릿"
-                    isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}
-                    render={<NavLink to="/templates" />}
-                  >
-                    <LayoutTemplate />
-                    <span>스킬 템플릿</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
                     tooltip="내 에이전트"
                     isActive={agentsRoute}
                     render={<NavLink to="/agents" />}
                   >
                     <Bot />
                     <span>내 에이전트</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="스킬 템플릿"
+                    isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}
+                    render={<NavLink to="/templates" />}
+                  >
+                    <LayoutTemplate />
+                    <span>스킬 템플릿</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>

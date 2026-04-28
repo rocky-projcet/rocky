@@ -7,6 +7,7 @@ import { Card } from "@/shared/ui/card";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
+import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { PageState } from "@/shared/components/page-state";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -781,16 +782,11 @@ export function AccountPage() {
   const [activeTab, setActiveTab] = useState("providers");
 
   return (
-    <section className="space-y-6">
-      <Card className="gap-0 bg-foreground p-6 text-primary-foreground">
-        <p className="text-label-md uppercase text-primary-foreground/60">설정</p>
-        <h3 className="mt-4 font-heading text-display-sm font-semibold">
-          서비스 연결과 로컬 실행 환경
-        </h3>
-        <p className="mt-4 max-w-3xl text-body-lg leading-7 text-primary-foreground/80">
-          AI 서비스 연결 상태와 로컬 AI 실행에 영향을 주는 하드웨어 상태를 한곳에서 확인합니다.
-        </p>
-      </Card>
+    <PageContainer>
+      <PageHeader
+        title="설정"
+        description="AI 서비스 연결 상태와 로컬 AI 실행에 영향을 주는 하드웨어 상태를 한곳에서 확인합니다."
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -811,6 +807,6 @@ export function AccountPage() {
           <HardwareStatusPanel enabled={activeTab === "hardware"} />
         </TabsContent>
       </Tabs>
-    </section>
+    </PageContainer>
   );
 }

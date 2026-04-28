@@ -1,19 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
+  Archive,
+  Bot,
   ChevronDown,
   Home,
   LayoutTemplate,
-  ListTodo,
   Search,
-  SlidersHorizontal,
+  Sparkles,
 } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
-import { NavAgents } from "@/domains/agent/components/nav-agents";
-import { CodexUsageBars } from "@/domains/codex/components/codex-usage-bars";
-import { CodexSettingsMenu } from "@/domains/codex/components/codex-settings-menu";
-import { Separator } from "@/shared/ui/separator";
+import { SidebarIdentity } from "@/domains/codex/components/sidebar-identity";
 import { SidebarLogo } from "./sidebar-logo";
 import { SiteHeader } from "./site-header";
 import {
@@ -27,7 +25,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarProvider,
+  useSidebar,
 } from "@/shared/ui/sidebar";
 
 function isCompactRoute(pathname: string): boolean {
@@ -44,7 +45,6 @@ function isTaskDetailRoute(pathname: string): boolean {
 
 function usesBoundedCanvas(pathname: string): boolean {
   return (
-    pathname === "/" ||
     pathname === "/agents" ||
     isTaskDetailRoute(pathname) ||
     isAgentDetailRoute(pathname) ||
@@ -57,48 +57,80 @@ function isRockyHomeRoute(pathname: string): boolean {
 }
 
 function isTemplatesRoute(pathname: string): boolean {
-  return pathname.startsWith("/templates");
+  return pathname === "/templates" || pathname.startsWith("/templates/");
 }
 
 function isSearchRoute(pathname: string): boolean {
   return pathname.startsWith("/search");
 }
 
-function isTasksRoute(pathname: string): boolean {
-  return pathname.startsWith("/tasks");
+function isSkillsRoute(pathname: string): boolean {
+  return pathname === "/skills" || pathname.startsWith("/skills/");
 }
 
-function isAdvancedManagementRoute(pathname: string): boolean {
+function isAgentsRoute(pathname: string): boolean {
   return (
-    pathname.startsWith("/agents") ||
-    pathname.startsWith("/runs") ||
-    pathname.startsWith("/rocky/agent")
+    (pathname === "/agents" || pathname.startsWith("/agents/")) &&
+    pathname !== "/agents/archived" &&
+    !pathname.startsWith("/agents/archived/")
+  );
+}
+
+function isArchiveRoute(pathname: string): boolean {
+  return (
+    pathname === "/agents/archived" ||
+    pathname === "/skills/archived" ||
+    pathname === "/templates/archived"
   );
 }
 
 export function AppShell() {
+  return (
+    <SidebarProvider className="h-svh max-h-svh">
+      <AppShellInner />
+    </SidebarProvider>
+  );
+}
+
+function AppShellInner() {
   const location = useLocation();
+  const { toggleSidebar } = useSidebar();
   const boundedCanvas = usesBoundedCanvas(location.pathname);
   const compactRoute = isCompactRoute(location.pathname);
   const taskDetailRoute = isTaskDetailRoute(location.pathname);
   const rockyHomeRoute = isRockyHomeRoute(location.pathname);
   const templatesRoute = isTemplatesRoute(location.pathname);
   const searchRoute = isSearchRoute(location.pathname);
-  const tasksRoute = isTasksRoute(location.pathname);
-  const advancedManagementRoute = isAdvancedManagementRoute(location.pathname);
-  const [advancedManagementOpen, setAdvancedManagementOpen] = useState(
-    () => advancedManagementRoute,
-  );
+  const skillsRoute = isSkillsRoute(location.pathname);
+  const agentsRoute = isAgentsRoute(location.pathname);
+  const archiveRoute = isArchiveRoute(location.pathname);
+  const [archiveOpen, setArchiveOpen] = useState(() => archiveRoute);
 
   useEffect(() => {
-    if (advancedManagementRoute) {
-      setAdvancedManagementOpen(true);
+    if (archiveRoute) {
+      setArchiveOpen(true);
     }
-  }, [advancedManagementRoute]);
+  }, [archiveRoute]);
+
+  function handleSidebarBackgroundClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (
+      target.closest(
+        'button, a, input, textarea, select, [role="button"], [role="link"], [data-slot="sidebar-menu-button"], [data-slot="sidebar-menu-sub-button"]',
+      )
+    ) {
+      return;
+    }
+    toggleSidebar();
+  }
 
   return (
-    <SidebarProvider>
-      <Sidebar collapsible="icon">
+    <>
+      <Sidebar
+        collapsible="icon"
+        className="cursor-col-resize [&_a]:cursor-pointer [&_button]:cursor-pointer [&_input]:cursor-text"
+        onClick={handleSidebarBackgroundClick}
+      >
         <SidebarHeader className="px-3 py-4">
           <SidebarLogo />
         </SidebarHeader>
@@ -107,16 +139,6 @@ export function AppShell() {
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="검색"
-                    isActive={searchRoute}
-                    render={<NavLink to="/search" />}
-                  >
-                    <Search />
-                    <span>검색</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     tooltip="홈"
@@ -129,45 +151,91 @@ export function AppShell() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    tooltip="작업"
-                    isActive={tasksRoute}
-                    render={<NavLink to="/tasks" />}
+                    tooltip="검색"
+                    isActive={searchRoute}
+                    render={<NavLink to="/search" />}
                   >
-                    <ListTodo />
-                    <span>작업</span>
+                    <Search />
+                    <span>검색</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    tooltip="템플릿"
-                    isActive={templatesRoute}
+                    tooltip="스킬"
+                    isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
+                    render={<NavLink to="/skills" />}
+                  >
+                    <Sparkles />
+                    <span>스킬</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="스킬 템플릿"
+                    isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}
                     render={<NavLink to="/templates" />}
                   >
                     <LayoutTemplate />
-                    <span>템플릿</span>
+                    <span>스킬 템플릿</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    tooltip="고급 관리"
-                    isActive={advancedManagementRoute}
-                    type="button"
-                    aria-controls="advanced-management-subtree"
-                    aria-expanded={advancedManagementOpen}
-                    onClick={() => setAdvancedManagementOpen((open) => !open)}
+                    tooltip="내 에이전트"
+                    isActive={agentsRoute}
+                    render={<NavLink to="/agents" />}
                   >
-                    <SlidersHorizontal />
-                    <span className="min-w-0 flex-1 truncate">고급 관리</span>
+                    <Bot />
+                    <span>내 에이전트</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="보관함"
+                    isActive={archiveRoute}
+                    type="button"
+                    aria-controls="archive-subtree"
+                    aria-expanded={archiveOpen}
+                    onClick={() => setArchiveOpen((open) => !open)}
+                  >
+                    <Archive />
+                    <span className="min-w-0 flex-1 truncate">보관함</span>
                     <ChevronDown
                       className={cn(
                         "ml-auto size-3.5 text-sidebar-foreground/45 transition-transform group-data-[collapsible=icon]:hidden",
-                        advancedManagementOpen ? "rotate-0" : "-rotate-90",
+                        archiveOpen ? "rotate-0" : "-rotate-90",
                       )}
                     />
                   </SidebarMenuButton>
-                  {advancedManagementOpen ? (
-                    <SidebarMenuSub id="advanced-management-subtree">
-                      <NavAgents />
+                  {archiveOpen ? (
+                    <SidebarMenuSub id="archive-subtree">
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton
+                          isActive={location.pathname === "/skills/archived"}
+                          render={<NavLink to="/skills/archived" />}
+                        >
+                          <Sparkles />
+                          <span>스킬 보관함</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton
+                          isActive={location.pathname === "/templates/archived"}
+                          render={<NavLink to="/templates/archived" />}
+                        >
+                          <LayoutTemplate />
+                          <span>스킬 템플릿 보관함</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton
+                          isActive={location.pathname === "/agents/archived"}
+                          render={<NavLink to="/agents/archived" />}
+                        >
+                          <Bot />
+                          <span>내 에이전트 보관함</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
                     </SidebarMenuSub>
                   ) : null}
                 </SidebarMenuItem>
@@ -177,13 +245,7 @@ export function AppShell() {
 
           <SidebarGroup className="mt-auto">
             <SidebarGroupContent>
-              <CodexUsageBars />
-              <Separator className="w-full my-2" />
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <CodexSettingsMenu />
-                </SidebarMenuItem>
-              </SidebarMenu>
+              <SidebarIdentity />
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
@@ -191,25 +253,24 @@ export function AppShell() {
 
       <SidebarInset>
         <SiteHeader />
-
         <div
           className={cn(
             "min-h-0 flex-1",
             boundedCanvas
               ? cn(
-                "box-border flex h-[calc(100svh-3rem)] max-h-[calc(100svh-3rem)] min-h-0 flex-col overflow-hidden",
-                rockyHomeRoute || taskDetailRoute
-                  ? "p-0"
-                  : compactRoute
-                    ? "p-5 md:p-6"
-                    : "p-8 md:p-10",
-              )
+                  "box-border flex flex-col overflow-hidden",
+                  taskDetailRoute
+                    ? "p-0"
+                    : compactRoute
+                      ? "p-5 md:p-6"
+                      : "p-8 md:p-10",
+                )
               : "custom-scrollbar overflow-y-auto p-8 md:p-10",
           )}
         >
           <Outlet />
         </div>
       </SidebarInset>
-    </SidebarProvider>
+    </>
   );
 }

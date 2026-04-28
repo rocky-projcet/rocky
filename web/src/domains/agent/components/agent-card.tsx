@@ -1,250 +1,75 @@
-import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Archive,
-  ArchiveRestore,
-  CheckCircle2,
-  Clock3,
-  Sparkles,
-} from "lucide-react";
+import { Sparkles, Zap } from "lucide-react";
 
-import { useUpdateAgentMutation } from "../hooks";
 import { useAgentSessionsQuery } from "@/domains/session/hooks";
-import {
-  deriveAgentFocusAreas,
-  getRunningTaskRequests,
-  getTaskRequestLabel,
-  getTaskRequestStatus,
-  summarizeTaskRequests,
-} from "@/domains/session/lib/request-status";
-import { TaskRequestComposerDialog } from "@/domains/session/components/task-request-composer-dialog";
-import { TaskRequestOverflowSurface } from "@/domains/session/components/task-request-overflow-surface";
-import { TaskRequestStatusBadge } from "@/domains/session/components/task-request-status-badge";
-import { buttonVariants } from "@/shared/ui/button";
-import { Badge } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
-import { IconButton } from "@/shared/ui/icon-button";
-import { AgentColorFan } from "./agent-color-fan";
-import { cn } from "@/shared/lib/utils";
+import { getRunningTaskRequests, summarizeTaskRequests } from "@/domains/session/lib/request-status";
+import { readAgentSkillIds } from "../lib/agent-skill-store";
+import { useAgentEmoji } from "../lib/agent-avatar-store";
+import { AgentAvatar } from "./agent-avatar";
 import type { AgentSummary } from "./agent-grid-view";
 
 export function AgentCard({ agent }: { agent: AgentSummary }) {
-  const updateMutation = useUpdateAgentMutation(agent.id);
-  const sessionsQuery = useAgentSessionsQuery(agent.id, {
-    includeArchived: true,
-  });
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [hovered, setHovered] = useState(false);
-  const [colorFanOpen, setColorFanOpen] = useState(false);
-  const [requestDialogOpen, setRequestDialogOpen] = useState(false);
-  const buttonsVisible = hovered || colorFanOpen;
-  const canRequest = agent.lifecycle !== "archived";
-  const focusAreas = deriveAgentFocusAreas(agent.description);
+  const { emoji } = useAgentEmoji(agent.id);
+  const sessionsQuery = useAgentSessionsQuery(agent.id, { includeArchived: true });
   const sessions = sessionsQuery.data ?? [];
-  const requestSummary = summarizeTaskRequests(sessions);
-  const runningRequests = getRunningTaskRequests(sessions);
-  const featuredRunningRequests = runningRequests.slice(0, 2);
-  const overflowRunningRequests = runningRequests.slice(2);
-  const currentRequest = featuredRunningRequests[0] ?? null;
-  const recentCompleted = requestSummary.recentCompleted;
-  const latestRequest = currentRequest ?? requestSummary.pending ?? requestSummary.latest;
+  const summary = summarizeTaskRequests(sessions);
+  const runningCount = getRunningTaskRequests(sessions).length;
+  const completedCount = summary.counts.completed;
 
-  function handleColorFanOpenChange(open: boolean) {
-    setColorFanOpen(open);
-    if (!open && cardRef.current && !cardRef.current.matches(":hover")) {
-      setHovered(false);
-    }
-  }
+  const equippedSkillCount = readAgentSkillIds(agent.id).length;
+  const archived = agent.lifecycle === "archived";
 
-  function handleToggleLifecycle(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const next = agent.lifecycle === "archived" ? "active" : "archived";
-    updateMutation.mutate({ lifecycle: next });
-  }
-
-  const cardStyle = agent.color
+  const tinted = agent.color
     ? {
-        borderColor: `color-mix(in srgb, ${agent.color} 34%, var(--border))`,
-        backgroundColor: `color-mix(in srgb, ${agent.color} 6%, var(--card))`,
+        borderColor: `color-mix(in srgb, ${agent.color} 32%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 7%, var(--card))`,
         boxShadow:
-          `0 0 0 1px color-mix(in srgb, ${agent.color} 14%, transparent), ` +
-          `0 18px 32px color-mix(in srgb, ${agent.color} 10%, transparent)`,
+          `0 0 0 1px color-mix(in srgb, ${agent.color} 12%, transparent), ` +
+          `0 12px 24px color-mix(in srgb, ${agent.color} 10%, transparent)`,
       }
     : undefined;
 
   return (
-    <div
-      ref={cardRef}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => {
-        if (!colorFanOpen) setHovered(false);
-      }}
-      className={cn(
-        "group relative rounded-lg border p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg",
-        agent.lifecycle === "archived"
-          ? "border-border/80 bg-muted/35"
-          : agent.color
-            ? "border"
-            : "border-border/80 bg-card hover:border-foreground/10",
-      )}
-      style={cardStyle}
+    <Link
+      to={`/agents/${encodeURIComponent(agent.id)}`}
+      style={tinted}
+      className="group flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="truncate text-base font-semibold text-foreground">{agent.name}</h4>
-            {agent.lifecycle === "archived" ? (
-              <Badge className="rounded-full bg-secondary text-secondary-foreground">
-                보관됨
-              </Badge>
-            ) : null}
-            {!sessionsQuery.isLoading && latestRequest ? (
-              <TaskRequestStatusBadge status={getTaskRequestStatus(latestRequest)} />
-            ) : null}
-          </div>
-          <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-            {agent.description || "자주 맡는 작업을 쌓아가며 점점 더 잘 맞는 방식으로 일합니다."}
-          </p>
-          {focusAreas.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {focusAreas.map((focus) => (
-                <Badge
-                  key={focus}
-                  className="rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground"
-                >
-                  {focus}
-                </Badge>
-              ))}
-            </div>
+        <AgentAvatar emoji={emoji} color={agent.color} size="lg" />
+        <div className="flex flex-col items-end gap-1.5">
+          {archived ? (
+            <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              보관됨
+            </span>
+          ) : runningCount > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-foreground">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              {runningCount}건 진행 중
+            </span>
           ) : null}
-        </div>
-
-        <div
-          className={cn(
-            "flex items-center gap-1 transition",
-            buttonsVisible ? "opacity-100" : "opacity-0"
-          )}
-        >
-          <AgentColorFan
-            currentColor={agent.color}
-            onSelect={(color) => updateMutation.mutate({ color })}
-            disabled={updateMutation.isPending}
-            groupHovered={hovered}
-            onOpenChange={handleColorFanOpenChange}
-          />
-          <IconButton
-            variant="ghost"
-            size="sm"
-            label={agent.lifecycle === "archived" ? "복원" : "보관"}
-            onClick={handleToggleLifecycle}
-            disabled={updateMutation.isPending}
-          >
-            {agent.lifecycle === "archived" ? <ArchiveRestore size={16} /> : <Archive size={16} />}
-          </IconButton>
+          <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+            <Sparkles className="size-3" />
+            스킬 {equippedSkillCount}개
+          </span>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2">
-        <div className="rounded-lg border border-border/70 bg-background/80 px-4 py-4">
-          <div className="flex items-center gap-2 text-label-md uppercase text-muted-foreground">
-            <Clock3 size={13} className="text-blue-600 dark:text-blue-300" />
-            <span>지금 맡은 일</span>
-          </div>
-          <div className="mt-2 min-h-[2.75rem] space-y-2">
-            {featuredRunningRequests.length > 0 ? (
-              featuredRunningRequests.map((session) => (
-                <Link
-                  key={session.id}
-                  to={`/agents/${agent.id}/sessions/${session.id}`}
-                  className="block truncate text-sm font-semibold leading-6 text-foreground no-underline transition hover:text-primary"
-                >
-                  {getTaskRequestLabel(session)}
-                </Link>
-              ))
-            ) : (
-              <p className="text-sm font-semibold leading-6 text-foreground">
-                현재 진행 중인 작업이 없습니다.
-              </p>
-            )}
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {currentRequest ? (
-              <TaskRequestStatusBadge status={getTaskRequestStatus(currentRequest)} />
-            ) : (
-              <Badge className="rounded-full bg-secondary text-secondary-foreground">
-                {canRequest ? "요청 가능" : "요청 중지"}
-              </Badge>
-            )}
-            {overflowRunningRequests.length > 0 ? (
-              <TaskRequestOverflowSurface
-                agentId={agent.id}
-                requests={overflowRunningRequests}
-              />
-            ) : null}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border/70 bg-background/80 px-4 py-4">
-          <div className="flex items-center gap-2 text-label-md uppercase text-muted-foreground">
-            <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-300" />
-            <span>최근 완료</span>
-          </div>
-          <div className="mt-2 min-h-[2.75rem]">
-            {recentCompleted ? (
-              <Link
-                to={`/agents/${agent.id}/sessions/${recentCompleted.id}`}
-                className="line-clamp-2 text-sm font-semibold leading-6 text-foreground no-underline transition hover:text-primary"
-              >
-                {getTaskRequestLabel(recentCompleted)}
-              </Link>
-            ) : (
-              <p className="text-sm font-semibold leading-6 text-foreground">
-                아직 완료된 작업 기록이 없습니다.
-              </p>
-            )}
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            {recentCompleted
-              ? new Date(recentCompleted.lastActivityAt).toLocaleString()
-              : sessionsQuery.isLoading
-                ? "작업 기록을 불러오는 중입니다."
-                : "첫 작업 요청을 보내면 이 영역이 채워집니다."}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4">
-        <p className="text-xs text-muted-foreground">
-          {sessionsQuery.isLoading
-            ? "작업 요약 불러오는 중"
-            : `${requestSummary.counts.running} 진행 중 · ${requestSummary.counts.completed} 완료 · ${requestSummary.counts.failed} 실패`}
+      <div className="mt-3 min-w-0 flex-1">
+        <h3 className="truncate text-sm font-semibold text-foreground">{agent.name}</h3>
+        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+          {agent.description ||
+            "장착한 스킬을 발사해 일을 처리하는 내 에이전트입니다."}
         </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to={`/agents/${agent.id}`}
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-          >
-            상세 보기
-          </Link>
-          <Button
-            size="sm"
-            onClick={() => setRequestDialogOpen(true)}
-            disabled={!canRequest}
-          >
-            <Sparkles size={14} />
-            작업 요청
-          </Button>
-        </div>
       </div>
 
-      <TaskRequestComposerDialog
-        agentId={agent.id}
-        agentName={agent.name}
-        defaultRuntime={agent.defaultRuntime}
-        open={requestDialogOpen}
-        onOpenChange={setRequestDialogOpen}
-      />
-    </div>
+      <dl className="mt-3 grid gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <Zap className="size-3.5 text-muted-foreground" />
+          <dt className="text-[10px] uppercase tracking-wide">완료</dt>
+          <dd className="ml-auto text-foreground">{completedCount}회</dd>
+        </div>
+      </dl>
+    </Link>
   );
 }

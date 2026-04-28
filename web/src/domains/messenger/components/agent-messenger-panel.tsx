@@ -178,8 +178,8 @@ export function AgentMessengerPanel({ agentId }: { agentId: string }) {
       <Card className="flex h-full min-h-0 flex-col gap-5 p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-label-md uppercase text-muted-foreground">메신저 연동</p>
-            <h4 className="mt-2 text-headline-sm font-semibold text-foreground">
+            <p className="text-xs uppercase text-muted-foreground">메신저 연동</p>
+            <h4 className="mt-2 text-lg font-semibold font-semibold text-foreground">
               대화 채널 연결
             </h4>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -197,7 +197,7 @@ export function AgentMessengerPanel({ agentId }: { agentId: string }) {
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {summaryCards.map((card) => (
               <div key={card.label} className="rounded-2xl bg-muted/70 px-4 py-4">
-                <p className="text-label-md uppercase text-muted-foreground">{card.label}</p>
+                <p className="text-xs uppercase text-muted-foreground">{card.label}</p>
                 <p className="mt-2 break-words text-sm font-medium text-foreground">
                   {card.value}
                 </p>

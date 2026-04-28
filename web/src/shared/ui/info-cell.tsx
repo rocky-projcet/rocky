@@ -9,7 +9,7 @@ interface InfoCellProps {
 function InfoCell({ label, value, className }: InfoCellProps) {
   return (
     <div className={cn("rounded-2xl bg-muted px-3 py-3", className)}>
-      <div className="text-label-md uppercase -wide text-muted-foreground">
+      <div className="text-xs uppercase -wide text-muted-foreground">
         {label}
       </div>
       <div className="mt-2 font-medium text-foreground">{value}</div>

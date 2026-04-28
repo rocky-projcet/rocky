@@ -29,6 +29,7 @@ import {
 } from "@/domains/rocky/lib/rocky-task-model";
 import type { RockyChatRecord } from "@/domains/rocky/types";
 import { useMdTemplates } from "@/domains/template/hooks";
+import { PageContainer } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/utils";
@@ -190,7 +191,7 @@ export function TasksPage() {
   ).length;
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+    <PageContainer>
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -201,7 +202,7 @@ export function TasksPage() {
             Rocky 작업 목록
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Rocky가 진행 중이거나 완료한 작업을 상태, 템플릿, 입출력 파일 기준으로 확인합니다.
+            Rocky가 진행 중이거나 완료한 작업을 상태, 스킬, 입출력 파일 기준으로 확인합니다.
           </p>
         </div>
         <div className="grid min-w-72 grid-cols-3 gap-2">
@@ -284,7 +285,7 @@ export function TasksPage() {
           <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center">
             <div className="text-sm font-medium text-foreground">표시할 작업이 없습니다.</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              홈에서 템플릿이나 요청을 실행하면 이곳에 작업으로 쌓입니다.
+              홈에서 스킬이나 요청을 실행하면 이곳에 작업으로 쌓입니다.
             </p>
             <Button className="mt-4" size="sm" render={<Link to="/" />}>
               홈에서 작업 시작
@@ -292,6 +293,6 @@ export function TasksPage() {
           </div>
         )}
       </section>
-    </div>
+    </PageContainer>
   );
 }

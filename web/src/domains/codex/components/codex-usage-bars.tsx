@@ -213,7 +213,7 @@ export function CodexUsageBars() {
         className="flex w-full items-center justify-between rounded-2xl border border-transparent px-3 py-2 text-left transition hover:border-sidebar-border/70 hover:bg-sidebar-accent/50"
       >
         <div className="min-w-0">
-          <p className="text-2xs font-medium uppercase tracking-[0.18em] text-sidebar-foreground/40">
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-sidebar-foreground/40">
             연결 상태
           </p>
           <p className="mt-1 text-xs text-sidebar-foreground/65">로그인 상태 · 남은 사용량</p>

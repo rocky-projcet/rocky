@@ -1,26 +1,63 @@
-import { Separator } from "@/shared/ui/separator";
-import { SidebarTrigger } from "@/shared/ui/sidebar";
-import { HeaderBreadcrumb } from "@/shared/components/header-breadcrumb";
+import { useEffect, useState, type FormEvent } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Search } from "lucide-react";
+
+import { Input } from "@/shared/ui/input";
 import { AccountPopover } from "@/domains/codex/components/account-popover";
 import { useProviderAccountsQuery } from "@/domains/codex/hooks";
-import { AppModeToggle } from "@/domains/rocky/components/app-mode-toggle";
+import { cn } from "@/shared/lib/utils";
 
-export function SiteHeader() {
+function HeaderSearch() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const onSearchPage = location.pathname.startsWith("/search");
+  const initial = onSearchPage ? searchParams.get("q") ?? "" : "";
+  const [value, setValue] = useState(initial);
+
+  useEffect(() => {
+    if (onSearchPage) {
+      setValue(searchParams.get("q") ?? "");
+    }
+  }, [onSearchPage, searchParams]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = value.trim();
+    const target = trimmed ? `/search?q=${encodeURIComponent(trimmed)}` : "/search";
+    navigate(target);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="relative w-full max-w-md">
+      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        placeholder="작업 / 스킬 / 에이전트를 검색해보세요"
+        className="h-9 pl-9"
+        aria-label="작업, 스킬, 에이전트 검색"
+      />
+    </form>
+  );
+}
+
+export function SiteHeader({ className }: { className?: string }) {
   const accountQuery = useProviderAccountsQuery();
   const isAuthenticated =
     accountQuery.data?.providers.some((provider) => provider.status === "authenticated") ??
     false;
 
   return (
-    <header className="sticky top-0 z-50 flex h-12 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-      <SidebarTrigger className="ml-2" />
-      <Separator orientation="vertical" className="h-12" />
-      <div className="flex w-full items-center justify-between pr-4 lg:pr-6">
-        <HeaderBreadcrumb />
-        <div className="flex items-center gap-2">
-          <AppModeToggle />
-          {isAuthenticated ? <AccountPopover /> : null}
-        </div>
+    <header
+      className={cn(
+        "flex h-12 shrink-0 items-center gap-3 border-b bg-background pl-4 pr-4 lg:pr-6",
+        className,
+      )}
+    >
+      <HeaderSearch />
+      <div className="ml-auto flex items-center gap-2">
+        {isAuthenticated ? <AccountPopover /> : null}
       </div>
     </header>
   );

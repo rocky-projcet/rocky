@@ -206,7 +206,7 @@ export function ChartArtifactPreview(props: {
 
   if (state.status === "loading") {
     return (
-      <div className="border-b border-border bg-muted px-4 py-6 text-body-md leading-6 text-muted-foreground">
+      <div className="border-b border-border bg-muted px-4 py-6 text-sm leading-6 text-muted-foreground">
         안전 차트 미리보기 로딩 중...
       </div>
     );
@@ -219,10 +219,10 @@ export function ChartArtifactPreview(props: {
         : "차트 지오메트리를 사용할 수 없습니다.";
 
     return (
-      <div className="border-b border-border bg-muted px-4 py-6 text-body-md leading-6 text-muted-foreground">
+      <div className="border-b border-border bg-muted px-4 py-6 text-sm leading-6 text-muted-foreground">
         <div className="font-medium text-foreground">차트 미리보기 불가</div>
         <div>{message}</div>
-        <div className="mt-2 text-label-md uppercase  text-muted-foreground">
+        <div className="mt-2 text-xs uppercase  text-muted-foreground">
           다운로드로 대체
         </div>
       </div>
@@ -233,7 +233,7 @@ export function ChartArtifactPreview(props: {
 
   return (
     <div className="border-b border-border bg-muted px-4 py-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-label-md font-semibold uppercase  text-muted-foreground">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase  text-muted-foreground">
         <span>안전 차트 렌더러</span>
         <span className="rounded-full bg-muted px-2 py-1 text-foreground">
           {state.spec.source === "vega-lite-subset" ? "Vega-Lite 서브셋" : "시리즈 스펙"}
@@ -424,7 +424,7 @@ export function ChartArtifactPreview(props: {
         </svg>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-3 text-label-md text-muted-foreground">
+      <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
         {state.spec.series.map((series, index) => (
           <div key={series.name ?? `legend-${index}`} className="inline-flex items-center gap-2">
             <span

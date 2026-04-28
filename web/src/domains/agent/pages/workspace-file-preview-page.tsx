@@ -134,13 +134,13 @@ export function WorkspaceFilePreviewPage() {
     <div className="flex h-svh min-h-0 flex-col bg-background">
       <header className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
-          <div className="text-label-md font-semibold uppercase text-muted-foreground">
+          <div className="text-xs font-semibold uppercase text-muted-foreground">
             Workspace Preview
           </div>
-          <h1 className="mt-1 truncate text-body-lg font-semibold text-foreground">
+          <h1 className="mt-1 truncate text-base font-semibold text-foreground">
             {record?.name ?? searchPath.split("/").filter(Boolean).at(-1) ?? "파일"}
           </h1>
-          <div className="mt-0.5 truncate font-mono text-label-md text-muted-foreground">
+          <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
             {searchPath || "경로 없음"}
           </div>
         </div>

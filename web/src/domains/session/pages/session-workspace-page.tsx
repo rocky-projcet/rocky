@@ -193,10 +193,10 @@ const SESSION_ICON_BUTTON_CLASS =
 const SESSION_META_PILL_CLASS =
   "inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground";
 const CHAT_MESSAGE_META_ROW_CLASS =
-  "flex flex-wrap items-center gap-2 text-label-sm font-semibold uppercase tracking-normal leading-none";
+  "flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-normal leading-none";
 const CHAT_MESSAGE_META_BADGE_CLASS =
-  "rounded-full px-2 py-1 text-label-sm font-semibold leading-none";
-const CHAT_MESSAGE_ROLE_LABEL_CLASS = "text-label-sm font-semibold leading-none";
+  "rounded-full px-2 py-1 text-[11px] font-semibold leading-none";
+const CHAT_MESSAGE_ROLE_LABEL_CLASS = "text-[11px] font-semibold leading-none";
 
 function inspectorLinkTone(role: "assistant" | "user" | "system"): string {
   return role !== "user"
@@ -305,7 +305,7 @@ function PlainMessageViewer(props: {
       : [];
 
   return (
-    <div className="mt-2 space-y-2.5 text-body-md leading-7">
+    <div className="mt-2 space-y-2.5 text-sm leading-7">
       {blocks.map((block, index) => {
         if (block.type === "code") {
           return (
@@ -314,12 +314,12 @@ function PlainMessageViewer(props: {
               className="overflow-hidden rounded-2xl border border-foreground/10 bg-foreground text-primary-foreground"
             >
               {block.language ? (
-                <div className="border-b border-card/10 px-4 py-2 text-label-md font-semibold uppercase -wide text-primary-foreground/60">
+                <div className="border-b border-card/10 px-4 py-2 text-xs font-semibold uppercase -wide text-primary-foreground/60">
                   {block.language}
                 </div>
               ) : null}
               <div className="custom-scrollbar overflow-x-auto px-4 py-4">
-                <pre className="w-fit min-w-full whitespace-pre font-mono text-body-sm leading-5">
+                <pre className="w-fit min-w-full whitespace-pre font-mono text-xs leading-5">
                   {block.code}
                 </pre>
               </div>
@@ -336,7 +336,7 @@ function PlainMessageViewer(props: {
             return (
               <div
                 key={`${block.type}-${index}`}
-                className="rounded-2xl border border-dashed border-border bg-muted px-4 py-4 text-body-md leading-6 text-muted-foreground"
+                className="rounded-2xl border border-dashed border-border bg-muted px-4 py-4 text-sm leading-6 text-muted-foreground"
               >
                 <code>{block.artifactRole}</code>에 대한 아티팩트 메타데이터를 사용할 수 없습니다.
               </div>
@@ -361,7 +361,7 @@ function PlainMessageViewer(props: {
         return (
           <p
             key={`text-${index}`}
-            className="whitespace-pre-wrap text-body-md leading-7 text-inherit"
+            className="whitespace-pre-wrap text-sm leading-7 text-inherit"
           >
             {block.text}
           </p>
@@ -410,7 +410,7 @@ function WorkspacePathButton(props: {
       onClick={() => props.onOpenWorkspacePath(props.path, props.pathKind)}
       onKeyDown={handleKeyDown}
       className={cn(
-        "inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-body-sm text-foreground break-words transition",
+        "inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-xs text-foreground break-words transition",
         "cursor-pointer hover:bg-secondary hover:text-secondary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-1",
       )}
       title={`공유 워크스페이스에서 ${props.path} 열기`}
@@ -505,36 +505,36 @@ function AssistantSection(props: {
   return (
     <div className="space-y-3">
       {!showPlaceholder ? (
-        <div className="text-body-md leading-7 text-muted-foreground">
+        <div className="text-sm leading-7 text-muted-foreground">
           <ReactMarkdown
             components={{
               h1: ({ children }) => (
-                <h1 className="mt-5 text-title-md font-semibold leading-tight text-foreground first:mt-0">
+                <h1 className="mt-5 text-sm font-semibold font-semibold leading-tight text-foreground first:mt-0">
                   {renderWorkspaceLinkedChildren(children, props.onOpenWorkspacePath)}
                 </h1>
               ),
               h2: ({ children }) => (
-                <h2 className="mt-5 text-body-lg font-semibold leading-tight text-foreground first:mt-0">
+                <h2 className="mt-5 text-base font-semibold leading-tight text-foreground first:mt-0">
                   {renderWorkspaceLinkedChildren(children, props.onOpenWorkspacePath)}
                 </h2>
               ),
               h3: ({ children }) => (
-                <h3 className="mt-4 text-body-md font-semibold uppercase  text-muted-foreground first:mt-0">
+                <h3 className="mt-4 text-sm font-semibold uppercase  text-muted-foreground first:mt-0">
                   {renderWorkspaceLinkedChildren(children, props.onOpenWorkspacePath)}
                 </h3>
               ),
               p: ({ children }) => (
-                <p className="mt-3 text-body-md leading-7 first:mt-0">
+                <p className="mt-3 text-sm leading-7 first:mt-0">
                   {renderWorkspaceLinkedChildren(children, props.onOpenWorkspacePath)}
                 </p>
               ),
               ul: ({ children }) => (
-                <ul className="mt-3 list-disc space-y-2 pl-5 text-body-md leading-7 first:mt-0">
+                <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-7 first:mt-0">
                   {renderWorkspaceLinkedChildren(children, props.onOpenWorkspacePath)}
                 </ul>
               ),
               ol: ({ children }) => (
-                <ol className="mt-3 list-decimal space-y-2 pl-5 text-body-md leading-7 first:mt-0">
+                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-7 first:mt-0">
                   {renderWorkspaceLinkedChildren(children, props.onOpenWorkspacePath)}
                 </ol>
               ),
@@ -594,7 +594,7 @@ function AssistantSection(props: {
                   }
 
                   return (
-                    <code className="inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-body-sm text-foreground break-words">
+                    <code className="inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-xs text-foreground break-words">
                       {codeProps.children}
                     </code>
                   );
@@ -603,12 +603,12 @@ function AssistantSection(props: {
                 return (
                   <div className="mt-4 overflow-hidden rounded-2xl border border-foreground/80 bg-foreground text-primary-foreground shadow-md first:mt-0">
                     {language ? (
-                      <div className="border-b border-card/10 px-4 py-2 text-label-md font-semibold uppercase -wide text-primary-foreground/60">
+                      <div className="border-b border-card/10 px-4 py-2 text-xs font-semibold uppercase -wide text-primary-foreground/60">
                         {language}
                       </div>
                     ) : null}
                     <div className="custom-scrollbar overflow-x-auto px-4 py-4">
-                      <pre className="w-fit min-w-full whitespace-pre font-mono text-body-sm leading-5">
+                      <pre className="w-fit min-w-full whitespace-pre font-mono text-xs leading-5">
                         <code>{codeProps.children}</code>
                       </pre>
                     </div>
@@ -953,7 +953,7 @@ function SessionComposer(props: {
           onKeyDown={handleComposerKeyDown}
           disabled={props.runIsActive}
           placeholder="메시지를 입력하세요"
-          className="min-h-[72px] rounded-2xl border-0 bg-transparent px-1 py-1 text-body-md leading-6 text-foreground shadow-none focus-visible:border-transparent focus-visible:ring-0"
+          className="min-h-[72px] rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-6 text-foreground shadow-none focus-visible:border-transparent focus-visible:ring-0"
           style={{ minHeight: "72px", maxHeight: `${MAX_COMPOSER_HEIGHT_PX}px` }}
         />
       </div>
@@ -1213,7 +1213,7 @@ function SessionComposer(props: {
       </div>
 
       {composerError ? (
-        <p className="mt-2 px-1 text-label-sm text-destructive">
+        <p className="mt-2 px-1 text-[11px] text-destructive">
           {composerError}
         </p>
       ) : null}
@@ -2193,7 +2193,7 @@ export function SessionWorkspacePage() {
     session.lifecycle !== "active" ? (
       <Badge
         className={cn(
-          "rounded-full px-2.5 py-1 text-label-sm font-semibold uppercase -wide",
+          "rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase -wide",
           sessionLifecycleTone(session.lifecycle),
         )}
       >
@@ -2250,13 +2250,13 @@ export function SessionWorkspacePage() {
                     value={draftSessionTitle}
                     onChange={(event) => setDraftSessionTitle(event.target.value)}
                     placeholder={session.id}
-                    className="rounded-2xl border-border bg-background px-4 py-2.5 text-body-md"
+                    className="rounded-2xl border-border bg-background px-4 py-2.5 text-sm"
                   />
                 </div>
               ) : (
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <h3 className="min-w-0 flex-1 truncate text-title-md font-semibold leading-tight text-foreground">
+                    <h3 className="min-w-0 flex-1 truncate text-sm font-semibold font-semibold leading-tight text-foreground">
                       {session.title || session.id}
                     </h3>
                     {sessionLifecycleBadge}
@@ -2389,7 +2389,7 @@ export function SessionWorkspacePage() {
           className="custom-scrollbar mt-2 min-h-0 max-h-full flex-1 space-y-3 overflow-y-auto p-0.5 pr-2"
         >
           {updateSessionMutation.isError ? (
-            <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-5 py-4 text-body-md text-destructive">
+            <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
               {updateSessionMutation.error instanceof Error
                 ? updateSessionMutation.error.message
                 : "작업 요청 업데이트 요청에 실패했습니다."}
@@ -2397,14 +2397,14 @@ export function SessionWorkspacePage() {
           ) : null}
 
           {isArchivedSession ? (
-            <div className="rounded-3xl border border-border bg-secondary px-5 py-5 text-body-md leading-6 text-secondary-foreground">
+            <div className="rounded-3xl border border-border bg-secondary px-5 py-5 text-sm leading-6 text-secondary-foreground">
               이 작업 요청은 보관되었습니다. 트랜스크립트와 공유 파일은 계속 사용 가능하지만,
               복원할 때까지 새 프롬프트가 차단됩니다.
             </div>
           ) : null}
 
           {transcriptEntries.length === 0 && !optimisticPrompt && liveAssistantSections.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-border bg-card px-5 py-10 text-body-md text-muted-foreground">
+            <div className="rounded-3xl border border-dashed border-border bg-card px-5 py-10 text-sm text-muted-foreground">
               아직 트랜스크립트가 없습니다. 첫 프롬프트를 보내 작업 기록을 시작하세요.
               공유 파일은 워크스페이스 패널에 유지되어 대화가 진행되는 동안 탐색할 수 있습니다.
             </div>

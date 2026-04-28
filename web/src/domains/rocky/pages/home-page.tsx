@@ -64,6 +64,10 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
+import { useAgentQuery } from "@/domains/agent/hooks";
+import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
+import { useTaskAgentId } from "@/domains/agent/lib/task-agent-store";
+import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import type {
   RockyAttachmentRecord,
   RockyChatRecord,
@@ -269,7 +273,7 @@ function compactTemplateRunMessage(value: string): string {
   }
 
   const title = value.match(/^템플릿:\s*(.+)$/mu)?.[1]?.trim();
-  return title ? `템플릿 실행: ${title}` : "템플릿 실행";
+  return title ? `스킬 실행: ${title}` : "스킬 실행";
 }
 
 function parseMarkdownListSection(value: string, heading: string): string[] {
@@ -660,14 +664,14 @@ function TemplateCardGrid({
     <div className="mt-8 w-full text-left">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">저장한 템플릿</h2>
+          <h2 className="text-sm font-semibold text-foreground">저장한 스킬</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             카드를 누르면 Rocky가 필요한 값을 순서대로 묻습니다.
           </p>
         </div>
         <Button variant="outline" size="sm" render={<Link to="/templates/new" />}>
           <Plus className="size-4" />
-          템플릿 만들기
+          새 스킬 만들기
         </Button>
       </div>
 
@@ -685,14 +689,14 @@ function TemplateCardGrid({
       ) : (
         <div className="mt-3 rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center">
           <div className="text-sm font-medium text-foreground">
-            저장한 템플릿이 없습니다.
+            저장한 스킬이 없습니다.
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            템플릿 메뉴에서 Rocky에게 업무 방식을 알려주면 홈 카드로 실행할 수 있습니다.
+            스킬 메뉴에서 Rocky에게 업무 방식을 알려주면 홈 카드로 실행할 수 있습니다.
           </p>
           <Button className="mt-3" variant="outline" size="sm" render={<Link to="/templates/new" />}>
             <Plus className="size-4" />
-            새 템플릿 만들기
+            새 스킬 만들기
           </Button>
         </div>
       )}
@@ -757,7 +761,7 @@ function EmptyChatState({
         어떤 작업을 시작할까요?
       </h1>
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
-        템플릿을 고르거나 자료를 올려 Rocky에게 바로 요청하세요.
+        스킬을 고르거나 자료를 올려 Rocky에게 바로 요청하세요.
       </p>
       <TemplateCardGrid
         disabled={disabled}
@@ -1416,6 +1420,22 @@ function RockyReplyMark() {
   );
 }
 
+function ChatReplyAvatar({ chatId }: { chatId: string }) {
+  const agentId = useTaskAgentId(chatId);
+  const agentQuery = useAgentQuery(agentId ?? undefined);
+  const { emoji } = useAgentEmoji(agentId ?? undefined);
+
+  if (agentId && agentQuery.data) {
+    return (
+      <div className="mt-1 shrink-0">
+        <AgentAvatar emoji={emoji} color={agentQuery.data.color} size="sm" />
+      </div>
+    );
+  }
+
+  return <RockyReplyMark />;
+}
+
 function MessageAttachmentList({
   attachments,
   isRocky,
@@ -1492,7 +1512,7 @@ function MessageBubble({
 
     return (
       <div className="flex w-full items-start justify-start gap-2.5">
-        <RockyReplyMark />
+        <ChatReplyAvatar chatId={chat.id} />
         <article
           className="w-full max-w-[52rem] px-1 pb-2 pt-0 text-sm leading-6 text-muted-foreground md:px-2"
           aria-live="polite"
@@ -1532,7 +1552,7 @@ function MessageBubble({
         isRocky ? "items-start justify-start gap-2.5" : "justify-end"
       )}
     >
-      {isRocky ? <RockyReplyMark /> : null}
+      {isRocky ? <ChatReplyAvatar chatId={chat.id} /> : null}
       <article
         className={cn(
           "text-sm leading-6",
@@ -1804,7 +1824,7 @@ function TemplateExecutionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[min(88vh,44rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
-          <DialogTitle>템플릿 실행 준비</DialogTitle>
+          <DialogTitle>스킬 실행 준비</DialogTitle>
           <DialogDescription>
             파일과 추가 조건을 먼저 확인한 뒤 Rocky가 필요한 값만 이어서 묻습니다.
           </DialogDescription>
@@ -1885,7 +1905,7 @@ function TemplateExecutionDialog({
                   type="file"
                   multiple
                   className="sr-only"
-                  aria-label="템플릿 실행 자료 파일 선택"
+                  aria-label="스킬 실행 자료 파일 선택"
                   onChange={(event) => {
                     onFilesChange(Array.from(event.target.files ?? []));
                   }}
@@ -1922,7 +1942,7 @@ function TemplateExecutionDialog({
             disabled={disabled}
             onClick={() => onStart(template, userBrief)}
           >
-            템플릿 실행
+            스킬 실행
             <ArrowRight className="size-4" />
           </Button>
         </div>
@@ -2011,13 +2031,13 @@ function ArtifactPreviewPanel({
     <aside className="flex h-[42vh] min-h-0 shrink-0 flex-col border-t border-border bg-card shadow-sm lg:h-auto lg:w-[min(42vw,44rem)] lg:border-l lg:border-t-0">
       <header className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
-          <div className="text-label-md font-semibold uppercase text-muted-foreground">
+          <div className="text-xs font-semibold uppercase text-muted-foreground">
             {panelLabel}
           </div>
-          <div className="mt-1 truncate text-body-md font-semibold text-foreground">
+          <div className="mt-1 truncate text-sm font-semibold text-foreground">
             {source.name}
           </div>
-          <div className="mt-0.5 truncate text-label-md text-muted-foreground">
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {source.detail}
           </div>
         </div>
@@ -2027,7 +2047,7 @@ function ArtifactPreviewPanel({
             href={previewOpenHref}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground no-underline transition hover:bg-secondary"
+            className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
           >
             새 창
           </a>
@@ -2036,7 +2056,7 @@ function ArtifactPreviewPanel({
               type="button"
               disabled={nativeOpenPending}
               onClick={openNativePowerPoint}
-              className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground no-underline transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
             >
               {nativeOpenLabel}
             </button>
@@ -2045,7 +2065,7 @@ function ArtifactPreviewPanel({
             href={source.downloadHref}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground no-underline transition hover:bg-secondary"
+            className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
           >
             다운로드
           </a>
@@ -2072,11 +2092,11 @@ function ArtifactPreviewPanel({
             />
           </div>
         ) : state.kind === "loading" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
             HTML 미리보기를 불러오는 중입니다.
           </div>
         ) : state.kind === "error" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
             HTML 미리보기를 불러오지 못했습니다. {state.message}
           </div>
         ) : (
@@ -2143,13 +2163,13 @@ function EmbeddedArtifactPreviewPanel({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
-          <div className="text-label-md font-semibold uppercase text-muted-foreground">
+          <div className="text-xs font-semibold uppercase text-muted-foreground">
             {source.kind === "powerpoint" ? "PPT 뷰어" : "HTML 리포트"}
           </div>
-          <div className="mt-1 truncate text-body-md font-semibold text-foreground">
+          <div className="mt-1 truncate text-sm font-semibold text-foreground">
             {source.name}
           </div>
-          <div className="mt-0.5 truncate text-label-md text-muted-foreground">
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {source.detail}
           </div>
         </div>
@@ -2186,11 +2206,11 @@ function EmbeddedArtifactPreviewPanel({
             />
           </div>
         ) : state.kind === "loading" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
             미리보기를 불러오는 중입니다.
           </div>
         ) : state.kind === "error" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
             미리보기를 불러오지 못했습니다. {state.message}
           </div>
         ) : (
@@ -2609,14 +2629,14 @@ function TemplateFilePanel({
       <header className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-label-md font-semibold uppercase text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase text-muted-foreground">
               <LayoutTemplate className="size-3.5" />
-              템플릿 파일
+              스킬 파일
             </div>
-            <div className="mt-1 truncate text-body-md font-semibold text-foreground">
+            <div className="mt-1 truncate text-sm font-semibold text-foreground">
               {context.title}
             </div>
-            <div className="mt-0.5 truncate text-label-md text-muted-foreground">
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">
               {context.outputFormatLabel}
             </div>
           </div>
@@ -3134,9 +3154,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   );
 }
 
-export function HomePage() {
-  return <RockyWorkspacePage mode="home" />;
-}
+export { HomeDashboard as HomePage } from "./home-dashboard";
 
 export function RockyTaskDetailPage() {
   return <RockyWorkspacePage mode="task-detail" />;

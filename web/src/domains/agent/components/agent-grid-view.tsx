@@ -54,7 +54,7 @@ export function AgentGridView({
   return (
     <>
       {viewMode === "card" ? (
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {agents.map((agent) => (
             <AgentCard key={agent.id} agent={agent} />
           ))}

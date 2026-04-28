@@ -32,6 +32,7 @@ import type {
   MdTemplateSkillSyncStatus,
   MdTemplateWizardStepId,
 } from "@/domains/template/types";
+import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Progress } from "@/shared/ui/progress";
@@ -274,85 +275,10 @@ function initialWizardMessages(stepId: MdTemplateWizardStepId): WizardMessage[] 
   ];
 }
 
-export function TemplatesPage() {
-  const { deleteTemplate, userTemplates } = useMdTemplates();
+export { SkillTemplateCatalogPage as TemplatesPage } from "@/domains/skill/pages/skill-template-catalog-page";
 
-  function confirmDelete(template: MdTemplateDefinition) {
-    const confirmed = window.confirm(`"${template.title}" 템플릿을 삭제할까요?`);
-    if (!confirmed) {
-      return;
-    }
-
-    deleteTemplate(template.id);
-    toast.success("템플릿을 삭제했습니다.");
-  }
-
-  return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-foreground">
-            템플릿
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            저장한 템플릿은 홈에서 바로 실행하고, 새 업무는 별도 생성 화면에서 Rocky에게 알려줍니다.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" render={<Link to="/" />}>
-            <Home className="size-4" />
-            홈에서 실행
-          </Button>
-          <Button render={<Link to="/templates/new" />}>
-            <Plus className="size-4" />
-            새 템플릿
-          </Button>
-        </div>
-      </header>
-
-      <section>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">저장한 템플릿</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              템플릿은 Rocky가 실행할 개인 업무 기준으로 저장됩니다.
-            </p>
-          </div>
-          <span className="text-xs text-muted-foreground">
-            {userTemplates.length}개
-          </span>
-        </div>
-        {userTemplates.length > 0 ? (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {userTemplates.map((template) => (
-              <TemplateSummaryCard
-                key={template.id}
-                editHref={`/templates/${encodeURIComponent(template.id)}/edit`}
-                template={template}
-                onDelete={confirmDelete}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center">
-            <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-background text-muted-foreground">
-              <Wand2 className="size-5" />
-            </div>
-            <h3 className="mt-3 text-sm font-semibold text-foreground">
-              아직 저장한 템플릿이 없습니다.
-            </h3>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Rocky가 몇 가지 질문으로 업무 흐름을 정리하고 실행 기준으로 저장합니다.
-            </p>
-            <Button className="mt-4" render={<Link to="/templates/new" />}>
-              <Plus className="size-4" />
-              새 템플릿 만들기
-            </Button>
-          </div>
-        )}
-      </section>
-    </div>
-  );
+function _LegacyTemplatesPagePlaceholder() {
+  return null;
 }
 
 export function TemplateBuilderPage() {
@@ -382,7 +308,7 @@ export function TemplateBuilderPage() {
           {
             id: wizardMessageId(),
             role: "rocky",
-            text: "저장된 템플릿을 불러왔습니다. 아래 초안을 확인하고, 바꾸고 싶은 기준이 있으면 입력창에 적어주세요.",
+            text: "저장된 스킬을 불러왔습니다. 아래 초안을 확인하고, 바꾸고 싶은 기준이 있으면 입력창에 적어주세요.",
           },
         ]
       : initialWizardMessages("intent")
@@ -404,7 +330,7 @@ export function TemplateBuilderPage() {
         {
           id: wizardMessageId(),
           role: "rocky",
-          text: "저장된 템플릿을 불러왔습니다. 아래 초안을 확인하고, 바꾸고 싶은 기준이 있으면 입력창에 적어주세요.",
+          text: "저장된 스킬을 불러왔습니다. 아래 초안을 확인하고, 바꾸고 싶은 기준이 있으면 입력창에 적어주세요.",
         },
       ]);
       return;
@@ -445,7 +371,7 @@ export function TemplateBuilderPage() {
         {
           id: wizardMessageId(),
           role: "rocky",
-          text: "저장된 템플릿을 다시 불러왔습니다. 수정할 기준을 입력하거나 바로 저장하세요.",
+          text: "저장된 스킬을 다시 불러왔습니다. 수정할 기준을 입력하거나 바로 저장하세요.",
         },
       ]);
       return;
@@ -521,11 +447,11 @@ export function TemplateBuilderPage() {
     try {
       const saved = await saveTemplate(draft, templateId ?? null);
       if (saved.skill.syncStatus === "failed") {
-        toast.warning("템플릿은 저장했고 실행 기준 연결은 확인이 필요합니다.", {
+        toast.warning("스킬은 저장했고 실행 기준 연결은 확인이 필요합니다.", {
           description: saved.skill.lastSyncError,
         });
       } else {
-        toast.success(editing ? "템플릿을 수정했습니다." : "템플릿을 저장했습니다.", {
+        toast.success(editing ? "스킬을 수정했습니다." : "스킬을 저장했습니다.", {
           description: saved.title,
         });
       }
@@ -537,41 +463,36 @@ export function TemplateBuilderPage() {
 
   if (editing && !editingTemplate) {
     return (
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header>
-          <Button variant="outline" size="sm" render={<Link to="/templates" />}>
-            <ArrowLeft className="size-4" />
-            목록
-          </Button>
-          <h1 className="mt-5 text-2xl font-semibold tracking-normal text-foreground">
-            템플릿을 찾을 수 없습니다.
-          </h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            저장된 템플릿이 삭제되었거나 이 브라우저에 남아 있지 않습니다.
-          </p>
-        </header>
-      </div>
+      <PageContainer>
+        <Button
+          className="-ml-2 self-start"
+          variant="ghost"
+          size="sm"
+          render={<Link to="/templates" />}
+        >
+          <ArrowLeft className="size-4" />
+          목록
+        </Button>
+        <PageHeader
+          title="스킬을 찾을 수 없습니다."
+          description="저장된 스킬이 삭제되었거나 이 브라우저에 남아 있지 않습니다."
+        />
+      </PageContainer>
     );
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-foreground">
-            {editing ? "템플릿 조정" : "새 템플릿 만들기"}
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            업무 의도를 입력하면 Rocky가 실행 목적, 필요 자료, 결과물, 검수 기준을 초안으로 정리합니다.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" render={<Link to="/templates" />}>
+    <PageContainer>
+      <PageHeader
+        title={editing ? "스킬 조정" : "새 스킬 만들기"}
+        description="업무 의도를 입력하면 Rocky가 실행 목적, 필요 자료, 결과물, 검수 기준을 초안으로 정리합니다."
+        actions={
+          <Button variant="ghost" render={<Link to="/templates" />}>
             <ArrowLeft className="size-4" />
             목록
           </Button>
-        </div>
-      </header>
+        }
+      />
 
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="rounded-lg border bg-card shadow-sm">
@@ -580,7 +501,7 @@ export function TemplateBuilderPage() {
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Wand2 className="size-4" />
-                  {editing ? "저장된 템플릿 조정" : "Rocky 인터뷰"}
+                  {editing ? "저장된 스킬 조정" : "Rocky 인터뷰"}
                 </div>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {currentStep.title} · {currentStep.helper}
@@ -724,7 +645,7 @@ export function TemplateBuilderPage() {
                 1. 이 화면에서 만든 초안을 Rocky가 실행할 업무 기준으로 저장합니다.
               </li>
               <li className="rounded-lg bg-background px-3 py-2">
-                2. 홈에서 저장한 템플릿 카드를 누릅니다.
+                2. 홈에서 저장한 스킬 카드를 누릅니다.
               </li>
               <li className="rounded-lg bg-background px-3 py-2">
                 3. Rocky가 Skill 기준으로 파일, 누락값, 결과물 조건을 확인합니다.
@@ -733,6 +654,6 @@ export function TemplateBuilderPage() {
           </div>
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }

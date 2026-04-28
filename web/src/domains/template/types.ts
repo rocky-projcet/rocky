@@ -31,6 +31,8 @@ export interface MdTemplateDefinition {
   defaultInstructions: string;
   skill: MdTemplateOpenAiSkill;
   sortOrder: number;
+  /** When true, the skill is in the archive (soft-deleted). */
+  archived?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }

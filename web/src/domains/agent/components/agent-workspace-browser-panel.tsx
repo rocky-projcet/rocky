@@ -268,7 +268,7 @@ function TruncatedLabel(props: {
         side="top"
         align="start"
         sideOffset={8}
-        className="max-w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-background/10 bg-foreground/98 px-3 py-2 text-body-sm leading-5 text-background shadow-2xl whitespace-normal break-all"
+        className="max-w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-background/10 bg-foreground/98 px-3 py-2 text-xs leading-5 text-background shadow-2xl whitespace-normal break-all"
       >
         {props.tooltipLabel ?? props.text}
       </TooltipContent>
@@ -292,10 +292,10 @@ function CodePreviewPanel(props: {
           props.compact ? "px-3 py-2" : "px-4 py-3",
         )}
       >
-        <span className="text-label-md uppercase text-slate-300">
+        <span className="text-xs uppercase text-slate-300">
           {language.label}
         </span>
-        <span className="text-label-md text-slate-400">
+        <span className="text-xs text-slate-400">
           {props.record.lineCount ?? lines.length}줄
           {props.record.truncated ? " · 잘림" : ""}
         </span>
@@ -314,7 +314,7 @@ function TextPreviewPanel(props: {
     <div className="flex h-full flex-col overflow-hidden">
       <div
         className={cn(
-          "flex items-center justify-between gap-3 border-b border-border text-label-md text-muted-foreground",
+          "flex items-center justify-between gap-3 border-b border-border text-xs text-muted-foreground",
           props.compact ? "px-3 py-2" : "px-4 py-3",
         )}
       >
@@ -325,7 +325,7 @@ function TextPreviewPanel(props: {
         </span>
       </div>
       <div className={cn("min-h-0 flex-1 custom-scrollbar overflow-auto", props.compact ? "px-3 py-3" : "px-4 py-4")}>
-        <pre className="whitespace-pre-wrap break-words font-mono text-body-sm leading-6 text-foreground">
+        <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-foreground">
           {props.text}
         </pre>
       </div>
@@ -361,7 +361,7 @@ function MarkdownPreviewPanel(props: {
         value="preview"
         className={cn("min-h-0 flex-1 custom-scrollbar overflow-auto", props.compact ? "px-3 py-3" : "px-5 py-5")}
       >
-        <article className="space-y-4 text-body-md leading-7 text-foreground">
+        <article className="space-y-4 text-sm leading-7 text-foreground">
           <ReactMarkdown
             components={{
               h1: (props) => <h1 className="text-2xl font-semibold tracking-tight" {...props} />,
@@ -389,7 +389,7 @@ function MarkdownPreviewPanel(props: {
                 if (inline) {
                   return (
                     <code
-                      className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-body-sm text-foreground"
+                      className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-xs text-foreground"
                       {...props}
                     >
                       {children}
@@ -398,7 +398,7 @@ function MarkdownPreviewPanel(props: {
                 }
 
                 return (
-                  <code className="font-mono text-body-sm text-slate-100" {...props}>
+                  <code className="font-mono text-xs text-slate-100" {...props}>
                     {children}
                   </code>
                 );
@@ -558,7 +558,7 @@ function WorkspacePreviewSurface(props: {
               href={props.previewHref}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-body-sm font-medium text-foreground no-underline transition hover:bg-secondary"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
             >
               새 탭에서 열기
             </a>
@@ -591,7 +591,7 @@ function WorkspacePreviewSurface(props: {
 function UnsupportedPreviewMessage(props: { children: ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="max-w-lg rounded-2xl border border-dashed border-border bg-muted/40 px-5 py-6 text-center text-body-md leading-6 text-muted-foreground">
+      <div className="max-w-lg rounded-2xl border border-dashed border-border bg-muted/40 px-5 py-6 text-center text-sm leading-6 text-muted-foreground">
         {props.children}
       </div>
     </div>
@@ -623,8 +623,8 @@ function WorkspaceFilePreviewPanel(props: {
         )}
       >
         <div className="space-y-2">
-          <p className="text-body-md font-semibold text-foreground">{props.emptyStateTitle}</p>
-          <p className="text-body-md leading-6 text-muted-foreground">
+          <p className="text-sm font-semibold text-foreground">{props.emptyStateTitle}</p>
+          <p className="text-sm leading-6 text-muted-foreground">
             {props.emptyStateDescription}
           </p>
         </div>
@@ -644,7 +644,7 @@ function WorkspaceFilePreviewPanel(props: {
       <div className={cn("shrink-0 border-b border-border", props.bare ? "px-0 py-0 pb-4" : "px-5 py-4")}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-label-md uppercase text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-muted-foreground">
               <span className="flex size-8 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
                 {previewKindIcon(props.record?.previewKind ?? null, "file")}
               </span>
@@ -667,7 +667,7 @@ function WorkspaceFilePreviewPanel(props: {
                 tooltipLabel={props.selectedFilePath}
               />
             </div>
-            <p className="mt-1 break-all text-body-sm leading-6 text-muted-foreground">
+            <p className="mt-1 break-all text-xs leading-6 text-muted-foreground">
               {props.selectedFilePath}
             </p>
           </div>
@@ -675,7 +675,7 @@ function WorkspaceFilePreviewPanel(props: {
           {props.downloadHref ? (
             <a
               href={props.downloadHref}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-body-md font-semibold text-foreground no-underline transition hover:bg-secondary"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground no-underline transition hover:bg-secondary"
             >
               <Download size={14} />
               다운로드
@@ -686,13 +686,13 @@ function WorkspaceFilePreviewPanel(props: {
 
       <div className={cn("min-h-0 flex-1", props.bare ? "py-4" : "px-5 py-4")}>
         {props.isLoading ? (
-          <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-border bg-muted px-4 py-6 text-body-md text-muted-foreground">
+          <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
             파일 미리보기 로딩 중...
           </div>
         ) : null}
 
         {props.isError ? (
-          <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-body-md text-destructive">
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm text-destructive">
             {props.error instanceof Error
               ? props.error.message
               : "파일 미리보기를 불러올 수 없습니다."}
@@ -701,7 +701,7 @@ function WorkspaceFilePreviewPanel(props: {
 
         {props.record ? (
           <div className="flex h-full min-h-0 flex-col">
-            <div className="mb-4 flex flex-wrap items-center gap-2 text-label-md text-muted-foreground">
+            <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded-full bg-secondary px-3 py-1 text-foreground">
                 {props.record.contentType}
               </span>
@@ -865,7 +865,7 @@ export function AgentWorkspaceBrowserPanel(props: {
   const directoryList = directoryQuery.data ? (
     <div className={embedded ? "min-h-0 flex-1 overflow-hidden" : "h-80 overflow-hidden"}>
       {directoryQuery.data.entries.length === 0 ? (
-        <div className="flex h-full items-center rounded-2xl border border-dashed border-border bg-muted px-4 py-6 text-body-md text-muted-foreground">
+        <div className="flex h-full items-center rounded-2xl border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
           이 폴더는 비어 있습니다.
         </div>
       ) : (
@@ -907,7 +907,7 @@ export function AgentWorkspaceBrowserPanel(props: {
                   <div className="min-w-0 flex-1">
                     <TruncatedLabel
                       text={entry.name}
-                      className="text-body-sm font-medium text-foreground"
+                      className="text-xs font-medium text-foreground"
                       tooltipLabel={entry.path}
                     />
                   </div>
@@ -915,7 +915,7 @@ export function AgentWorkspaceBrowserPanel(props: {
 
                 <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
                   {secondaryText ? (
-                    <span className="text-label-sm text-muted-foreground">{secondaryText}</span>
+                    <span className="text-[11px] text-muted-foreground">{secondaryText}</span>
                   ) : null}
                   <ChevronRight size={13} />
                 </div>
@@ -941,7 +941,7 @@ export function AgentWorkspaceBrowserPanel(props: {
               <h4 className="text-lg font-semibold text-foreground">
                 {props.title ?? "에이전트 워크스페이스"}
               </h4>
-              <p className="mt-1 text-body-md leading-6 text-muted-foreground">
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
                 {props.description ??
                   "이 에이전트의 모든 세션은 동일한 워크스페이스를 읽고 씁니다."}
               </p>
@@ -972,7 +972,7 @@ export function AgentWorkspaceBrowserPanel(props: {
         {embedded ? (
           <div className="mb-3 flex items-center justify-between gap-3 border-b border-border/70 pb-3">
             <div className="-mx-1 min-w-0 flex-1 custom-scrollbar overflow-x-auto px-1">
-              <div className="flex min-w-max items-center gap-2 text-label-md uppercase text-muted-foreground">
+              <div className="flex min-w-max items-center gap-2 text-xs uppercase text-muted-foreground">
                 <Button
                   variant={currentPath === "" ? "default" : "secondary"}
                   size="xs"
@@ -999,7 +999,7 @@ export function AgentWorkspaceBrowserPanel(props: {
                 ))}
 
                 {selectedFileLabel ? (
-                  <span className="inline-flex max-w-[20rem] items-center rounded-full border border-border bg-muted px-3 py-1 text-body-sm font-medium normal-case text-foreground">
+                  <span className="inline-flex max-w-[20rem] items-center rounded-full border border-border bg-muted px-3 py-1 text-xs font-medium normal-case text-foreground">
                     {selectedFileLabel}
                   </span>
                 ) : null}
@@ -1036,7 +1036,7 @@ export function AgentWorkspaceBrowserPanel(props: {
             )}
           >
             <div className="-mx-1 custom-scrollbar overflow-x-auto pb-1">
-              <div className="flex min-w-max items-center gap-2 px-1 text-label-md uppercase text-muted-foreground">
+              <div className="flex min-w-max items-center gap-2 px-1 text-xs uppercase text-muted-foreground">
                 <Button
                   variant={searchPath === "" ? "default" : "secondary"}
                   size="xs"
@@ -1081,13 +1081,13 @@ export function AgentWorkspaceBrowserPanel(props: {
             )}
           >
             {directoryQuery.isLoading ? (
-              <div className="rounded-2xl border border-dashed border-border bg-muted px-4 py-6 text-body-md text-muted-foreground">
+              <div className="rounded-2xl border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
                 워크스페이스 트리 로딩 중...
               </div>
             ) : null}
 
             {directoryQuery.isError ? (
-              <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-body-md text-destructive">
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm text-destructive">
                 {directoryQuery.error instanceof Error
                   ? directoryQuery.error.message
                   : "워크스페이스 트리를 불러올 수 없습니다."}

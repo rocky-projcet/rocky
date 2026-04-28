@@ -85,7 +85,7 @@ export const MD_TEMPLATE_WIZARD_STEPS: MdTemplateWizardStep[] = [
   {
     id: "review",
     title: "저장 확인",
-    prompt: "Rocky가 만든 템플릿 초안을 확인하고 저장합니다.",
+    prompt: "Rocky가 만든 스킬 초안을 확인하고 저장합니다.",
     helper: "저장하면 Rocky가 실행할 업무 기준으로 연결합니다.",
   },
 ];
@@ -272,7 +272,7 @@ function inferTitle(answer: string, category: MdTemplateCategory): string {
     return triggerLabel;
   }
 
-  return `${getTemplateCategoryOption(category).title} 템플릿`;
+  return `${getTemplateCategoryOption(category).title} 스킬`;
 }
 
 function inferDescription(answer: string, category: MdTemplateCategory): string {
@@ -436,7 +436,7 @@ export function analyzeTemplateWizardAnswer(input: {
 
 export function normalizeTemplateDraft(draft: MdTemplateDraft): MdTemplateDraft {
   const option = getTemplateCategoryOption(draft.category);
-  const title = draft.title.trim() || `${option.title} 템플릿`;
+  const title = draft.title.trim() || `${option.title} 스킬`;
   const description = draft.description.trim() || option.description;
   const triggerLabel = draft.triggerLabel.trim() || option.triggerLabel;
   const requiredInputs =
@@ -722,7 +722,7 @@ export function buildTemplateRunPrompt(
   const outputFiles =
     normalized.outputFiles && normalized.outputFiles.length > 0
       ? normalized.outputFiles.map((name) => `- ${name}`).join("\n")
-      : "- 템플릿에 고정 output 파일 경로가 지정되지 않았습니다.";
+      : "- 스킬에 고정 output 파일 경로가 지정되지 않았습니다.";
   const userBrief = options.userBrief?.trim()
     ? options.userBrief.trim()
     : "추가 요청 없음";

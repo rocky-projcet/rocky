@@ -1,15 +1,21 @@
 import {
   Navigate,
   createBrowserRouter,
+  useParams,
 } from "react-router-dom";
 
+function RedirectTemplateEditToSkill() {
+  const { templateId } = useParams<{ templateId: string }>();
+  return <Navigate to={`/skills/${encodeURIComponent(templateId ?? "")}`} replace />;
+}
+
 import { AppShell } from "../shared/components/app-shell";
-import { DebugModeOnly } from "../shared/components/debug-mode-only";
 import { PageState } from "../shared/components/page-state";
 import { AccountPage } from "../domains/codex/pages/account-page";
 import { AgentDetailPage } from "../domains/agent/pages/agent-detail-page";
 import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
+import { AgentNewPage } from "../domains/agent/pages/agent-new-page";
 import { WorkspaceFilePreviewPage } from "../domains/agent/pages/workspace-file-preview-page";
 import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
 import { HomePage, RockyTaskDetailPage } from "../domains/rocky/pages/home-page";
@@ -19,6 +25,12 @@ import {
   TemplateBuilderPage,
   TemplatesPage,
 } from "../domains/template/pages/templates-page";
+import { TemplatesArchivedPage } from "../domains/template/pages/templates-archived-page";
+import { SkillsPage } from "../domains/skill/pages/skills-page";
+import { SkillsArchivedPage } from "../domains/skill/pages/skills-archived-page";
+import { SkillNewPage } from "../domains/skill/pages/skill-new-page";
+import { SkillDetailPage } from "../domains/skill/pages/skill-detail-page";
+import { SkillTemplateDetailPage } from "../domains/skill/pages/skill-template-detail-page";
 import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
 import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
 
@@ -48,6 +60,10 @@ export const router = createBrowserRouter([
         element: <AgentsPage />,
       },
       {
+        path: "agents/new",
+        element: <AgentNewPage />,
+      },
+      {
         path: "templates",
         element: <TemplatesPage />,
       },
@@ -57,7 +73,31 @@ export const router = createBrowserRouter([
       },
       {
         path: "templates/:templateId/edit",
-        element: <TemplateBuilderPage />,
+        element: <RedirectTemplateEditToSkill />,
+      },
+      {
+        path: "templates/archived",
+        element: <TemplatesArchivedPage />,
+      },
+      {
+        path: "templates/:kind",
+        element: <SkillTemplateDetailPage />,
+      },
+      {
+        path: "skills",
+        element: <SkillsPage />,
+      },
+      {
+        path: "skills/new",
+        element: <SkillNewPage />,
+      },
+      {
+        path: "skills/archived",
+        element: <SkillsArchivedPage />,
+      },
+      {
+        path: "skills/:skillId",
+        element: <SkillDetailPage />,
       },
       {
         path: "agents/archived",
@@ -72,15 +112,20 @@ export const router = createBrowserRouter([
         element: <SessionWorkspacePage />,
       },
       {
+        path: "admin",
+        element: <Navigate to="/admin/rocky" replace />,
+      },
+      {
+        path: "admin/rocky",
+        element: <RockyAgentPage />,
+      },
+      {
+        path: "admin/settings",
+        element: <AccountPage />,
+      },
+      {
         path: "rocky/agent",
-        element: (
-          <DebugModeOnly
-            title="Rocky 관리 화면은 디버그 모드에서만 표시합니다"
-            description="일반 모드에서는 Rocky를 홈에서 사용하고, Core 상태 관리는 전용 화면에서 분리해 확인합니다."
-          >
-            <RockyAgentPage />
-          </DebugModeOnly>
-        ),
+        element: <Navigate to="/admin/rocky" replace />,
       },
       {
         path: "runs",
@@ -98,11 +143,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "settings",
-        element: <AccountPage />,
+        element: <Navigate to="/admin/settings" replace />,
       },
       {
         path: "account",
-        element: <Navigate to="/settings" replace />,
+        element: <Navigate to="/admin/settings" replace />,
       }
     ],
   },

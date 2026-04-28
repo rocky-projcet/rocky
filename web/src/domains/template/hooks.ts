@@ -108,6 +108,14 @@ export function useMdTemplates() {
   }, []);
 
   const allTemplates = useMemo(() => userTemplates, [userTemplates]);
+  const activeTemplates = useMemo(
+    () => userTemplates.filter((entry) => !entry.archived),
+    [userTemplates],
+  );
+  const archivedTemplates = useMemo(
+    () => userTemplates.filter((entry) => entry.archived === true),
+    [userTemplates],
+  );
 
   const replaceTemplate = useCallback((template: MdTemplateDefinition) => {
     setUserTemplates((current) => {
@@ -190,10 +198,56 @@ export function useMdTemplates() {
     [userTemplates]
   );
 
+  const archiveTemplate = useCallback(
+    (templateId: string) => {
+      const now = new Date().toISOString();
+      const next = userTemplates.map((entry) =>
+        entry.id === templateId ? { ...entry, archived: true, updatedAt: now } : entry,
+      );
+      writeUserTemplates(next);
+      setUserTemplates(next);
+    },
+    [userTemplates],
+  );
+
+  const restoreTemplate = useCallback(
+    (templateId: string) => {
+      const now = new Date().toISOString();
+      const next = userTemplates.map((entry) =>
+        entry.id === templateId ? { ...entry, archived: false, updatedAt: now } : entry,
+      );
+      writeUserTemplates(next);
+      setUserTemplates(next);
+    },
+    [userTemplates],
+  );
+
+  const updateTemplate = useCallback(
+    (
+      templateId: string,
+      patch: Partial<Pick<MdTemplateDefinition, "title" | "description">>,
+    ) => {
+      const now = new Date().toISOString();
+      const nextTemplates = userTemplates.map((template) =>
+        template.id === templateId
+          ? { ...template, ...patch, updatedAt: now }
+          : template,
+      );
+      writeUserTemplates(nextTemplates);
+      setUserTemplates(nextTemplates);
+    },
+    [userTemplates],
+  );
+
   return {
     allTemplates,
+    activeTemplates,
+    archivedTemplates,
+    archiveTemplate,
+    restoreTemplate,
     deleteTemplate,
     saveTemplate,
+    updateTemplate,
     userTemplates,
   };
 }

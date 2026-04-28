@@ -1445,7 +1445,7 @@ export function PptxArtifactPreview(props: {
 
   if (pdfPreviewState.kind === "loading") {
     return (
-      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md text-muted-foreground">
+      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-sm text-muted-foreground">
         PPT/PPTX를 PDF 미리보기로 변환하는 중입니다.
       </div>
     );
@@ -1460,7 +1460,7 @@ export function PptxArtifactPreview(props: {
           className="h-full min-h-[28rem] w-full"
           aria-label={`${props.name} PDF 변환 미리보기`}
         >
-          <div className="flex h-full min-h-[28rem] items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+          <div className="flex h-full min-h-[28rem] items-center justify-center px-6 text-center text-sm text-muted-foreground">
             브라우저에서 PDF 인라인 미리보기를 지원하지 않습니다. 다운로드를 사용할 수 있습니다.
           </div>
         </object>
@@ -1470,7 +1470,7 @@ export function PptxArtifactPreview(props: {
 
   if (state.kind === "unsupported") {
     return (
-      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md leading-6 text-muted-foreground">
+      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-sm leading-6 text-muted-foreground">
         구형 `.ppt` 파일은 브라우저 내장 뷰어로 안전하게 렌더링할 수 없습니다.
         {pdfPreviewState.kind === "error"
           ? ` PDF 변환도 실패했습니다. ${pdfPreviewState.message}`
@@ -1481,7 +1481,7 @@ export function PptxArtifactPreview(props: {
 
   if (state.kind === "loading") {
     return (
-      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md text-muted-foreground">
+      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-sm text-muted-foreground">
         PPTX 슬라이드를 불러오는 중입니다.
       </div>
     );
@@ -1489,7 +1489,7 @@ export function PptxArtifactPreview(props: {
 
   if (state.kind === "error") {
     return (
-      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md leading-6 text-muted-foreground">
+      <div className="flex h-full min-h-[26rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-sm leading-6 text-muted-foreground">
         PPTX 미리보기를 불러오지 못했습니다. {state.message}
       </div>
     );
@@ -1511,10 +1511,10 @@ export function PptxArtifactPreview(props: {
     <div className="flex h-full min-h-[28rem] flex-col gap-3">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3 py-2">
         <div className="min-w-0">
-          <div className="truncate text-body-sm font-semibold text-foreground">
+          <div className="truncate text-xs font-semibold text-foreground">
             {slide.title}
           </div>
-          <div className="text-label-md text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {slideIndex + 1} / {deck.slides.length}
           </div>
         </div>

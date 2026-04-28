@@ -1,7 +1,12 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowRight, LayoutTemplate, ListTodo, Search as SearchIcon } from "lucide-react";
+import { useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { ArrowRight, Bot, ListTodo, Sparkles, X } from "lucide-react";
 
+import { useAgentsQuery } from "@/domains/agent/hooks";
+import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
+import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
+import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
+import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
   formatRockyTaskDateTime,
@@ -14,10 +19,20 @@ import {
 } from "@/domains/rocky/lib/rocky-task-model";
 import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
+import type { AgentRecord } from "@/domains/agent/types";
+import type { RockyChatRecord } from "@/domains/rocky/types";
+import { PageContainer } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
-import { Input } from "@/shared/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { cn } from "@/shared/lib/utils";
+
+const TABS = [
+  { value: "tasks", label: "작업 기록", icon: ListTodo },
+  { value: "skills", label: "스킬", icon: Sparkles },
+  { value: "agents", label: "에이전트", icon: Bot },
+] as const;
+
+type SearchTab = (typeof TABS)[number]["value"];
 
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase("ko-KR");
@@ -37,192 +52,370 @@ function templateMatches(template: MdTemplateDefinition, query: string): boolean
   ].some((value) => normalized(value).includes(query));
 }
 
+function chatMatches(
+  chat: RockyChatRecord,
+  templates: MdTemplateDefinition[],
+  query: string,
+): boolean {
+  if (!query) {
+    return true;
+  }
+
+  const group = getRockyTaskTemplateGroup(chat, templates);
+  return [
+    chat.title,
+    group.label,
+    getRockyTaskRequest(chat),
+    getRockyTaskSummary(chat),
+  ].some((value) => normalized(value).includes(query));
+}
+
+function agentMatches(agent: AgentRecord, query: string): boolean {
+  if (!query) {
+    return true;
+  }
+
+  return [agent.name, agent.description].some((value) => normalized(value).includes(query));
+}
+
 export function SearchPage() {
-  const [query, setQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get("q") ?? "";
+  const tabParam = searchParams.get("tab");
+  const userPickedTab: SearchTab | null = TABS.some((tab) => tab.value === tabParam)
+    ? (tabParam as SearchTab)
+    : null;
   const normalizedQuery = normalized(query);
+
+  function setActiveTab(next: string) {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", next);
+    setSearchParams(nextParams, { replace: true });
+  }
+
+  function clearQuery() {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("q");
+    setSearchParams(nextParams, { replace: true });
+  }
+
   const { userTemplates } = useMdTemplates();
   const rockyChatsQuery = useRockyChatsQuery();
+  const agentsQuery = useAgentsQuery({ includeArchived: false });
   const chats = rockyChatsQuery.data ?? [];
-  const templateResults = useMemo(
+  const agents = useMemo(
     () =>
-      userTemplates
-        .filter((template) => templateMatches(template, normalizedQuery))
-        .slice(0, 12),
-    [normalizedQuery, userTemplates]
+      filterUserManagedAgents(agentsQuery.data ?? []).filter(
+        (agent) => agent.lifecycle === "active",
+      ),
+    [agentsQuery.data],
   );
+
   const taskResults = useMemo(
     () =>
       chats
-        .filter((chat) => {
-          if (!normalizedQuery) {
-            return true;
-          }
-
-          const group = getRockyTaskTemplateGroup(chat, userTemplates);
-          return [
-            chat.title,
-            group.label,
-            getRockyTaskRequest(chat),
-            getRockyTaskSummary(chat),
-          ].some((value) => normalized(value).includes(normalizedQuery));
-        })
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 12),
-    [chats, normalizedQuery, userTemplates]
+        .filter((chat) => chatMatches(chat, userTemplates, normalizedQuery))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [chats, normalizedQuery, userTemplates],
+  );
+  const skillResults = useMemo(
+    () => userTemplates.filter((template) => templateMatches(template, normalizedQuery)),
+    [normalizedQuery, userTemplates],
+  );
+  const agentResults = useMemo(
+    () => agents.filter((agent) => agentMatches(agent, normalizedQuery)),
+    [agents, normalizedQuery],
   );
 
+  // If user hasn't explicitly picked a tab, default to the first tab that has results.
+  // Falls back to "tasks" when everything is empty.
+  const autoTab: SearchTab = (() => {
+    if (taskResults.length > 0) return "tasks";
+    if (skillResults.length > 0) return "skills";
+    if (agentResults.length > 0) return "agents";
+    return "tasks";
+  })();
+  const activeTab: SearchTab = userPickedTab ?? autoTab;
+
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+    <PageContainer>
       <header>
-        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <SearchIcon className="size-4" />
-          검색
-        </div>
-        <h1 className="mt-2 text-2xl font-semibold tracking-normal text-foreground">
-          템플릿과 작업 찾기
+        <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+          {query ? <>‘{query}’ 검색 결과</> : <>검색</>}
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          자주 쓰는 템플릿을 바로 실행하거나 진행 중인 작업으로 빠르게 이동합니다.
+          에이전트나 스킬, 작업 기록을 검색하세요. 상단 검색창에서 키워드를 입력해 결과를 좁힐 수 있습니다.
         </p>
+        {query ? (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={clearQuery}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted"
+            >
+              <span>{query}</span>
+              <X className="size-3.5 text-muted-foreground" />
+            </button>
+          </div>
+        ) : null}
       </header>
 
-      <div className="relative">
-        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          autoFocus
-          placeholder="템플릿 이름, 작업 요약, 파일 기준으로 검색"
-          className="h-11 pl-9"
-        />
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
+        <TabsList variant="line">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const count =
+              tab.value === "tasks"
+                ? taskResults.length
+                : tab.value === "skills"
+                  ? skillResults.length
+                  : agentResults.length;
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <section>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <LayoutTemplate className="size-4" />
-              템플릿
-            </h2>
-            <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
-              {templateResults.length}개
-            </Badge>
-          </div>
+            return (
+              <TabsTrigger key={tab.value} value={tab.value}>
+                <Icon className="size-4" />
+                {tab.label}
+                <Badge
+                  variant="outline"
+                  className="ml-1 h-5 border-border bg-muted px-1.5 text-[10px] text-muted-foreground"
+                >
+                  {count}
+                </Badge>
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
 
-          <div className="grid gap-2">
-            {templateResults.length > 0 ? (
-              templateResults.map((template) => (
-                <article key={template.id} className="rounded-lg border bg-card p-4 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <Badge
-                        variant="outline"
-                        className="h-6 border-border bg-muted px-2 text-[11px] text-muted-foreground"
-                      >
-                        {template.triggerLabel}
-                      </Badge>
-                      <h3 className="mt-3 truncate text-sm font-semibold text-foreground">
-                        {template.title}
-                      </h3>
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                        {template.description}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      render={<Link to={`/?templateId=${encodeURIComponent(template.id)}`} />}
-                    >
-                      시작
-                      <ArrowRight className="size-4" />
-                    </Button>
-                  </div>
-                </article>
-              ))
-            ) : (
-              <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
-                일치하는 템플릿이 없습니다.
-              </div>
-            )}
-          </div>
-        </section>
+        <TabsContent value="tasks">
+          <TaskResults
+            chats={taskResults}
+            templates={userTemplates}
+            isLoading={rockyChatsQuery.isLoading}
+            query={normalizedQuery}
+          />
+        </TabsContent>
+        <TabsContent value="skills">
+          <SkillResults templates={skillResults} query={normalizedQuery} />
+        </TabsContent>
+        <TabsContent value="agents">
+          <AgentResults
+            agents={agentResults}
+            isLoading={agentsQuery.isLoading}
+            query={normalizedQuery}
+          />
+        </TabsContent>
+      </Tabs>
+    </PageContainer>
+  );
+}
 
-        <section>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <ListTodo className="size-4" />
-              작업
-            </h2>
-            <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
-              {taskResults.length}개
-            </Badge>
-          </div>
-
-          <div className="grid gap-2">
-            {rockyChatsQuery.isLoading ? (
-              <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
-                작업을 불러오는 중입니다.
-              </div>
-            ) : taskResults.length > 0 ? (
-              taskResults.map((chat) => {
-                const status = getRockyTaskStatus(chat);
-                const group = getRockyTaskTemplateGroup(chat, userTemplates);
-
-                return (
-                  <article key={chat.id} className="rounded-lg border bg-card p-4 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "h-6 border px-2 text-[11px]",
-                              rockyTaskStatusTone(status)
-                            )}
-                          >
-                            {rockyTaskStatusLabel(status)}
-                          </Badge>
-                          <Badge
-                            variant="outline"
-                            className="h-6 border-border bg-muted px-2 text-[11px] text-muted-foreground"
-                          >
-                            {group.label}
-                          </Badge>
-                        </div>
-                        <h3 className="mt-3 truncate text-sm font-semibold text-foreground">
-                          {chat.title || getRockyTaskRequest(chat)}
-                        </h3>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                          {getRockyTaskSummary(chat)}
-                        </p>
-                        <div className="mt-2 text-[11px] text-muted-foreground">
-                          {formatRockyTaskDateTime(chat.updatedAt)}
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        render={<Link to={`/tasks/${encodeURIComponent(chat.id)}`} />}
-                      >
-                        열기
-                        <ArrowRight className="size-4" />
-                      </Button>
-                    </div>
-                  </article>
-                );
-              })
-            ) : (
-              <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
-                일치하는 작업이 없습니다.
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-12 text-center text-sm text-muted-foreground">
+      {message}
     </div>
+  );
+}
+
+function TaskResults({
+  chats,
+  templates,
+  isLoading,
+  query,
+}: {
+  chats: RockyChatRecord[];
+  templates: MdTemplateDefinition[];
+  isLoading: boolean;
+  query: string;
+}) {
+  if (isLoading) {
+    return <EmptyState message="작업 기록을 불러오는 중입니다." />;
+  }
+
+  if (chats.length === 0) {
+    return (
+      <EmptyState
+        message={query ? "일치하는 작업 기록이 없습니다." : "아직 작업 기록이 없습니다."}
+      />
+    );
+  }
+
+  return (
+    <ul className="grid gap-2">
+      {chats.map((chat) => {
+        const status = getRockyTaskStatus(chat);
+        const group = getRockyTaskTemplateGroup(chat, templates);
+
+        return (
+          <li key={chat.id}>
+            <Link
+              to={`/tasks/${encodeURIComponent(chat.id)}`}
+              className="block rounded-lg border bg-card p-4 no-underline shadow-sm transition hover:border-primary/40 hover:shadow-md"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        rockyTaskStatusTone(status),
+                      )}
+                    >
+                      {rockyTaskStatusLabel(status)}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="h-6 border-border bg-muted px-2 text-[11px] text-muted-foreground"
+                    >
+                      {group.label}
+                    </Badge>
+                  </div>
+                  <h3 className="mt-2 truncate text-sm font-semibold text-foreground">
+                    {chat.title || getRockyTaskRequest(chat) || "제목 없음"}
+                  </h3>
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                    {getRockyTaskSummary(chat)}
+                  </p>
+                  <div className="mt-2 text-[11px] text-muted-foreground">
+                    {formatRockyTaskDateTime(chat.updatedAt)}
+                  </div>
+                </div>
+                <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+              </div>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function SkillResults({
+  templates,
+  query,
+}: {
+  templates: MdTemplateDefinition[];
+  query: string;
+}) {
+  if (templates.length === 0) {
+    return (
+      <EmptyState
+        message={query ? "일치하는 스킬이 없습니다." : "아직 등록된 스킬이 없습니다."}
+      />
+    );
+  }
+
+  return (
+    <ul className="grid gap-2">
+      {templates.map((template) => (
+        <li key={template.id}>
+          <SkillSearchResult template={template} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SkillSearchResult({ template }: { template: MdTemplateDefinition }) {
+  const theme = skillKindTheme(template);
+  const Icon = theme.Icon;
+
+  return (
+    <Link
+      to={`/skills/${encodeURIComponent(template.id)}`}
+      className="block rounded-lg border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className={cn("flex size-10 items-center justify-center rounded-xl", theme.icon)}>
+            <Icon className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <span
+              className={cn(
+                "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                theme.chip,
+              )}
+            >
+              {template.triggerLabel}
+            </span>
+            <h3 className="mt-2 truncate text-sm font-semibold text-foreground">
+              {template.title}
+            </h3>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+              {template.description}
+            </p>
+          </div>
+        </div>
+        <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+      </div>
+    </Link>
+  );
+}
+
+function AgentResults({
+  agents,
+  isLoading,
+  query,
+}: {
+  agents: AgentRecord[];
+  isLoading: boolean;
+  query: string;
+}) {
+  if (isLoading) {
+    return <EmptyState message="에이전트를 불러오는 중입니다." />;
+  }
+
+  if (agents.length === 0) {
+    return (
+      <EmptyState
+        message={query ? "일치하는 에이전트가 없습니다." : "아직 활성 에이전트가 없습니다."}
+      />
+    );
+  }
+
+  return (
+    <ul className="grid gap-2">
+      {agents.map((agent) => (
+        <li key={agent.id}>
+          <AgentSearchResult agent={agent} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AgentSearchResult({ agent }: { agent: AgentRecord }) {
+  const { emoji } = useAgentEmoji(agent.id);
+  const tinted = agent.color
+    ? {
+        borderColor: `color-mix(in srgb, ${agent.color} 32%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 6%, var(--card))`,
+      }
+    : undefined;
+
+  return (
+    <Link
+      to={`/agents/${encodeURIComponent(agent.id)}`}
+      className="block rounded-lg border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      style={tinted}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <AgentAvatar emoji={emoji} color={agent.color} size="md" />
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold text-foreground">
+              {agent.name}
+            </h3>
+            {agent.description ? (
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                {agent.description}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+      </div>
+    </Link>
   );
 }

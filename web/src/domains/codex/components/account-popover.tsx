@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { LogOut, Settings } from "lucide-react";
+import { LogOut } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
@@ -9,7 +8,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/shared/ui/popover";
-import { Separator } from "@/shared/ui/separator";
 import {
   useLogoutClaudeAccountMutation,
   useLogoutCodexAccountMutation,
@@ -17,6 +15,14 @@ import {
 } from "../hooks";
 import { ProviderGlyph } from "./provider-glyph";
 import { providerAccountLabel, providerLabel } from "../lib/provider-display";
+
+function initialFromAccount(label: string | null): string {
+  if (!label) {
+    return "?";
+  }
+  const first = label.trim().charAt(0);
+  return first ? first.toUpperCase() : "?";
+}
 
 export function AccountPopover() {
   const [open, setOpen] = useState(false);
@@ -30,23 +36,25 @@ export function AccountPopover() {
     return null;
   }
 
-  const initials = providers.map((provider) => provider.provider[0].toUpperCase()).join("");
+  const primary = providers[0];
+  const primaryAccount = providerAccountLabel(primary.accountInfo) ?? primary.statusText;
+  const initial = initialFromAccount(primaryAccount);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={<Button variant="ghost" size="icon" />}
-      >
-        <Avatar className="size-7">
-          <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+      <PopoverTrigger render={<Button variant="ghost" size="icon" className="rounded-full" />}>
+        <Avatar className="size-8" size="sm">
+          <AvatarFallback className="bg-primary/10 text-sm font-semibold text-primary">
+            {initial}
+          </AvatarFallback>
         </Avatar>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-0">
         <div className="space-y-3 p-4">
           <div>
-            <p className="text-sm font-medium text-foreground">연결된 AI 서비스</p>
+            <p className="text-sm font-medium text-foreground">로그인된 계정</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              현재 로그인된 AI 서비스 계정 상태입니다.
+              현재 사용 중인 AI 서비스 계정입니다.
             </p>
           </div>
 
@@ -89,18 +97,6 @@ export function AccountPopover() {
               </div>
             ))}
           </div>
-        </div>
-
-        <Separator />
-        <div className="px-2 py-2">
-          <Link
-            to="/settings"
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground no-underline"
-            onClick={() => setOpen(false)}
-          >
-            <Settings size={16} />
-            설정
-          </Link>
         </div>
       </PopoverContent>
     </Popover>

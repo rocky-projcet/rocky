@@ -201,8 +201,8 @@ function JsonPreview(props: {
 }) {
   return (
     <Card className="gap-0 bg-muted/90 p-5">
-      <p className="text-label-md uppercase  text-muted-foreground">{props.title}</p>
-      <pre className="mt-4 custom-scrollbar overflow-x-auto rounded-2xl bg-foreground p-4 text-label-md leading-6 text-primary-foreground">
+      <p className="text-xs uppercase  text-muted-foreground">{props.title}</p>
+      <pre className="mt-4 custom-scrollbar overflow-x-auto rounded-2xl bg-foreground p-4 text-xs leading-6 text-primary-foreground">
         {JSON.stringify(props.value, null, 2)}
       </pre>
     </Card>
@@ -215,7 +215,7 @@ function InspectorCard(props: {
 }) {
   return (
     <Card className="min-w-0 gap-0 bg-muted/90 p-5">
-      <p className="text-label-md uppercase  text-muted-foreground">{props.title}</p>
+      <p className="text-xs uppercase  text-muted-foreground">{props.title}</p>
       <div className="mt-4">{props.children}</div>
     </Card>
   );
@@ -420,11 +420,11 @@ export function RunInspectorPage() {
       <Card className="gap-0 bg-foreground p-6 text-primary-foreground">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <p className="text-label-md uppercase  text-primary-foreground/60">{run.id}</p>
-            <h3 className="mt-3 font-heading text-headline-lg font-semibold leading-tight">
+            <p className="text-xs uppercase  text-primary-foreground/60">{run.id}</p>
+            <h3 className="mt-3 text-2xl font-semibold tracking-normal font-semibold leading-tight">
               대화 상세
             </h3>
-            <p className="mt-3 max-w-3xl text-body-md leading-7 text-primary-foreground/80">
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-primary-foreground/80">
               메시지 흐름, 경고, stderr, 아티팩트를 한 화면에서 확인합니다.
               세션 트랜스크립트, 실시간 상태 카드, 또는 직접 링크에서 열 수 있습니다.
             </p>
@@ -440,7 +440,7 @@ export function RunInspectorPage() {
             </Button>
             <Link
               to={`/agents/${run.agentId}/sessions/${run.sessionId}`}
-              className="inline-flex rounded-full border border-border bg-card px-4 py-2 text-body-md font-semibold !text-foreground no-underline visited:no-underline visited:!text-foreground shadow-md transition hover:bg-secondary"
+              className="inline-flex rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold !text-foreground no-underline visited:no-underline visited:!text-foreground shadow-md transition hover:bg-secondary"
             >
               세션 워크스페이스로 돌아가기
             </Link>
@@ -449,14 +449,14 @@ export function RunInspectorPage() {
 
         <div className="mt-6 grid gap-3 xl:grid-cols-2">
           <div className="rounded-2xl border border-card/10 bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">프롬프트 미리보기</div>
-            <div className="mt-2 text-body-md leading-7 text-primary-foreground">
+            <div className="text-xs uppercase -wide text-primary-foreground/60">프롬프트 미리보기</div>
+            <div className="mt-2 text-sm leading-7 text-primary-foreground">
               {promptPreview || "프롬프트 미리보기가 없습니다."}
             </div>
           </div>
           <div className="rounded-2xl border border-card/10 bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">결과 미리보기</div>
-            <div className="mt-2 text-body-md leading-7 text-primary-foreground">
+            <div className="text-xs uppercase -wide text-primary-foreground/60">결과 미리보기</div>
+            <div className="mt-2 text-sm leading-7 text-primary-foreground">
               {summaryPreview || "아직 결과 요약이 없습니다."}
             </div>
           </div>
@@ -464,11 +464,11 @@ export function RunInspectorPage() {
 
         <div className="mt-6 grid gap-3 md:grid-cols-3 xl:grid-cols-7">
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">상태</div>
+            <div className="text-xs uppercase -wide text-primary-foreground/60">상태</div>
             <div className="mt-2">
               <Badge
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-full px-3 py-1 text-body-md font-semibold",
+                  "inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold",
                   statusTone(result.status),
                 )}
               >
@@ -478,42 +478,42 @@ export function RunInspectorPage() {
             </div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">모델</div>
-            <div className="mt-2 text-body-md leading-6">
+            <div className="text-xs uppercase -wide text-primary-foreground/60">모델</div>
+            <div className="mt-2 text-sm leading-6">
               {formatRuntimeModelLabel(run.model)}
             </div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">추론 수준</div>
-            <div className="mt-2 text-body-md leading-6">
+            <div className="text-xs uppercase -wide text-primary-foreground/60">추론 수준</div>
+            <div className="mt-2 text-sm leading-6">
               {formatReasoningEffort(run.reasoningEffort)}
             </div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">응답 속도</div>
-            <div className="mt-2 text-body-md leading-6">
+            <div className="text-xs uppercase -wide text-primary-foreground/60">응답 속도</div>
+            <div className="mt-2 text-sm leading-6">
               {formatServiceTier(run.serviceTier)}
             </div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">경과</div>
-            <div className="mt-2 text-body-md leading-6">{elapsedLabel ?? "n/a"}</div>
+            <div className="text-xs uppercase -wide text-primary-foreground/60">경과</div>
+            <div className="mt-2 text-sm leading-6">{elapsedLabel ?? "n/a"}</div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">시작</div>
-            <div className="mt-2 text-body-md leading-6">{formatTimestamp(run.startedAt)}</div>
+            <div className="text-xs uppercase -wide text-primary-foreground/60">시작</div>
+            <div className="mt-2 text-sm leading-6">{formatTimestamp(run.startedAt)}</div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">종료</div>
-            <div className="mt-2 text-body-md leading-6">{formatTimestamp(run.endedAt)}</div>
+            <div className="text-xs uppercase -wide text-primary-foreground/60">종료</div>
+            <div className="mt-2 text-sm leading-6">{formatTimestamp(run.endedAt)}</div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">이벤트</div>
-            <div className="mt-2 text-title-md font-medium">{events.length}</div>
+            <div className="text-xs uppercase -wide text-primary-foreground/60">이벤트</div>
+            <div className="mt-2 text-sm font-semibold font-medium">{events.length}</div>
           </div>
           <div className="rounded-2xl bg-card/6 px-4 py-4">
-            <div className="text-label-md uppercase -wide text-primary-foreground/60">아티팩트</div>
-            <div className="mt-2 text-title-md font-medium">{artifacts.length}</div>
+            <div className="text-xs uppercase -wide text-primary-foreground/60">아티팩트</div>
+            <div className="mt-2 text-sm font-semibold font-medium">{artifacts.length}</div>
           </div>
         </div>
       </Card>
@@ -523,7 +523,7 @@ export function RunInspectorPage() {
           {hiddenWarningCount > 0 ? (
             <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-body-md leading-7 text-muted-foreground">
+                <p className="text-sm leading-7 text-muted-foreground">
                   기본적으로 타임라인에서 경고 이벤트 {hiddenWarningCount}개가 숨겨져 있습니다.
                 </p>
                 <Button
@@ -538,19 +538,19 @@ export function RunInspectorPage() {
           ) : null}
 
           {timelineError ? (
-            <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-body-md leading-7 text-destructive">
+            <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-4 text-sm leading-7 text-destructive">
               {timelineError}
             </div>
           ) : null}
 
           {eventListLoading ? (
-            <div className="rounded-2xl border border-dashed border-border bg-card px-4 py-8 text-body-md text-muted-foreground">
+            <div className="rounded-2xl border border-dashed border-border bg-card px-4 py-8 text-sm text-muted-foreground">
               정규화된 이벤트 타임라인 로딩 중입니다.
             </div>
           ) : null}
 
           {!eventListLoading && visibleEvents.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-card px-4 py-8 text-body-md text-muted-foreground">
+            <div className="rounded-2xl border border-dashed border-border bg-card px-4 py-8 text-sm text-muted-foreground">
               {events.length > 0 && hiddenWarningCount > 0 && !showTimelineWarnings
                 ? "경고 이벤트만 기록되었으며 현재 숨겨져 있습니다."
                 : live
@@ -583,19 +583,19 @@ export function RunInspectorPage() {
                       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Badge className="rounded-full bg-foreground/5 px-2 py-1 text-label-md font-semibold uppercase -wide">
+                            <Badge className="rounded-full bg-foreground/5 px-2 py-1 text-xs font-semibold uppercase -wide">
                               {event.type}
                             </Badge>
-                            <span className="text-label-md uppercase  opacity-60">
+                            <span className="text-xs uppercase  opacity-60">
                               {event.rawType}
                             </span>
                           </div>
                           {canExpand && expanded ? (
-                            <pre className="mt-3 custom-scrollbar overflow-x-auto whitespace-pre-wrap break-words font-sans text-body-md leading-7">
+                            <pre className="mt-3 custom-scrollbar overflow-x-auto whitespace-pre-wrap break-words font-sans text-sm leading-7">
                               {fullText}
                             </pre>
                           ) : (
-                            <p className="mt-3 text-body-md leading-7">{summary}</p>
+                            <p className="mt-3 text-sm leading-7">{summary}</p>
                           )}
                           {canExpand ? (
                             <Button
@@ -613,7 +613,7 @@ export function RunInspectorPage() {
                             </Button>
                           ) : null}
                         </div>
-                        <div className="shrink-0 text-label-md uppercase  opacity-60">
+                        <div className="shrink-0 text-xs uppercase  opacity-60">
                           {formatTimestamp(event.occurredAt)}
                         </div>
                       </div>
@@ -627,7 +627,7 @@ export function RunInspectorPage() {
 
         <div className="space-y-5">
           <InspectorCard title="결과 페이로드">
-            <dl className="space-y-4 text-body-md text-muted-foreground">
+            <dl className="space-y-4 text-sm text-muted-foreground">
               <div>
                 <dt className="font-semibold text-foreground">런타임 세션</dt>
                 <dd className="mt-1 break-all leading-6">
@@ -671,12 +671,12 @@ export function RunInspectorPage() {
 
           <InspectorCard title="경고">
             {result.warnings.length === 0 ? (
-              <p className="text-body-md text-muted-foreground">기록된 경고가 없습니다.</p>
+              <p className="text-sm text-muted-foreground">기록된 경고가 없습니다.</p>
             ) : (
               <div className="space-y-3">
                 <div className="rounded-2xl border border-border bg-card px-4 py-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-body-md leading-7 text-muted-foreground">
+                    <p className="text-sm leading-7 text-muted-foreground">
                       경고 {result.warnings.length}개가 캡처되었습니다.
                       재연결 및 전송 경고가 많을 수 있어 기본적으로 숨겨져 있습니다.
                     </p>
@@ -695,7 +695,7 @@ export function RunInspectorPage() {
                     {result.warnings.map((warning, index) => (
                       <div
                         key={`${warningMessage(warning)}-${index}`}
-                        className="rounded-2xl border border-border bg-secondary px-4 py-3 text-body-md leading-6 text-secondary-foreground"
+                        className="rounded-2xl border border-border bg-secondary px-4 py-3 text-sm leading-6 text-secondary-foreground"
                       >
                         {warningMessage(warning)}
                       </div>
@@ -708,13 +708,13 @@ export function RunInspectorPage() {
 
           <InspectorCard title="stderr">
             {result.stderr.length === 0 ? (
-              <p className="text-body-md text-muted-foreground">캡처된 stderr 출력이 없습니다.</p>
+              <p className="text-sm text-muted-foreground">캡처된 stderr 출력이 없습니다.</p>
             ) : (
               <div className="space-y-3">
                 {result.stderr.map((line, index) => (
                   <pre
                     key={`${line}-${index}`}
-                    className="custom-scrollbar overflow-x-auto rounded-2xl bg-foreground px-4 py-3 text-label-md leading-6 text-primary-foreground"
+                    className="custom-scrollbar overflow-x-auto rounded-2xl bg-foreground px-4 py-3 text-xs leading-6 text-primary-foreground"
                   >
                     {line}
                   </pre>
@@ -725,17 +725,17 @@ export function RunInspectorPage() {
 
           <InspectorCard title="아티팩트">
             {artifactsQuery.isLoading ? (
-              <p className="text-body-md text-muted-foreground">아티팩트 메타데이터 로딩 중입니다.</p>
+              <p className="text-sm text-muted-foreground">아티팩트 메타데이터 로딩 중입니다.</p>
             ) : null}
             {artifactsQuery.isError ? (
-              <p className="text-body-md text-destructive">
+              <p className="text-sm text-destructive">
                 {artifactsQuery.error instanceof Error
                   ? artifactsQuery.error.message
                   : "아티팩트 메타데이터를 불러올 수 없습니다."}
               </p>
             ) : null}
             {!artifactsQuery.isLoading && !artifactsQuery.isError && artifacts.length === 0 ? (
-              <p className="text-body-md text-muted-foreground">This run did not publish artifacts.</p>
+              <p className="text-sm text-muted-foreground">This run did not publish artifacts.</p>
             ) : null}
             {artifacts.length > 0 ? (
               <div className="space-y-3">

@@ -226,7 +226,7 @@ export function compactRockyTaskRequest(value: string): string {
     return brief;
   }
 
-  return title ? `${title} 실행` : "템플릿 실행";
+  return title ? `${title} 실행` : "스킬 실행";
 }
 
 export function getRockyTaskRequest(chat: RockyChatRecord): string {

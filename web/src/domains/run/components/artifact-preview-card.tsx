@@ -128,7 +128,7 @@ function ArtifactActionIconButton(props: {
 
 function UnsupportedArtifactPreviewMessage(props: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[18rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-body-md text-muted-foreground">
+    <div className="flex min-h-[18rem] items-center justify-center rounded-2xl border border-border bg-card px-6 text-center text-sm text-muted-foreground">
       {props.children}
     </div>
   );
@@ -269,7 +269,7 @@ function CompactArtifactName(props: { name: string }) {
   const label = (
     <span
       ref={setLabelElement}
-      className="block truncate text-body-md font-semibold text-foreground"
+      className="block truncate text-sm font-semibold text-foreground"
     >
       {props.name}
     </span>
@@ -296,7 +296,7 @@ function CompactArtifactName(props: { name: string }) {
         side="top"
         align="start"
         sideOffset={8}
-        className="max-w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-background/10 bg-foreground/98 px-3 py-2 text-body-sm leading-5 text-background shadow-2xl whitespace-normal break-all"
+        className="max-w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-background/10 bg-foreground/98 px-3 py-2 text-xs leading-5 text-background shadow-2xl whitespace-normal break-all"
       >
         {props.name}
       </TooltipContent>
@@ -401,7 +401,7 @@ export function ArtifactPreviewCard(props: {
 
           <div className="min-w-0">
             <CompactArtifactName name={props.artifact.name} />
-            <div className="mt-0.5 text-label-md text-muted-foreground">
+            <div className="mt-0.5 text-xs text-muted-foreground">
               {formatBytes(props.artifact.size)}
             </div>
           </div>
@@ -438,7 +438,7 @@ export function ArtifactPreviewCard(props: {
               <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 text-label-md uppercase text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-muted-foreground">
                       <span className="flex size-8 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
                         {props.artifact.presentation === "image" ? (
                           <ImageIcon size={16} />
@@ -458,7 +458,7 @@ export function ArtifactPreviewCard(props: {
                     <DialogTitle className="mt-3 min-w-0 text-xl font-semibold text-foreground">
                       {props.artifact.name}
                     </DialogTitle>
-                    <DialogDescription className="mt-1 break-all text-body-sm leading-6">
+                    <DialogDescription className="mt-1 break-all text-xs leading-6">
                       {props.artifact.role} · {props.artifact.contentType}
                     </DialogDescription>
                   </div>
@@ -510,7 +510,7 @@ export function ArtifactPreviewCard(props: {
                       className="h-full min-h-[28rem] w-full"
                       aria-label={`${props.artifact.name} PDF 미리보기`}
                     >
-                      <div className="flex h-full min-h-[28rem] items-center justify-center px-6 text-center text-body-md text-muted-foreground">
+                      <div className="flex h-full min-h-[28rem] items-center justify-center px-6 text-center text-sm text-muted-foreground">
                         브라우저에서 PDF 인라인 미리보기를 지원하지 않습니다. 상단의 열기나 다운로드를 사용할 수 있습니다.
                       </div>
                     </object>
@@ -583,14 +583,14 @@ export function ArtifactPreviewCard(props: {
 
       <div className="space-y-4 px-4 py-4">
         <div className="space-y-1">
-          <div className="text-label-md font-semibold uppercase -wide text-muted-foreground">
+          <div className="text-xs font-semibold uppercase -wide text-muted-foreground">
             {artifactLabel(props.artifact)}
           </div>
-          <div className="text-body-md font-semibold text-foreground">{props.artifact.name}</div>
-          <div className="text-label-md uppercase  text-muted-foreground">
+          <div className="text-sm font-semibold text-foreground">{props.artifact.name}</div>
+          <div className="text-xs uppercase  text-muted-foreground">
             {props.artifact.role} · {props.artifact.contentType}
           </div>
-          <div className="text-body-md leading-6 text-muted-foreground">
+          <div className="text-sm leading-6 text-muted-foreground">
             {artifactSupportText(props.artifact)}
             {" · "}
             {formatBytes(props.artifact.size)}
@@ -602,7 +602,7 @@ export function ArtifactPreviewCard(props: {
             <button
               type="button"
               onClick={handlePreview}
-              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-foreground visited:!text-foreground transition hover:bg-muted`}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-medium !text-foreground visited:!text-foreground transition hover:bg-muted`}
             >
               {supportsPowerPointPreview ? "PPT 보기" : "HTML 보기"}
             </button>
@@ -612,7 +612,7 @@ export function ArtifactPreviewCard(props: {
               href={previewHref}
               target="_blank"
               rel="noreferrer"
-              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-foreground visited:!text-foreground transition hover:bg-muted`}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-medium !text-foreground visited:!text-foreground transition hover:bg-muted`}
             >
               {props.artifact.previewable ? "미리보기 열기" : "미리보기 라우트"}
             </a>
@@ -622,7 +622,7 @@ export function ArtifactPreviewCard(props: {
               type="button"
               disabled={nativeOpenPending}
               onClick={handleNativeOpen}
-              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-foreground visited:!text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50`}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-medium !text-foreground visited:!text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50`}
             >
               {nativeOpenLabel}
             </button>
@@ -631,14 +631,14 @@ export function ArtifactPreviewCard(props: {
             href={downloadHref}
             target="_blank"
             rel="noreferrer"
-            className={`${ACTION_LINK_BASE} rounded-full border border-primary bg-primary px-3 py-1.5 text-body-md font-medium !text-primary-foreground visited:!text-primary-foreground transition hover:bg-primary/80`}
+            className={`${ACTION_LINK_BASE} rounded-full border border-primary bg-primary px-3 py-1.5 text-sm font-medium !text-primary-foreground visited:!text-primary-foreground transition hover:bg-primary/80`}
           >
             다운로드
           </a>
           {showInspectLink && props.runId ? (
             <Link
               to={`/runs/${props.runId}`}
-              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-body-md font-medium !text-secondary-foreground visited:!text-secondary-foreground transition hover:bg-secondary`}
+              className={`${ACTION_LINK_BASE} rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-medium !text-secondary-foreground visited:!text-secondary-foreground transition hover:bg-secondary`}
             >
               실행 검사
             </Link>
@@ -653,7 +653,7 @@ export function ArtifactPreviewCard(props: {
               <DialogTitle className="min-w-0 text-xl font-semibold text-foreground">
                 {props.artifact.name}
               </DialogTitle>
-              <DialogDescription className="mt-1 break-all text-body-sm leading-6">
+              <DialogDescription className="mt-1 break-all text-xs leading-6">
                 {props.artifact.role} · {props.artifact.contentType}
               </DialogDescription>
             </DialogHeader>

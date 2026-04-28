@@ -85,11 +85,22 @@ export function HeaderBreadcrumb() {
   const pathname = location.pathname;
   let title = "Rocky";
   if (pathname === "/") title = "홈";
-  if (pathname === "/agents/archived") title = "보관함";
-  else if (pathname.startsWith("/rocky/agent")) title = "Rocky 관리";
+  if (pathname === "/agents/archived") title = "내 에이전트 보관함";
+  else if (pathname === "/skills/archived") title = "스킬 보관함";
+  else if (pathname === "/templates/archived") title = "스킬 템플릿 보관함";
+  else if (pathname.startsWith("/skills")) title = "스킬";
+  else if (pathname.startsWith("/templates")) title = "스킬 템플릿";
+  else if (pathname.startsWith("/admin/rocky") || pathname.startsWith("/rocky/agent"))
+    title = "Rocky 관리";
   else if (pathname.startsWith("/runs/")) title = "대화 상세";
-  else if (pathname.startsWith("/settings") || pathname.startsWith("/account")) title = "설정";
-  else if (pathname.startsWith("/agents")) title = "에이전트";
+  else if (
+    pathname.startsWith("/admin/settings") ||
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/account")
+  )
+    title = "설정";
+  else if (pathname.startsWith("/admin")) title = "관리";
+  else if (pathname.startsWith("/agents")) title = "내 에이전트";
 
   return (
     <Breadcrumb>

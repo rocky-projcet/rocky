@@ -124,8 +124,8 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
       <Card className="flex h-full min-h-0 flex-col gap-5 p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-label-md uppercase text-muted-foreground">단일 작업</p>
-            <h4 className="mt-2 text-headline-sm font-semibold text-foreground">
+            <p className="text-xs uppercase text-muted-foreground">단일 작업</p>
+            <h4 className="mt-2 text-lg font-semibold font-semibold text-foreground">
               저장된 재사용 작업
             </h4>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -153,20 +153,20 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl bg-muted/70 px-4 py-4">
-            <p className="text-label-md uppercase text-muted-foreground">활성 작업</p>
-            <div className="mt-2 text-title-md font-semibold text-foreground">
+            <p className="text-xs uppercase text-muted-foreground">활성 작업</p>
+            <div className="mt-2 text-sm font-semibold font-semibold text-foreground">
               {summary.activeCount}
             </div>
           </div>
           <div className="rounded-2xl bg-muted/70 px-4 py-4">
-            <p className="text-label-md uppercase text-muted-foreground">주기 실행</p>
-            <div className="mt-2 text-title-md font-semibold text-foreground">
+            <p className="text-xs uppercase text-muted-foreground">주기 실행</p>
+            <div className="mt-2 text-sm font-semibold font-semibold text-foreground">
               {summary.scheduledCount}
             </div>
           </div>
           <div className="rounded-2xl bg-muted/70 px-4 py-4">
-            <p className="text-label-md uppercase text-muted-foreground">이벤트 트리거</p>
-            <div className="mt-2 text-title-md font-semibold text-foreground">
+            <p className="text-xs uppercase text-muted-foreground">이벤트 트리거</p>
+            <div className="mt-2 text-sm font-semibold font-semibold text-foreground">
               {summary.eventCount}
             </div>
           </div>
@@ -179,11 +179,11 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
         ) : null}
 
         {tasksQuery.isLoading ? (
-          <div className="rounded-3xl border border-border bg-muted px-5 py-8 text-body-md text-muted-foreground">
+          <div className="rounded-3xl border border-border bg-muted px-5 py-8 text-sm text-muted-foreground">
             저장된 단일 작업을 불러오는 중입니다.
           </div>
         ) : visibleTasks.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-border bg-muted px-5 py-8 text-body-md text-muted-foreground">
+          <div className="rounded-3xl border border-dashed border-border bg-muted px-5 py-8 text-sm text-muted-foreground">
             저장된 단일 작업이 없습니다. 검증된 프롬프트를 작업으로 저장해 반복 실행할 수 있습니다.
           </div>
         ) : (
@@ -197,7 +197,7 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h5 className="min-w-0 truncate text-title-md font-semibold text-foreground">
+                        <h5 className="min-w-0 truncate text-sm font-semibold font-semibold text-foreground">
                           {task.name}
                         </h5>
                         <Badge className="rounded-full bg-secondary text-secondary-foreground">

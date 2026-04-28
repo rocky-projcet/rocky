@@ -3,8 +3,10 @@ import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, Bot, ListTodo, Sparkles, X } from "lucide-react";
 
 import { useAgentsQuery } from "@/domains/agent/hooks";
+import type { AgentRecord } from "@/domains/agent/types";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
+import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
@@ -19,7 +21,6 @@ import {
 } from "@/domains/rocky/lib/rocky-task-model";
 import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
-import type { AgentRecord } from "@/domains/agent/types";
 import type { RockyChatRecord } from "@/domains/rocky/types";
 import { PageContainer } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
@@ -101,14 +102,15 @@ export function SearchPage() {
 
   const { userTemplates } = useMdTemplates();
   const rockyChatsQuery = useRockyChatsQuery();
-  const agentsQuery = useAgentsQuery({ includeArchived: false });
+  const agentsQuery = useAgentsQuery({ includeArchived: true });
   const chats = rockyChatsQuery.data ?? [];
-  const agents = useMemo(
-    () =>
-      filterUserManagedAgents(agentsQuery.data ?? []).filter(
-        (agent) => agent.lifecycle === "active",
-      ),
+  const allAgents = useMemo(
+    () => filterUserManagedAgents(agentsQuery.data ?? []),
     [agentsQuery.data],
+  );
+  const agents = useMemo(
+    () => allAgents.filter((agent) => agent.lifecycle === "active"),
+    [allAgents],
   );
 
   const taskResults = useMemo(
@@ -190,6 +192,7 @@ export function SearchPage() {
           <TaskResults
             chats={taskResults}
             templates={userTemplates}
+            agents={allAgents}
             isLoading={rockyChatsQuery.isLoading}
             query={normalizedQuery}
           />
@@ -220,11 +223,13 @@ function EmptyState({ message }: { message: string }) {
 function TaskResults({
   chats,
   templates,
+  agents,
   isLoading,
   query,
 }: {
   chats: RockyChatRecord[];
   templates: MdTemplateDefinition[];
+  agents: AgentRecord[];
   isLoading: boolean;
   query: string;
 }) {
@@ -240,53 +245,108 @@ function TaskResults({
     );
   }
 
+  const taskAgentMap = readAllTaskAgentMap();
+
   return (
     <ul className="grid gap-2">
       {chats.map((chat) => {
-        const status = getRockyTaskStatus(chat);
-        const group = getRockyTaskTemplateGroup(chat, templates);
-
+        const agentId = taskAgentMap[chat.id] ?? null;
+        const agent = agentId ? agents.find((entry) => entry.id === agentId) ?? null : null;
         return (
           <li key={chat.id}>
-            <Link
-              to={`/tasks/${encodeURIComponent(chat.id)}`}
-              className="block rounded-lg border bg-card p-4 no-underline shadow-sm transition hover:border-primary/40 hover:shadow-md"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={cn(
-                        "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                        rockyTaskStatusTone(status),
-                      )}
-                    >
-                      {rockyTaskStatusLabel(status)}
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className="h-6 border-border bg-muted px-2 text-[11px] text-muted-foreground"
-                    >
-                      {group.label}
-                    </Badge>
-                  </div>
-                  <h3 className="mt-2 truncate text-sm font-semibold text-foreground">
-                    {chat.title || getRockyTaskRequest(chat) || "제목 없음"}
-                  </h3>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                    {getRockyTaskSummary(chat)}
-                  </p>
-                  <div className="mt-2 text-[11px] text-muted-foreground">
-                    {formatRockyTaskDateTime(chat.updatedAt)}
-                  </div>
-                </div>
-                <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-              </div>
-            </Link>
+            <TaskSearchResult
+              chat={chat}
+              templates={templates}
+              agent={agent}
+            />
           </li>
         );
       })}
     </ul>
+  );
+}
+
+function TaskSearchResult({
+  chat,
+  templates,
+  agent,
+}: {
+  chat: RockyChatRecord;
+  templates: MdTemplateDefinition[];
+  agent: AgentRecord | null;
+}) {
+  const status = getRockyTaskStatus(chat);
+  const group = getRockyTaskTemplateGroup(chat, templates);
+  const skill = templates.find((entry) => entry.id === group.id) ?? null;
+  const skillTheme = skill ? skillKindTheme(skill) : null;
+  const { emoji } = useAgentEmoji(agent?.id);
+  const tinted = agent?.color
+    ? {
+        borderColor: `color-mix(in srgb, ${agent.color} 32%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 6%, var(--card))`,
+      }
+    : undefined;
+
+  return (
+    <Link
+      to={`/tasks/${encodeURIComponent(chat.id)}`}
+      style={tinted}
+      className="block rounded-lg border bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          {agent ? (
+            <AgentAvatar emoji={emoji} color={agent.color} size="md" />
+          ) : (
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-muted text-muted-foreground">
+              <Sparkles className="size-4" />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate text-xs font-medium text-foreground">
+                {agent?.name ?? "Rocky"}
+              </span>
+              <span
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                  rockyTaskStatusTone(status),
+                )}
+              >
+                {rockyTaskStatusLabel(status)}
+              </span>
+              {skillTheme ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    skillTheme.chip,
+                  )}
+                >
+                  {skill?.triggerLabel ?? group.label}
+                </span>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="h-6 border-border bg-muted px-2 text-[11px] text-muted-foreground"
+                >
+                  {group.label}
+                </Badge>
+              )}
+            </div>
+            <h3 className="mt-2 truncate text-sm font-semibold text-foreground">
+              {chat.title || getRockyTaskRequest(chat) || "제목 없음"}
+            </h3>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+              {getRockyTaskSummary(chat)}
+            </p>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {formatRockyTaskDateTime(chat.updatedAt)}
+            </div>
+          </div>
+        </div>
+        <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+      </div>
+    </Link>
   );
 }
 

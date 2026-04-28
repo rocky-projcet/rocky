@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Archive, FileBox, Paperclip, Plus, Sparkles } from "lucide-react";
+import { Archive, FileBox, Paperclip, Plus } from "lucide-react";
 
 import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
@@ -30,32 +30,34 @@ export function SkillsPage() {
         }
       />
 
-      {userTemplates.length === 0 ? (
-        <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-12 text-center">
-          <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-background text-muted-foreground">
-            <Sparkles className="size-5" />
-          </div>
-          <h3 className="mt-3 text-sm font-semibold text-foreground">
-            아직 만든 스킬이 없습니다.
-          </h3>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            템플릿을 골라 빈칸만 채우면 내 스킬이 만들어집니다.
-          </p>
-          <Button className="mt-4" render={<Link to="/skills/new" />}>
-            <Plus className="size-4" />
-            새 스킬 만들기
-          </Button>
-        </div>
-      ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {userTemplates.map((template) => (
-            <li key={template.id}>
-              <SkillSummaryCard template={template} />
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <li>
+          <NewSkillCard />
+        </li>
+        {userTemplates.map((template) => (
+          <li key={template.id}>
+            <SkillSummaryCard template={template} />
+          </li>
+        ))}
+      </ul>
     </PageContainer>
+  );
+}
+
+function NewSkillCard() {
+  return (
+    <Link
+      to="/skills/new"
+      className="group flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/70 bg-muted/30 p-4 text-center no-underline transition hover:border-primary/50 hover:bg-muted/60"
+    >
+      <div className="flex size-10 items-center justify-center rounded-xl bg-background text-muted-foreground transition group-hover:text-primary">
+        <Plus className="size-5" />
+      </div>
+      <p className="mt-3 text-sm font-semibold text-foreground">새 스킬 만들기</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        4단계 질문에 답하면 새 스킬이 만들어져요.
+      </p>
+    </Link>
   );
 }
 

@@ -274,7 +274,6 @@ export function AgentDetailPage() {
             </div>
             {!archived && availableSkills.length > 0 ? (
               <Button
-                variant="outline"
                 size="sm"
                 onClick={() => setSkillPickerOpen((current) => !current)}
               >

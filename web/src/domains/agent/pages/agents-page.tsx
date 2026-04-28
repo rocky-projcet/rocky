@@ -4,7 +4,6 @@ import { Plus } from "lucide-react";
 import { AgentCard } from "../components/agent-card";
 import { useAgentsQuery } from "../hooks";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
-import { Button } from "@/shared/ui/button";
 import { Card } from "@/shared/ui/card";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 
@@ -46,37 +45,21 @@ export function AgentsPage() {
     (agent) => agent.lifecycle === "active",
   );
 
-  if (agents.length === 0) {
-    return (
-      <PageContainer>
-        <PageHeader
-          title="첫 번째 에이전트를 만들어 보세요"
-          description="에이전트를 만들면 누가 어떤 일을 맡고 있는지 한눈에 보고 바로 작업을 요청할 수 있어요."
-          actions={
-            <Button render={<Link to="/agents/new" />}>
-              <Plus size={16} />
-              새 에이전트 만들기
-            </Button>
-          }
-        />
-      </PageContainer>
-    );
-  }
-
   return (
     <PageContainer>
       <PageHeader
         title="내 에이전트"
-        description={`${agents.length}명의 에이전트 중 누구에게 일을 맡길지 골라주세요.`}
-        actions={
-          <Button render={<Link to="/agents/new" />}>
-            <Plus size={16} />
-            새 에이전트
-          </Button>
+        description={
+          agents.length === 0
+            ? "에이전트를 만들면 누가 어떤 일을 맡고 있는지 한눈에 보고 바로 작업을 요청할 수 있어요."
+            : `${agents.length}명의 에이전트 중 누구에게 일을 맡길지 골라주세요.`
         }
       />
 
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <li>
+          <NewAgentCard />
+        </li>
         {agents.map((agent) => (
           <li key={agent.id}>
             <AgentCard agent={agent} />
@@ -84,5 +67,22 @@ export function AgentsPage() {
         ))}
       </ul>
     </PageContainer>
+  );
+}
+
+function NewAgentCard() {
+  return (
+    <Link
+      to="/agents/new"
+      className="group flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/70 bg-muted/30 p-4 text-center no-underline transition hover:border-primary/50 hover:bg-muted/60"
+    >
+      <div className="flex size-10 items-center justify-center rounded-xl bg-background text-muted-foreground transition group-hover:text-primary">
+        <Plus className="size-5" />
+      </div>
+      <p className="mt-3 text-sm font-semibold text-foreground">새로운 나만의 에이전트 만들기</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        이름·이모지·스킬을 골라 캐릭터를 만들어요.
+      </p>
+    </Link>
   );
 }

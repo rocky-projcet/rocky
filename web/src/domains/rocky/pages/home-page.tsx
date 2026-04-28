@@ -1576,7 +1576,7 @@ function MessageBubble({
                 bubbleTone,
               )
             : cn(
-                "max-w-[min(44rem,86%)] rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 md:px-5 text-sky-950",
+                "max-w-[min(44rem,86%)] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 md:px-5 text-slate-900",
               )
         )}
         style={isRocky ? replyBubbleStyle : undefined}

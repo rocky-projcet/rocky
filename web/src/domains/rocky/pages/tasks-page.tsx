@@ -7,15 +7,8 @@ import {
   FileOutput,
   ListTodo,
   Loader2,
-  Plus,
   Sparkles,
 } from "lucide-react";
-
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/shared/ui/popover";
 
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
@@ -43,7 +36,7 @@ import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
-import { PageContainer } from "@/shared/components/page-container";
+import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/utils";
@@ -105,11 +98,6 @@ export function TasksPage() {
     return agents.filter((agent) => ids.has(agent.id));
   }, [sortedChats, agents, taskAgentMap]);
 
-  const activeAgents = useMemo(
-    () => agents.filter((agent) => agent.lifecycle === "active"),
-    [agents],
-  );
-
   const hasUnmapped = useMemo(
     () => sortedChats.some((chat) => !taskAgentMap[chat.id]),
     [sortedChats, taskAgentMap],
@@ -124,9 +112,6 @@ export function TasksPage() {
   }, [selectedTab, sortedChats, taskAgentMap]);
 
   const activeChats = sortedChats.filter(isRockyTaskActive);
-  const completedCount = sortedChats.filter(
-    (chat) => getRockyTaskStatus(chat) === "completed",
-  ).length;
 
   function setTab(next: string) {
     if (next === ALL_TAB) {
@@ -140,39 +125,20 @@ export function TasksPage() {
     setSearchParams(nextParams, { replace: true });
   }
 
+  const selectedAgent = useMemo(
+    () =>
+      selectedTab !== ALL_TAB && selectedTab !== NO_AGENT_TAB
+        ? agents.find((agent) => agent.id === selectedTab) ?? null
+        : null,
+    [selectedTab, agents],
+  );
+
   return (
     <PageContainer>
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <ListTodo className="size-4" />
-            작업
-          </div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-normal text-foreground">
-            작업 목록
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            에이전트별로 작업을 모아보세요. 카드를 누르면 상세 화면으로 이동합니다.
-          </p>
-        </div>
-        <div className="flex flex-col items-stretch gap-3 md:items-end">
-          <NewTaskButton agents={activeAgents} />
-          <div className="grid min-w-72 grid-cols-3 gap-2">
-            <div className="rounded-lg border bg-card px-3 py-2">
-              <div className="text-[11px] font-medium text-muted-foreground">전체</div>
-              <div className="mt-1 text-lg font-semibold">{sortedChats.length}</div>
-            </div>
-            <div className="rounded-lg border bg-card px-3 py-2">
-              <div className="text-[11px] font-medium text-muted-foreground">진행중</div>
-              <div className="mt-1 text-lg font-semibold">{activeChats.length}</div>
-            </div>
-            <div className="rounded-lg border bg-card px-3 py-2">
-              <div className="text-[11px] font-medium text-muted-foreground">완료</div>
-              <div className="mt-1 text-lg font-semibold">{completedCount}</div>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        title="작업 목록"
+        description="에이전트별로 작업을 모아보세요. 카드를 누르면 상세 화면으로 이동합니다."
+      />
 
       <AgentTabs
         agents={agentsWithTasks}
@@ -187,6 +153,8 @@ export function TasksPage() {
         )}
         onSelect={setTab}
       />
+
+      {selectedAgent ? <NewTaskForAgentRow agent={selectedAgent} /> : null}
 
       {activeChats.length > 0 ? (
         <section className="rounded-lg border bg-amber-500/6 p-4">
@@ -504,63 +472,30 @@ function TaskCard({
   );
 }
 
-function NewTaskButton({ agents }: { agents: AgentRecord[] }) {
-  if (agents.length === 0) {
-    return (
-      <Button render={<Link to="/agents/new" />} className="self-end md:self-auto">
-        <Plus className="size-4" />
-        새 작업
-      </Button>
-    );
-  }
-
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button type="button" className="self-end md:self-auto">
-            <Plus className="size-4" />
-            새 작업
-          </Button>
-        }
-      />
-      <PopoverContent
-        side="bottom"
-        align="end"
-        sideOffset={8}
-        className="w-64 gap-1 rounded-xl p-1.5"
-      >
-        <div className="px-2 py-1 text-[11px] font-medium uppercase text-muted-foreground">
-          어떤 에이전트에게 부탁할까요?
-        </div>
-        <div className="custom-scrollbar flex max-h-72 flex-col gap-0.5 overflow-y-auto">
-          {agents.map((agent) => (
-            <NewTaskAgentRow key={agent.id} agent={agent} />
-          ))}
-        </div>
-        <div className="border-t border-border pt-1">
-          <Link
-            to="/agents/new"
-            className="flex items-center gap-2 rounded px-2 py-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          >
-            <Plus className="size-3.5" />
-            <span>새 에이전트 만들기</span>
-          </Link>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function NewTaskAgentRow({ agent }: { agent: AgentRecord }) {
+function NewTaskForAgentRow({ agent }: { agent: AgentRecord }) {
   const { emoji } = useAgentEmoji(agent.id);
+  const tinted = agent.color
+    ? {
+        borderColor: `color-mix(in srgb, ${agent.color} 32%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 7%, var(--card))`,
+      }
+    : undefined;
   return (
     <Link
       to={`/agents/${encodeURIComponent(agent.id)}`}
-      className="flex items-center gap-2 rounded-md px-2 py-2 text-xs text-foreground transition hover:bg-muted"
+      style={tinted}
+      className="flex items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
-      <AgentAvatar emoji={emoji} color={agent.color} size="sm" />
-      <span className="min-w-0 flex-1 truncate font-medium">{agent.name}</span>
+      <AgentAvatar emoji={emoji} color={agent.color} size="md" />
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] font-medium uppercase text-muted-foreground">
+          새 작업
+        </div>
+        <div className="mt-0.5 truncate text-sm font-semibold text-foreground">
+          {agent.name}에게 새로운 작업 부탁하기
+        </div>
+      </div>
+      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
     </Link>
   );
 }

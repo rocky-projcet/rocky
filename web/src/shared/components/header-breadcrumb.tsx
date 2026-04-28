@@ -215,7 +215,6 @@ function resolveCrumbs(args: {
           label: args.agentName,
           to: agentDetailHref(fromAgent.agentId, archivedContextAgent),
         },
-        { label: "스킬", to: "/skills" },
         { label: skillLabel },
       ];
     }
@@ -237,7 +236,6 @@ function resolveCrumbs(args: {
           label: args.agentName,
           to: agentDetailHref(fromAgent.agentId, archivedContextAgent),
         },
-        { label: "작업", to: "/tasks" },
         { label: taskLabel },
       ];
     }

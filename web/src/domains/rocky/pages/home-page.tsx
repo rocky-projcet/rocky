@@ -1485,6 +1485,15 @@ function MessageBubble({
     chat.dispatches.find((entry) => entry.id === message.dispatchId) ?? null;
   const agentId = dispatch?.orchestration?.agentId ?? null;
   const workspaceRoot = agentId ? agentWorkspaceRootsByAgentId[agentId] ?? null : null;
+  const myAgentId = useTaskAgentId(chat.id);
+  const myAgentQuery = useAgentQuery(myAgentId ?? undefined);
+  const myAgentColor = myAgentQuery.data?.color ?? null;
+  const replyBubbleStyle = myAgentColor
+    ? {
+        borderColor: `color-mix(in srgb, ${myAgentColor} 32%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${myAgentColor} 6%, var(--card))`,
+      }
+    : undefined;
   const transcriptMessage = dispatch?.orchestration?.sessionId
     ? findLatestAssistantMessage(
         transcriptsBySessionId[dispatch.orchestration.sessionId],
@@ -1514,7 +1523,13 @@ function MessageBubble({
       <div className="flex w-full items-start justify-start gap-2.5">
         <ChatReplyAvatar chatId={chat.id} />
         <article
-          className="w-full max-w-[52rem] px-1 pb-2 pt-0 text-sm leading-6 text-muted-foreground md:px-2"
+          className={cn(
+            "w-full max-w-[52rem] text-sm leading-6 text-muted-foreground",
+            myAgentColor
+              ? "rounded-2xl border px-4 py-3 md:px-5"
+              : "px-1 pb-2 pt-0 md:px-2",
+          )}
+          style={replyBubbleStyle}
           aria-live="polite"
           role="status"
         >
@@ -1558,11 +1573,13 @@ function MessageBubble({
           "text-sm leading-6",
           isRocky
             ? cn(
-                "w-full max-w-[52rem] px-1 pb-2 pt-0 md:px-2",
-                bubbleTone
+                "w-full max-w-[52rem]",
+                myAgentColor ? "rounded-2xl border px-4 py-3 md:px-5" : "px-1 pb-2 pt-0 md:px-2",
+                bubbleTone,
               )
             : cn("max-w-[min(44rem,86%)] rounded-lg bg-primary px-4 py-3 md:px-5", bubbleTone)
         )}
+        style={isRocky ? replyBubbleStyle : undefined}
       >
         {isRocky ? (
           rockyMessageState.kind === "error" ? (

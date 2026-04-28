@@ -10,6 +10,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowRight, Archive, Bot, ListTodo } from "lucide-react";
 import { toast } from "sonner";
 
+import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
   formatRockyTaskDateTime,
@@ -23,7 +24,6 @@ import {
 import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
 import { PageContainer } from "@/shared/components/page-container";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
@@ -62,16 +62,22 @@ export function SkillDetailPage() {
     navigate("/skills", { replace: true });
   }
 
+  const theme = skillKindTheme(skill);
+  const ChipIcon = theme.Icon;
+
   return (
     <PageContainer>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Badge
-            variant="outline"
-            className="h-6 max-w-full border-border bg-muted px-2 text-[11px] text-muted-foreground"
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+              theme.chip,
+            )}
           >
+            <ChipIcon className="size-3.5" />
             {skill.triggerLabel}
-          </Badge>
+          </span>
           <div className="mt-3">
             <EditableTitle
               value={skill.title}
@@ -93,16 +99,35 @@ export function SkillDetailPage() {
         </div>
       </header>
 
-      <SkillSummary skill={skill} />
-
-      <section className="rounded-2xl border border-dashed border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground">
+      <section
+        className={cn(
+          "rounded-2xl border p-4 text-sm leading-6",
+          theme.chip,
+        )}
+      >
         <div className="flex items-start gap-3">
-          <Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div
+            className={cn(
+              "flex size-9 shrink-0 items-center justify-center rounded-xl",
+              theme.icon,
+            )}
+          >
+            <Bot className="size-4" />
+          </div>
           <p>
-            스킬은 <Link to="/agents" className="font-medium text-foreground underline-offset-2 hover:underline">내 에이전트</Link>가 발사할 능력입니다. 작업을 시작하려면 이 스킬을 장착한 에이전트로 가서 발사해주세요.
+            스킬은{" "}
+            <Link
+              to="/agents"
+              className="font-semibold underline underline-offset-2"
+            >
+              내 에이전트
+            </Link>
+            가 발사할 능력입니다. 작업을 시작하려면 이 스킬을 장착한 에이전트로 가서 발사해주세요.
           </p>
         </div>
       </section>
+
+      <SkillSummary skill={skill} />
 
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">

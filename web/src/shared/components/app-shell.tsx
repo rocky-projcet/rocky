@@ -16,6 +16,11 @@ import { SidebarIdentity } from "@/domains/codex/components/sidebar-identity";
 import { SidebarLogo } from "./sidebar-logo";
 import { SiteHeader } from "./site-header";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/shared/ui/popover";
+import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -201,47 +206,12 @@ function AppShellInner() {
                     <span>스킬 템플릿</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="보관함"
-                    isActive={archiveRoute}
-                    type="button"
-                    aria-controls="archive-subtree"
-                    aria-expanded={archiveOpen}
-                    onClick={() => setArchiveOpen((open) => !open)}
-                  >
-                    <Archive />
-                    <span className="min-w-0 flex-1 truncate">보관함</span>
-                    <ChevronDown
-                      className={cn(
-                        "ml-auto size-3.5 text-sidebar-foreground/45 transition-transform group-data-[collapsible=icon]:hidden",
-                        archiveOpen ? "rotate-0" : "-rotate-90",
-                      )}
-                    />
-                  </SidebarMenuButton>
-                  {archiveOpen ? (
-                    <SidebarMenuSub id="archive-subtree">
-                      <SidebarMenuSubItem>
-                        <SidebarMenuSubButton
-                          isActive={location.pathname === "/skills/archived"}
-                          render={<NavLink to="/skills/archived" />}
-                        >
-                          <Sparkles />
-                          <span>스킬 보관함</span>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
-                      <SidebarMenuSubItem>
-                        <SidebarMenuSubButton
-                          isActive={location.pathname === "/agents/archived"}
-                          render={<NavLink to="/agents/archived" />}
-                        >
-                          <Bot />
-                          <span>내 에이전트 보관함</span>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
-                    </SidebarMenuSub>
-                  ) : null}
-                </SidebarMenuItem>
+                <ArchiveMenuItem
+                  archiveOpen={archiveOpen}
+                  onToggleArchive={() => setArchiveOpen((open) => !open)}
+                  archiveRoute={archiveRoute}
+                  pathname={location.pathname}
+                />
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -275,5 +245,116 @@ function AppShellInner() {
         </div>
       </SidebarInset>
     </>
+  );
+}
+
+function ArchiveMenuItem({
+  archiveOpen,
+  onToggleArchive,
+  archiveRoute,
+  pathname,
+}: {
+  archiveOpen: boolean;
+  onToggleArchive: () => void;
+  archiveRoute: boolean;
+  pathname: string;
+}) {
+  const { state, isMobile } = useSidebar();
+  const collapsed = state === "collapsed" && !isMobile;
+
+  if (collapsed) {
+    return (
+      <SidebarMenuItem>
+        <Popover>
+          <PopoverTrigger
+            render={
+              <SidebarMenuButton
+                tooltip="보관함"
+                isActive={archiveRoute}
+                type="button"
+              >
+                <Archive />
+                <span>보관함</span>
+              </SidebarMenuButton>
+            }
+          />
+          <PopoverContent
+            side="right"
+            align="start"
+            sideOffset={8}
+            className="w-56 gap-1 p-1.5"
+          >
+            <NavLink
+              to="/skills/archived"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground transition hover:bg-muted",
+                  isActive && "bg-muted font-medium",
+                )
+              }
+            >
+              <Sparkles className="size-4 text-muted-foreground" />
+              <span>스킬 보관함</span>
+            </NavLink>
+            <NavLink
+              to="/agents/archived"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground transition hover:bg-muted",
+                  isActive && "bg-muted font-medium",
+                )
+              }
+            >
+              <Bot className="size-4 text-muted-foreground" />
+              <span>내 에이전트 보관함</span>
+            </NavLink>
+          </PopoverContent>
+        </Popover>
+      </SidebarMenuItem>
+    );
+  }
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        tooltip="보관함"
+        isActive={archiveRoute}
+        type="button"
+        aria-controls="archive-subtree"
+        aria-expanded={archiveOpen}
+        onClick={onToggleArchive}
+      >
+        <Archive />
+        <span className="min-w-0 flex-1 truncate">보관함</span>
+        <ChevronDown
+          className={cn(
+            "ml-auto size-3.5 text-sidebar-foreground/45 transition-transform group-data-[collapsible=icon]:hidden",
+            archiveOpen ? "rotate-0" : "-rotate-90",
+          )}
+        />
+      </SidebarMenuButton>
+      {archiveOpen ? (
+        <SidebarMenuSub id="archive-subtree">
+          <SidebarMenuSubItem>
+            <SidebarMenuSubButton
+              isActive={pathname === "/skills/archived"}
+              render={<NavLink to="/skills/archived" />}
+            >
+              <Sparkles />
+              <span>스킬 보관함</span>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+          <SidebarMenuSubItem>
+            <SidebarMenuSubButton
+              isActive={pathname === "/agents/archived"}
+              render={<NavLink to="/agents/archived" />}
+            >
+              <Bot />
+              <span>내 에이전트 보관함</span>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        </SidebarMenuSub>
+      ) : null}
+    </SidebarMenuItem>
   );
 }

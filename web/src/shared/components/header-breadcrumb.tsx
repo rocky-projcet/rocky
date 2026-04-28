@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Link, useLocation, useMatches } from "react-router-dom";
+import { Link, useLocation, useMatches, useSearchParams } from "react-router-dom";
 
 import {
   Breadcrumb,
@@ -50,6 +50,22 @@ export function isNestedRoute(pathname: string): boolean {
   return false;
 }
 
+export type FromContext =
+  | { kind: "agent"; agentId: string }
+  | { kind: "archive" }
+  | null;
+
+export function parseFromParam(search: URLSearchParams): FromContext {
+  const raw = search.get("from");
+  if (!raw) return null;
+  if (raw === "archive") return { kind: "archive" };
+  if (raw.startsWith("agent:")) {
+    const agentId = raw.slice("agent:".length);
+    if (agentId) return { kind: "agent", agentId };
+  }
+  return null;
+}
+
 interface RouteParams {
   agentId?: string;
   sessionId?: string;
@@ -62,11 +78,17 @@ interface RouteParams {
 export function HeaderBreadcrumb() {
   const location = useLocation();
   const matches = useMatches();
+  const [searchParams] = useSearchParams();
   const params: RouteParams = matches.reduce<RouteParams>((acc, match) => {
     return { ...acc, ...(match.params as RouteParams) };
   }, {});
 
-  const agentQuery = useAgentQuery(params.agentId);
+  const fromContext = parseFromParam(searchParams);
+  const fromAgentId =
+    fromContext?.kind === "agent" ? fromContext.agentId : undefined;
+  const contextAgentId = params.agentId ?? fromAgentId;
+
+  const agentQuery = useAgentQuery(contextAgentId);
   const sessionQuery = useSessionQuery(params.sessionId);
   const taskQuery = useRockyChatQuery(params.taskId ?? null);
   const { allTemplates } = useMdTemplates();
@@ -74,6 +96,7 @@ export function HeaderBreadcrumb() {
   const crumbs = resolveCrumbs({
     pathname: location.pathname,
     params,
+    fromContext,
     agentName: agentQuery.data?.name,
     agentLifecycle: agentQuery.data?.lifecycle,
     sessionTitle: sessionQuery.data?.title ?? undefined,
@@ -112,29 +135,43 @@ export function HeaderBreadcrumb() {
   );
 }
 
+function agentRootCrumb(archived: boolean): Crumb {
+  return archived
+    ? { label: "내 에이전트 보관함", to: "/agents/archived" }
+    : { label: "내 에이전트", to: "/agents" };
+}
+
+function agentDetailHref(agentId: string, archived: boolean): string {
+  return archived
+    ? `/agents/${agentId}?from=archive`
+    : `/agents/${agentId}`;
+}
+
 function resolveCrumbs(args: {
   pathname: string;
   params: RouteParams;
+  fromContext: FromContext;
   agentName?: string;
   agentLifecycle?: string;
   sessionTitle?: string;
   taskTitle?: string;
   skillTitle?: string;
 }): Crumb[] | null {
-  const { pathname, params } = args;
+  const { pathname, params, fromContext } = args;
+  const fromArchive = fromContext?.kind === "archive";
+  const fromAgent = fromContext?.kind === "agent" ? fromContext : null;
+  const archivedContextAgent = args.agentLifecycle === "archived";
 
   // /agents/:agentId/sessions/:sessionId
   if (params.agentId && params.sessionId) {
-    const archived = args.agentLifecycle === "archived";
-    const rootLabel = archived ? "보관함" : "내 에이전트";
-    const rootPath = archived ? "/agents/archived" : "/agents";
+    const archived = archivedContextAgent || fromArchive;
     const agentLabel = args.agentName ?? params.agentId;
     const sessionLabel = args.sessionTitle
       ? truncate(args.sessionTitle, 20)
       : params.sessionId;
     return [
-      { label: rootLabel, to: rootPath },
-      { label: agentLabel, to: `/agents/${params.agentId}` },
+      agentRootCrumb(archived),
+      { label: agentLabel, to: agentDetailHref(params.agentId, archived) },
       { label: "작업 요청" },
       { label: sessionLabel },
     ];
@@ -150,12 +187,10 @@ function resolveCrumbs(args: {
 
   // /agents/:agentId
   if (params.agentId) {
-    const archived = args.agentLifecycle === "archived";
-    const rootLabel = archived ? "보관함" : "내 에이전트";
-    const rootPath = archived ? "/agents/archived" : "/agents";
+    const archived = archivedContextAgent || fromArchive;
     const agentLabel = args.agentName ?? params.agentId;
     return [
-      { label: rootLabel, to: rootPath },
+      agentRootCrumb(archived),
       { label: agentLabel },
     ];
   }
@@ -173,6 +208,17 @@ function resolveCrumbs(args: {
     const skillLabel = args.skillTitle
       ? truncate(args.skillTitle, 30)
       : params.skillId;
+    if (fromAgent && args.agentName) {
+      return [
+        agentRootCrumb(archivedContextAgent),
+        {
+          label: args.agentName,
+          to: agentDetailHref(fromAgent.agentId, archivedContextAgent),
+        },
+        { label: "스킬", to: "/skills" },
+        { label: skillLabel },
+      ];
+    }
     return [
       { label: "스킬", to: "/skills" },
       { label: skillLabel },
@@ -184,6 +230,17 @@ function resolveCrumbs(args: {
     const taskLabel = args.taskTitle
       ? truncate(args.taskTitle, 30)
       : params.taskId;
+    if (fromAgent && args.agentName) {
+      return [
+        agentRootCrumb(archivedContextAgent),
+        {
+          label: args.agentName,
+          to: agentDetailHref(fromAgent.agentId, archivedContextAgent),
+        },
+        { label: "작업", to: "/tasks" },
+        { label: taskLabel },
+      ];
+    }
     return [
       { label: "작업", to: "/tasks" },
       { label: taskLabel },

@@ -308,6 +308,7 @@ export function AgentDetailPage() {
                 <li key={skill.id}>
                   <EquippedSkillCard
                     skill={skill}
+                    fromAgentId={agent.id}
                     readOnly={archived}
                     onDetach={() => setPendingDetach(skill)}
                   />
@@ -422,15 +423,18 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function EquippedSkillCard({
   skill,
+  fromAgentId,
   onDetach,
   readOnly = false,
 }: {
   skill: MdTemplateDefinition;
+  fromAgentId: string;
   onDetach: () => void;
   readOnly?: boolean;
 }) {
   const theme = skillKindTheme(skill);
   const Icon = theme.Icon;
+  const skillHref = `/skills/${encodeURIComponent(skill.id)}?from=agent:${encodeURIComponent(fromAgentId)}`;
 
   return (
     <div className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
@@ -450,7 +454,7 @@ function EquippedSkillCard({
 
       <div className="mt-3 min-w-0 flex-1">
         <Link
-          to={`/skills/${encodeURIComponent(skill.id)}`}
+          to={skillHref}
           className="block min-w-0 no-underline"
         >
           <h3 className="truncate text-sm font-semibold text-foreground hover:underline">
@@ -568,7 +572,7 @@ function AgentTaskList({ agentId }: { agentId: string }) {
       summary: getRockyTaskSummary(chat),
       status: getRockyTaskStatus(chat),
       updatedAt: chat.updatedAt,
-      href: `/tasks/${encodeURIComponent(chat.id)}`,
+      href: `/tasks/${encodeURIComponent(chat.id)}?from=agent:${encodeURIComponent(agentId)}`,
     }))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 6);

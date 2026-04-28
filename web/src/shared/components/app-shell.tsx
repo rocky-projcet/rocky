@@ -101,16 +101,22 @@ export function AppShell() {
 function AppShellInner() {
   const location = useLocation();
   const { toggleSidebar } = useSidebar();
+  const fromQueryParam = new URLSearchParams(location.search).get("from");
+  const fromArchiveContext =
+    fromQueryParam === "archive" &&
+    (/^\/agents\/[^/]+/.test(location.pathname) ||
+      /^\/skills\/[^/]+/.test(location.pathname));
+
   const boundedCanvas = usesBoundedCanvas(location.pathname);
   const compactRoute = isCompactRoute(location.pathname);
   const taskDetailRoute = isTaskDetailRoute(location.pathname);
   const rockyHomeRoute = isRockyHomeRoute(location.pathname);
   const templatesRoute = isTemplatesRoute(location.pathname);
   const searchRoute = isSearchRoute(location.pathname);
-  const skillsRoute = isSkillsRoute(location.pathname);
-  const agentsRoute = isAgentsRoute(location.pathname);
+  const skillsRoute = isSkillsRoute(location.pathname) && !fromArchiveContext;
+  const agentsRoute = isAgentsRoute(location.pathname) && !fromArchiveContext;
   const tasksListRoute = isTasksListRoute(location.pathname);
-  const archiveRoute = isArchiveRoute(location.pathname);
+  const archiveRoute = isArchiveRoute(location.pathname) || fromArchiveContext;
   const [archiveOpen, setArchiveOpen] = useState(() => archiveRoute);
 
   useEffect(() => {
@@ -211,6 +217,7 @@ function AppShellInner() {
                   onToggleArchive={() => setArchiveOpen((open) => !open)}
                   archiveRoute={archiveRoute}
                   pathname={location.pathname}
+                  fromArchiveContext={fromArchiveContext}
                 />
               </SidebarMenu>
             </SidebarGroupContent>
@@ -253,14 +260,22 @@ function ArchiveMenuItem({
   onToggleArchive,
   archiveRoute,
   pathname,
+  fromArchiveContext,
 }: {
   archiveOpen: boolean;
   onToggleArchive: () => void;
   archiveRoute: boolean;
   pathname: string;
+  fromArchiveContext: boolean;
 }) {
   const { state, isMobile } = useSidebar();
   const collapsed = state === "collapsed" && !isMobile;
+  const skillsArchiveActive =
+    pathname === "/skills/archived" ||
+    (fromArchiveContext && /^\/skills\/[^/]+/.test(pathname));
+  const agentsArchiveActive =
+    pathname === "/agents/archived" ||
+    (fromArchiveContext && /^\/agents\/[^/]+/.test(pathname));
 
   if (collapsed) {
     return (
@@ -337,7 +352,7 @@ function ArchiveMenuItem({
         <SidebarMenuSub id="archive-subtree">
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
-              isActive={pathname === "/skills/archived"}
+              isActive={skillsArchiveActive}
               render={<NavLink to="/skills/archived" />}
             >
               <Sparkles />
@@ -346,7 +361,7 @@ function ArchiveMenuItem({
           </SidebarMenuSubItem>
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
-              isActive={pathname === "/agents/archived"}
+              isActive={agentsArchiveActive}
               render={<NavLink to="/agents/archived" />}
             >
               <Bot />

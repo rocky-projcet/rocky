@@ -176,10 +176,19 @@ function RecentTaskCard({
   const snippet = getLatestSnippet(chat);
   const requestText = getRockyTaskRequest(chat);
 
+  const agentTinted = agent?.color
+    ? {
+        borderColor: `color-mix(in srgb, ${agent.color} 32%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 6%, var(--card))`,
+        boxShadow: `0 0 0 1px color-mix(in srgb, ${agent.color} 12%, transparent)`,
+      }
+    : undefined;
+
   return (
     <Link
       to={`/tasks/${encodeURIComponent(chat.id)}`}
-      className="block h-full rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+      style={agentTinted}
+      className="block h-full rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">

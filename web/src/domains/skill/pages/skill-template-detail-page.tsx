@@ -1,5 +1,5 @@
 import { Link, Navigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CircleDashed } from "lucide-react";
+import { ArrowRight, CircleDashed } from "lucide-react";
 
 import { PageContainer } from "@/shared/components/page-container";
 import { Button } from "@/shared/ui/button";
@@ -59,18 +59,6 @@ export function SkillTemplateDetailPage() {
 
   return (
     <PageContainer>
-      <div>
-        <Button
-          className="-ml-2 self-start"
-          variant="ghost"
-          size="sm"
-          render={<Link to="/templates" />}
-        >
-          <ArrowLeft className="size-4" />
-          템플릿 목록
-        </Button>
-      </div>
-
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-4">
           <div className={cn("flex size-14 items-center justify-center rounded-2xl", theme.icon)}>

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
-  ArrowLeft,
   ArrowRight,
   BarChart3,
   CheckCircle2,
@@ -464,15 +463,6 @@ export function TemplateBuilderPage() {
   if (editing && !editingTemplate) {
     return (
       <PageContainer>
-        <Button
-          className="-ml-2 self-start"
-          variant="ghost"
-          size="sm"
-          render={<Link to="/templates" />}
-        >
-          <ArrowLeft className="size-4" />
-          목록
-        </Button>
         <PageHeader
           title="스킬을 찾을 수 없습니다."
           description="저장된 스킬이 삭제되었거나 이 브라우저에 남아 있지 않습니다."
@@ -486,12 +476,6 @@ export function TemplateBuilderPage() {
       <PageHeader
         title={editing ? "스킬 조정" : "새 스킬 만들기"}
         description="업무 의도를 입력하면 Rocky가 실행 목적, 필요 자료, 결과물, 검수 기준을 초안으로 정리합니다."
-        actions={
-          <Button variant="ghost" render={<Link to="/templates" />}>
-            <ArrowLeft className="size-4" />
-            목록
-          </Button>
-        }
       />
 
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">

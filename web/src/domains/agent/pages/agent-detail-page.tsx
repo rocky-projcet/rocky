@@ -10,7 +10,6 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Archive,
   ArchiveRestore,
-  ArrowLeft,
   ArrowRight,
   ListTodo,
   Plus,
@@ -107,15 +106,6 @@ export function AgentDetailPage() {
   if (!agent) {
     return (
       <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-6">
-        <Button
-          className="-ml-2 self-start"
-          variant="ghost"
-          size="sm"
-          render={<Link to="/agents" />}
-        >
-          <ArrowLeft className="size-4" />
-          내 에이전트
-        </Button>
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-foreground">
             에이전트를 찾을 수 없습니다.
@@ -169,16 +159,6 @@ export function AgentDetailPage() {
   return (
     <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
       <div className="custom-scrollbar flex flex-1 flex-col gap-6 overflow-y-auto pb-6">
-        <Button
-          className="-ml-2 self-start"
-          variant="ghost"
-          size="sm"
-          render={<Link to={archived ? "/agents/archived" : "/agents"} />}
-        >
-          <ArrowLeft className="size-4" />
-          {archived ? "내 에이전트 보관함" : "내 에이전트"}
-        </Button>
-
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-4">
             {archived ? (

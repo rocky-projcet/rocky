@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -105,16 +105,6 @@ export function AgentNewPage() {
 
   return (
     <PageContainer>
-      <Button
-        className="-ml-2 self-start"
-        variant="ghost"
-        size="sm"
-        render={<Link to="/agents" />}
-      >
-        <ArrowLeft className="size-4" />
-        내 에이전트
-      </Button>
-
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
         <div className="space-y-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground">

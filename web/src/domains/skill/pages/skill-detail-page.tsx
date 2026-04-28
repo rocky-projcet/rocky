@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Archive, Bot, ListTodo } from "lucide-react";
+import { ArrowRight, Archive, Bot, ListTodo } from "lucide-react";
 import { toast } from "sonner";
 
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
@@ -64,16 +64,6 @@ export function SkillDetailPage() {
 
   return (
     <PageContainer>
-      <Button
-        className="-ml-2 self-start"
-        variant="ghost"
-        size="sm"
-        render={<Link to="/skills" />}
-      >
-        <ArrowLeft className="size-4" />
-        스킬 목록
-      </Button>
-
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <Badge
@@ -366,15 +356,6 @@ function EditableDescription({
 function SkillNotFound() {
   return (
     <PageContainer>
-      <Button
-        className="-ml-2 self-start"
-        variant="ghost"
-        size="sm"
-        render={<Link to="/skills" />}
-      >
-        <ArrowLeft className="size-4" />
-        스킬 목록
-      </Button>
       <div>
         <h1 className="text-2xl font-semibold tracking-normal text-foreground">
           스킬을 찾을 수 없습니다.

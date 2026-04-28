@@ -11,6 +11,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   BarChart3,
+  Copy,
   Download,
   ExternalLink,
   FileInput,
@@ -87,7 +88,7 @@ type RockyPreviewPanelSource = {
   contentType: string;
   detail: string;
   downloadHref: string;
-  kind: "html" | "powerpoint";
+  kind: "html" | "powerpoint" | "pdf" | "image" | "markdown" | "text";
   name: string;
   nativeOpenPath: string | null;
   previewHref?: string | null;
@@ -226,15 +227,40 @@ function isPowerPointArtifact(artifact: AgentSessionArtifactManifestEntry): bool
   return isPowerPointFile(artifact.name, artifact.contentType);
 }
 
+function isPdfArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
+  const type = baseContentType(artifact.contentType);
+  return type === "application/pdf" || artifact.name.toLowerCase().endsWith(".pdf");
+}
+
+function isImageArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
+  const type = baseContentType(artifact.contentType);
+  if (type.startsWith("image/")) return true;
+  const name = artifact.name.toLowerCase();
+  return /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(name);
+}
+
+function isMarkdownArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
+  const type = baseContentType(artifact.contentType);
+  if (type === "text/markdown" || type === "text/x-markdown") return true;
+  return /\.(md|markdown)$/i.test(artifact.name);
+}
+
+function isPlainTextArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
+  const type = baseContentType(artifact.contentType);
+  if (type.startsWith("text/")) return true;
+  return /\.(txt|csv|tsv|json|ya?ml|log)$/i.test(artifact.name);
+}
+
 function buildArtifactPreviewPanelSource(
   artifact: AgentSessionArtifactManifestEntry
 ): RockyPreviewPanelSource | null {
   const downloadHref = agentEngineClient.resolveApiPath(artifact.downloadUrl);
+  const detail = `${artifact.role} · ${artifact.contentType}`;
 
   if (isHtmlArtifact(artifact)) {
     return {
       contentType: artifact.contentType,
-      detail: `${artifact.role} · ${artifact.contentType}`,
+      detail,
       downloadHref,
       kind: "html",
       name: artifact.name,
@@ -245,7 +271,7 @@ function buildArtifactPreviewPanelSource(
   if (isPowerPointArtifact(artifact)) {
     return {
       contentType: artifact.contentType,
-      detail: `${artifact.role} · ${artifact.contentType}`,
+      detail,
       downloadHref,
       kind: "powerpoint",
       name: artifact.name,
@@ -253,6 +279,56 @@ function buildArtifactPreviewPanelSource(
       previewHref: artifact.previewUrl
         ? agentEngineClient.resolveApiPath(artifact.previewUrl)
         : null,
+    };
+  }
+
+  if (isPdfArtifact(artifact)) {
+    return {
+      contentType: artifact.contentType,
+      detail,
+      downloadHref,
+      kind: "pdf",
+      name: artifact.name,
+      nativeOpenPath: null,
+      previewHref: artifact.previewUrl
+        ? agentEngineClient.resolveApiPath(artifact.previewUrl)
+        : null,
+    };
+  }
+
+  if (isImageArtifact(artifact)) {
+    return {
+      contentType: artifact.contentType,
+      detail,
+      downloadHref,
+      kind: "image",
+      name: artifact.name,
+      nativeOpenPath: null,
+      previewHref: artifact.previewUrl
+        ? agentEngineClient.resolveApiPath(artifact.previewUrl)
+        : null,
+    };
+  }
+
+  if (isMarkdownArtifact(artifact)) {
+    return {
+      contentType: artifact.contentType,
+      detail,
+      downloadHref,
+      kind: "markdown",
+      name: artifact.name,
+      nativeOpenPath: null,
+    };
+  }
+
+  if (isPlainTextArtifact(artifact)) {
+    return {
+      contentType: artifact.contentType,
+      detail,
+      downloadHref,
+      kind: "text",
+      name: artifact.name,
+      nativeOpenPath: null,
     };
   }
 
@@ -770,6 +846,35 @@ function EmptyChatState({
       />
     </div>
   );
+}
+
+function findLatestPreviewableArtifact(
+  chat: RockyChatRecord,
+  transcriptsBySessionId: Record<string, AgentSessionMessage[]>
+): AgentSessionArtifactManifestEntry | null {
+  let bestArtifact: AgentSessionArtifactManifestEntry | null = null;
+  let bestUpdatedAt = "";
+
+  for (const dispatch of chat.dispatches) {
+    const orchestration = dispatch.orchestration;
+    if (!orchestration?.sessionId) continue;
+    const transcript = transcriptsBySessionId[orchestration.sessionId];
+    const message = findLatestAssistantMessage(transcript, orchestration.runId);
+    if (!message) continue;
+    const artifacts = splitTranscriptArtifacts(message.artifacts).visibleArtifacts;
+    const messageUpdatedAt = message.createdAt ?? "";
+
+    for (const artifact of artifacts) {
+      if (artifact.role !== "output") continue;
+      if (!buildArtifactPreviewPanelSource(artifact)) continue;
+      if (messageUpdatedAt >= bestUpdatedAt) {
+        bestArtifact = artifact;
+        bestUpdatedAt = messageUpdatedAt;
+      }
+    }
+  }
+
+  return bestArtifact;
 }
 
 function findLatestAssistantMessage(
@@ -1948,6 +2053,82 @@ function TemplateExecutionDialog({
   );
 }
 
+function panelLabelFor(kind: RockyPreviewPanelSource["kind"]): string {
+  switch (kind) {
+    case "powerpoint":
+      return "PPT 뷰어";
+    case "html":
+      return "HTML 리포트";
+    case "pdf":
+      return "PDF 뷰어";
+    case "image":
+      return "이미지";
+    case "markdown":
+      return "마크다운";
+    case "text":
+      return "텍스트";
+  }
+}
+
+function isFetchedTextKind(kind: RockyPreviewPanelSource["kind"]): boolean {
+  return kind === "html" || kind === "markdown" || kind === "text";
+}
+
+function useFetchedArtifactText(source: RockyPreviewPanelSource): {
+  state:
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "ready"; text: string }
+    | { kind: "error"; message: string };
+} {
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "ready"; text: string }
+    | { kind: "error"; message: string }
+  >(() => (isFetchedTextKind(source.kind) ? { kind: "loading" } : { kind: "idle" }));
+
+  useEffect(() => {
+    if (!isFetchedTextKind(source.kind)) {
+      setState({ kind: "idle" });
+      return;
+    }
+
+    const controller = new AbortController();
+    setState({ kind: "loading" });
+    fetch(source.downloadHref, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        setState({ kind: "ready", text: await response.text() });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setState({
+          kind: "error",
+          message:
+            error instanceof Error ? error.message : "미리보기를 불러오지 못했습니다.",
+        });
+      });
+
+    return () => controller.abort();
+  }, [source.downloadHref, source.kind]);
+
+  return { state };
+}
+
+function copyArtifactText(text: string, name: string): void {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    toast.error("클립보드를 사용할 수 없는 환경입니다.");
+    return;
+  }
+  navigator.clipboard
+    .writeText(text)
+    .then(() => toast.success(`${name} 내용을 복사했습니다.`))
+    .catch(() => toast.error("복사에 실패했습니다."));
+}
+
 function ArtifactPreviewPanel({
   onClose,
   source,
@@ -1955,53 +2136,17 @@ function ArtifactPreviewPanel({
   onClose: () => void;
   source: RockyPreviewPanelSource;
 }) {
-  const [state, setState] = useState<
-    | { kind: "loading" }
-    | { kind: "ready"; html: string }
-    | { kind: "error"; message: string }
-  >({ kind: "loading" });
+  const { state } = useFetchedArtifactText(source);
   const [nativeOpenPending, setNativeOpenPending] = useState(false);
 
-  useEffect(() => {
-    if (source.kind !== "html") {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    setState({ kind: "loading" });
-    fetch(source.downloadHref, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`${response.status} ${response.statusText}`);
-        }
-
-        setState({ kind: "ready", html: await response.text() });
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setState({
-          kind: "error",
-          message:
-            error instanceof Error
-              ? error.message
-              : "HTML 미리보기를 불러오지 못했습니다.",
-        });
-      });
-
-    return () => controller.abort();
-  }, [source.downloadHref, source.kind]);
-
-  const panelLabel = source.kind === "powerpoint" ? "PPT 뷰어" : "HTML 리포트";
-  const closeLabel =
-    source.kind === "powerpoint" ? "PPT 뷰어 닫기" : "HTML 리포트 닫기";
+  const panelLabel = panelLabelFor(source.kind);
+  const closeLabel = `${panelLabel} 닫기`;
   const nativeOpenLabel = nativeOpenPending
     ? "PowerPoint 여는 중"
     : "PowerPoint에서 열기";
   const previewOpenHref = source.previewHref ?? source.downloadHref;
+  const canCopy =
+    state.kind === "ready" && (source.kind === "markdown" || source.kind === "text");
 
   function openNativePowerPoint(): void {
     if (!source.nativeOpenPath || nativeOpenPending) {
@@ -2040,6 +2185,16 @@ function ArtifactPreviewPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {canCopy && state.kind === "ready" ? (
+            <button
+              type="button"
+              onClick={() => copyArtifactText(state.text, source.name)}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
+            >
+              <Copy className="size-3.5" />
+              복사
+            </button>
+          ) : null}
           <a
             href={previewOpenHref}
             target="_blank"
@@ -2079,34 +2234,104 @@ function ArtifactPreviewPanel({
       </header>
 
       <div className="min-h-0 flex-1 bg-white">
-        {source.kind === "powerpoint" ? (
-          <div className="h-full bg-muted/40 p-4">
-            <PptxArtifactPreview
-              contentType={source.contentType}
-              downloadHref={source.downloadHref}
-              name={source.name}
-              previewHref={source.previewHref}
-            />
-          </div>
-        ) : state.kind === "loading" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            HTML 미리보기를 불러오는 중입니다.
-          </div>
-        ) : state.kind === "error" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            HTML 미리보기를 불러오지 못했습니다. {state.message}
-          </div>
-        ) : (
-          <iframe
-            title={`${source.name} HTML 미리보기`}
-            srcDoc={state.html}
-            sandbox=""
-            className="h-full w-full border-0"
-          />
-        )}
+        <ArtifactPreviewBody source={source} state={state} />
       </div>
     </aside>
   );
+}
+
+function ArtifactPreviewBody({
+  source,
+  state,
+}: {
+  source: RockyPreviewPanelSource;
+  state:
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "ready"; text: string }
+    | { kind: "error"; message: string };
+}) {
+  if (source.kind === "powerpoint") {
+    return (
+      <div className="h-full bg-muted/40 p-4">
+        <PptxArtifactPreview
+          contentType={source.contentType}
+          downloadHref={source.downloadHref}
+          name={source.name}
+          previewHref={source.previewHref}
+        />
+      </div>
+    );
+  }
+
+  if (source.kind === "pdf") {
+    return (
+      <iframe
+        title={`${source.name} PDF 미리보기`}
+        src={source.previewHref ?? source.downloadHref}
+        className="h-full w-full border-0"
+      />
+    );
+  }
+
+  if (source.kind === "image") {
+    return (
+      <div className="flex h-full items-center justify-center bg-muted/40 p-4">
+        <img
+          src={source.previewHref ?? source.downloadHref}
+          alt={source.name}
+          className="max-h-full max-w-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  if (state.kind === "loading") {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        미리보기를 불러오는 중입니다.
+      </div>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        미리보기를 불러오지 못했습니다. {state.message}
+      </div>
+    );
+  }
+
+  if (state.kind === "ready") {
+    if (source.kind === "html") {
+      return (
+        <iframe
+          title={`${source.name} HTML 미리보기`}
+          srcDoc={state.text}
+          sandbox=""
+          className="h-full w-full border-0"
+        />
+      );
+    }
+
+    if (source.kind === "markdown") {
+      return (
+        <div className="custom-scrollbar h-full overflow-y-auto px-6 py-5 text-sm leading-7 text-foreground">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.text}</ReactMarkdown>
+        </div>
+      );
+    }
+
+    if (source.kind === "text") {
+      return (
+        <pre className="custom-scrollbar h-full overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-xs leading-6 text-foreground">
+          {state.text}
+        </pre>
+      );
+    }
+  }
+
+  return null;
 }
 
 function EmbeddedArtifactPreviewPanel({
@@ -2116,52 +2341,17 @@ function EmbeddedArtifactPreviewPanel({
   onClose: () => void;
   source: RockyPreviewPanelSource;
 }) {
-  const [state, setState] = useState<
-    | { kind: "loading" }
-    | { kind: "ready"; html: string }
-    | { kind: "error"; message: string }
-  >({ kind: "loading" });
+  const { state } = useFetchedArtifactText(source);
   const previewOpenHref = source.previewHref ?? source.downloadHref;
-
-  useEffect(() => {
-    if (source.kind !== "html") {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    setState({ kind: "loading" });
-    fetch(source.downloadHref, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`${response.status} ${response.statusText}`);
-        }
-
-        setState({ kind: "ready", html: await response.text() });
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setState({
-          kind: "error",
-          message:
-            error instanceof Error
-              ? error.message
-              : "미리보기를 불러오지 못했습니다.",
-        });
-      });
-
-    return () => controller.abort();
-  }, [source.downloadHref, source.kind]);
+  const canCopy =
+    state.kind === "ready" && (source.kind === "markdown" || source.kind === "text");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <div className="text-xs font-semibold uppercase text-muted-foreground">
-            {source.kind === "powerpoint" ? "PPT 뷰어" : "HTML 리포트"}
+            {panelLabelFor(source.kind)}
           </div>
           <div className="mt-1 truncate text-sm font-semibold text-foreground">
             {source.name}
@@ -2171,6 +2361,18 @@ function EmbeddedArtifactPreviewPanel({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {canCopy && state.kind === "ready" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="내용 복사"
+              title="내용 복사"
+              onClick={() => copyArtifactText(state.text, source.name)}
+            >
+              <Copy className="size-4" />
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -2193,31 +2395,7 @@ function EmbeddedArtifactPreviewPanel({
         </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
-        {source.kind === "powerpoint" ? (
-          <div className="h-full bg-muted/40 p-4">
-            <PptxArtifactPreview
-              contentType={source.contentType}
-              downloadHref={source.downloadHref}
-              name={source.name}
-              previewHref={source.previewHref}
-            />
-          </div>
-        ) : state.kind === "loading" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            미리보기를 불러오는 중입니다.
-          </div>
-        ) : state.kind === "error" ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            미리보기를 불러오지 못했습니다. {state.message}
-          </div>
-        ) : (
-          <iframe
-            title={`${source.name} 미리보기`}
-            srcDoc={state.html}
-            sandbox=""
-            className="h-full w-full border-0"
-          />
-        )}
+        <ArtifactPreviewBody source={source} state={state} />
       </div>
     </div>
   );
@@ -2784,6 +2962,34 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     [chat, transcriptRefreshMarker, userTemplates]
   );
   const templateFileRefreshKey = `${chat?.updatedAt ?? "no-chat"}:${transcriptRefreshMarker}`;
+
+  const autoPreviewedTaskIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isTaskDetail || !chat) return;
+    if (previewPanelSource) return;
+    if (autoPreviewedTaskIdRef.current === chat.id) return;
+    if (templateFilePanelContext) return;
+
+    const latest = findLatestPreviewableArtifact(chat, transcriptsBySessionId);
+    if (!latest) return;
+
+    const source = buildArtifactPreviewPanelSource(latest);
+    if (!source) return;
+
+    autoPreviewedTaskIdRef.current = chat.id;
+    setPreviewPanelSource(source);
+  }, [
+    isTaskDetail,
+    chat,
+    previewPanelSource,
+    templateFilePanelContext,
+    transcriptRefreshMarker,
+  ]);
+  useEffect(() => {
+    if (!isTaskDetail) {
+      autoPreviewedTaskIdRef.current = null;
+    }
+  }, [isTaskDetail, routeTaskId]);
 
   const messageCount = chat?.messages.length ?? 0;
   const hasActiveOrchestration =

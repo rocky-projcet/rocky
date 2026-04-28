@@ -251,11 +251,11 @@ function AgentTabs({
     <section className="flex flex-wrap gap-2">
       <TabButton
         active={selected === ALL_TAB}
+        count={totalCount}
         onClick={() => onSelect(ALL_TAB)}
       >
         <ListTodo className="size-3.5" />
         전체
-        <span className="ml-1 text-[10px] text-muted-foreground">{totalCount}</span>
       </TabButton>
       {agents.map((agent) => (
         <AgentTabButton
@@ -269,11 +269,11 @@ function AgentTabs({
       {unmappedCount > 0 ? (
         <TabButton
           active={selected === NO_AGENT_TAB}
+          count={unmappedCount}
           onClick={() => onSelect(NO_AGENT_TAB)}
         >
           <Sparkles className="size-3.5" />
           매핑 없음
-          <span className="ml-1 text-[10px] text-muted-foreground">{unmappedCount}</span>
         </TabButton>
       ) : null}
     </section>
@@ -282,10 +282,12 @@ function AgentTabs({
 
 function TabButton({
   active,
+  count,
   onClick,
   children,
 }: {
   active: boolean;
+  count?: number;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -301,6 +303,16 @@ function TabButton({
       )}
     >
       {children}
+      {typeof count === "number" ? (
+        <span
+          className={cn(
+            "ml-0.5 text-[10px]",
+            active ? "text-background/80" : "text-muted-foreground",
+          )}
+        >
+          {count}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -337,7 +349,12 @@ function AgentTabButton({
     >
       <span className="text-sm leading-none">{emoji}</span>
       <span className="truncate">{agent.name}</span>
-      <span className="ml-0.5 text-[10px] text-muted-foreground data-[active=true]:text-background/80" data-active={active}>
+      <span
+        className={cn(
+          "ml-0.5 text-[10px]",
+          active ? "text-background/80" : "text-muted-foreground",
+        )}
+      >
         {count}
       </span>
     </button>

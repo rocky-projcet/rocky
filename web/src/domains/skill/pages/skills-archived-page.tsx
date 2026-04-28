@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -6,6 +7,7 @@ import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
 import { ArchiveCardActions } from "@/shared/components/archive-card-actions";
 import { ArchiveEmpty } from "@/shared/components/archive-empty";
+import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { cn } from "@/shared/lib/utils";
 import { skillKindTheme } from "../lib/skill-kind-theme";
@@ -13,12 +15,13 @@ import { skillKindTheme } from "../lib/skill-kind-theme";
 export function SkillsArchivedPage() {
   const { archivedTemplates, deleteTemplate, restoreTemplate } = useMdTemplates();
   const navigate = useNavigate();
+  const [pendingDelete, setPendingDelete] = useState<MdTemplateDefinition | null>(null);
 
-  function handleDelete(skill: MdTemplateDefinition) {
-    const ok = window.confirm(`"${skill.title}" 스킬을 영구 삭제할까요? 되돌릴 수 없어요.`);
-    if (!ok) return;
-    deleteTemplate(skill.id);
-    toast.success("스킬을 삭제했습니다.");
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    deleteTemplate(pendingDelete.id);
+    toast.success("스킬을 삭제했습니다.", { description: pendingDelete.title });
+    setPendingDelete(null);
   }
 
   function handleRestore(skill: MdTemplateDefinition) {
@@ -46,13 +49,29 @@ export function SkillsArchivedPage() {
             <li key={skill.id}>
               <ArchivedSkillCard
                 skill={skill}
-                onDelete={() => handleDelete(skill)}
+                onDelete={() => setPendingDelete(skill)}
                 onRestore={() => handleRestore(skill)}
               />
             </li>
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(null);
+        }}
+        title="스킬을 영구 삭제할까요?"
+        description={
+          pendingDelete
+            ? `"${pendingDelete.title}"을(를) 되돌릴 수 없게 삭제합니다.`
+            : undefined
+        }
+        confirmLabel="삭제"
+        destructive
+        onConfirm={confirmDelete}
+      />
     </PageContainer>
   );
 }

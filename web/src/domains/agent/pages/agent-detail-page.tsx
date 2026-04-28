@@ -40,7 +40,9 @@ import {
   rockyTaskStatusTone,
 } from "@/domains/rocky/lib/rocky-task-model";
 import { useCreateRockyChatMutation, useRockyChatsQuery } from "@/domains/rocky/hooks";
+import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
 import type { MdTemplateDefinition } from "@/domains/template/types";
+import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -95,6 +97,8 @@ export function AgentDetailPage() {
 
   const taskCount = (chatsQuery.data ?? []).length + (sessionsQuery.data ?? []).length;
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(false);
+  const [pendingDetach, setPendingDetach] = useState<MdTemplateDefinition | null>(null);
 
   if (agentQuery.isLoading) {
     return (
@@ -146,17 +150,14 @@ export function AgentDetailPage() {
     );
   }
 
-  function handleDelete() {
+  function performDelete() {
     if (!agent) return;
-    const ok = window.confirm(
-      `"${agent.name}" 에이전트를 영구 삭제할까요? 되돌릴 수 없어요.`,
-    );
-    if (!ok) return;
     deleteMutation.mutate(
       { agentId: agent.id, stopRunningSessions: true },
       {
         onSuccess: () => {
           toast.success("에이전트를 삭제했습니다.");
+          setPendingDelete(false);
           navigate("/agents/archived", { replace: true });
         },
         onError: (error) => {
@@ -254,7 +255,7 @@ export function AgentDetailPage() {
                   type="button"
                   variant="outline"
                   size="icon"
-                  onClick={handleDelete}
+                  onClick={() => setPendingDelete(true)}
                   disabled={deleteMutation.isPending}
                   className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
                   aria-label="에이전트 영구 삭제"
@@ -334,14 +335,7 @@ export function AgentDetailPage() {
                   <EquippedSkillCard
                     skill={skill}
                     readOnly={archived}
-                    onDetach={() => {
-                      const ok = window.confirm(
-                        `"${skill.title}"을(를) 이 에이전트에서 제거할까요? 스킬 자체는 사라지지 않습니다.`,
-                      );
-                      if (!ok) return;
-                      detachSkill(skill.id);
-                      toast.success("스킬을 해제했습니다.");
-                    }}
+                    onDetach={() => setPendingDetach(skill)}
                   />
                 </li>
               ))}
@@ -388,6 +382,41 @@ export function AgentDetailPage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingDelete}
+        onOpenChange={setPendingDelete}
+        title="에이전트를 영구 삭제할까요?"
+        description={
+          agent
+            ? `"${agent.name}"을(를) 되돌릴 수 없게 삭제합니다. 작업 이력도 함께 정리돼요.`
+            : undefined
+        }
+        confirmLabel="삭제"
+        destructive
+        onConfirm={performDelete}
+        pending={deleteMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingDetach)}
+        onOpenChange={(next) => {
+          if (!next) setPendingDetach(null);
+        }}
+        title="스킬을 해제할까요?"
+        description={
+          pendingDetach
+            ? `"${pendingDetach.title}"을(를) 이 에이전트에서 제거합니다. 스킬 자체는 사라지지 않아요.`
+            : undefined
+        }
+        confirmLabel="해제"
+        onConfirm={() => {
+          if (!pendingDetach) return;
+          detachSkill(pendingDetach.id);
+          toast.success("스킬을 해제했습니다.");
+          setPendingDetach(null);
+        }}
+      />
     </div>
   );
 }

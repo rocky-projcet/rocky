@@ -87,7 +87,6 @@ export function HeaderBreadcrumb() {
   if (pathname === "/") title = "홈";
   if (pathname === "/agents/archived") title = "내 에이전트 보관함";
   else if (pathname === "/skills/archived") title = "스킬 보관함";
-  else if (pathname === "/templates/archived") title = "스킬 템플릿 보관함";
   else if (pathname.startsWith("/skills")) title = "스킬";
   else if (pathname.startsWith("/templates")) title = "스킬 템플릿";
   else if (pathname.startsWith("/admin/rocky") || pathname.startsWith("/rocky/agent"))

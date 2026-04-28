@@ -25,7 +25,6 @@ import {
   TemplateBuilderPage,
   TemplatesPage,
 } from "../domains/template/pages/templates-page";
-import { TemplatesArchivedPage } from "../domains/template/pages/templates-archived-page";
 import { SkillsPage } from "../domains/skill/pages/skills-page";
 import { SkillsArchivedPage } from "../domains/skill/pages/skills-archived-page";
 import { SkillNewPage } from "../domains/skill/pages/skill-new-page";
@@ -77,7 +76,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "templates/archived",
-        element: <TemplatesArchivedPage />,
+        element: <Navigate to="/templates" replace />,
       },
       {
         path: "templates/:kind",

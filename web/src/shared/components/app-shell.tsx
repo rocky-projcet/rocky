@@ -77,11 +77,7 @@ function isAgentsRoute(pathname: string): boolean {
 }
 
 function isArchiveRoute(pathname: string): boolean {
-  return (
-    pathname === "/agents/archived" ||
-    pathname === "/skills/archived" ||
-    pathname === "/templates/archived"
-  );
+  return pathname === "/agents/archived" || pathname === "/skills/archived";
 }
 
 export function AppShell() {
@@ -216,15 +212,6 @@ function AppShellInner() {
                         >
                           <Sparkles />
                           <span>스킬 보관함</span>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
-                      <SidebarMenuSubItem>
-                        <SidebarMenuSubButton
-                          isActive={location.pathname === "/templates/archived"}
-                          render={<NavLink to="/templates/archived" />}
-                        >
-                          <LayoutTemplate />
-                          <span>스킬 템플릿 보관함</span>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                       <SidebarMenuSubItem>

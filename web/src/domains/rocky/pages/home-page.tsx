@@ -886,43 +886,12 @@ function findLatestPreviewableArtifact(
 }
 
 function buildChatAttachmentPreviewSource(
-  chat: RockyChatRecord
+  _chat: RockyChatRecord
 ): RockyPreviewPanelSource | null {
-  const dispatch = chat.dispatches.find(
-    (entry) => entry.orchestration?.agentId,
-  );
-  const agentId = dispatch?.orchestration?.agentId ?? null;
-  if (!agentId) return null;
-
-  const candidates = [...chat.attachments]
-    .filter((attachment) => attachment.workspacePath)
-    .sort((left, right) => right.addedAt.localeCompare(left.addedAt));
-
-  for (const attachment of candidates) {
-    if (!attachment.workspacePath) continue;
-    const synthetic: AgentSessionArtifactManifestEntry = {
-      kind: "file",
-      role: "input",
-      name: attachment.name,
-      workspaceRelativePath: attachment.workspacePath,
-      contentType: attachment.contentType ?? "application/octet-stream",
-      presentation: "file",
-      size: attachment.size,
-      previewable: true,
-      previewUrl: agentEngineClient.agentWorkspaceFilePreviewUrl(
-        agentId,
-        attachment.workspacePath,
-      ),
-      downloadUrl: agentEngineClient.agentWorkspaceFileDownloadUrl(
-        agentId,
-        attachment.workspacePath,
-      ),
-      preferredAction: "preview",
-    };
-    const source = buildArtifactPreviewPanelSource(synthetic);
-    if (source) return source;
-  }
-
+  // Chat-level attachments don't expose a public download URL — the file is
+  // stored under rocky-core's workspace (uploads/rocky/...), and the agent
+  // workspace API isn't routed for rocky-core. Skip the synthetic source and
+  // wait for the run's input artifact to come in via transcripts instead.
   return null;
 }
 

@@ -1556,9 +1556,7 @@ function MessageBubble({
   const bubbleTone =
     isRocky && rockyMessageState.kind === "error"
       ? "text-destructive"
-      : isRocky
-        ? "text-foreground"
-        : "text-primary-foreground";
+      : "text-foreground";
 
   return (
     <div
@@ -1577,7 +1575,10 @@ function MessageBubble({
                 myAgentColor ? "rounded-2xl border px-4 py-3 md:px-5" : "px-1 pb-2 pt-0 md:px-2",
                 bubbleTone,
               )
-            : cn("max-w-[min(44rem,86%)] rounded-lg bg-primary px-4 py-3 md:px-5", bubbleTone)
+            : cn(
+                "max-w-[min(44rem,86%)] rounded-2xl border border-border/60 bg-muted px-4 py-3 md:px-5",
+                bubbleTone,
+              )
         )}
         style={isRocky ? replyBubbleStyle : undefined}
       >

@@ -860,23 +860,25 @@ function findLatestPreviewableArtifact(
   for (const dispatch of chat.dispatches) {
     const orchestration = dispatch.orchestration;
     if (!orchestration?.sessionId) continue;
-    const transcript = transcriptsBySessionId[orchestration.sessionId];
-    const message = findLatestAssistantMessage(transcript, orchestration.runId);
-    if (!message) continue;
-    const artifacts = splitTranscriptArtifacts(message.artifacts).visibleArtifacts;
-    const messageUpdatedAt = message.createdAt ?? "";
+    const transcript = transcriptsBySessionId[orchestration.sessionId] ?? [];
 
-    for (const artifact of artifacts) {
-      if (!buildArtifactPreviewPanelSource(artifact)) continue;
-      if (artifact.role === "output") {
-        if (messageUpdatedAt >= bestOutputAt) {
-          bestOutput = artifact;
-          bestOutputAt = messageUpdatedAt;
-        }
-      } else if (artifact.role === "input") {
-        if (messageUpdatedAt >= bestInputAt) {
-          bestInput = artifact;
-          bestInputAt = messageUpdatedAt;
+    for (const message of transcript) {
+      if (orchestration.runId && message.runId !== orchestration.runId) continue;
+      const artifacts = splitTranscriptArtifacts(message.artifacts).visibleArtifacts;
+      const messageUpdatedAt = message.createdAt ?? "";
+
+      for (const artifact of artifacts) {
+        if (!buildArtifactPreviewPanelSource(artifact)) continue;
+        if (artifact.role === "output") {
+          if (messageUpdatedAt >= bestOutputAt) {
+            bestOutput = artifact;
+            bestOutputAt = messageUpdatedAt;
+          }
+        } else if (artifact.role === "input") {
+          if (messageUpdatedAt >= bestInputAt) {
+            bestInput = artifact;
+            bestInputAt = messageUpdatedAt;
+          }
         }
       }
     }

@@ -43,6 +43,10 @@ function fieldKindDescription(field: SkillField): string {
       return "URL 또는 파일";
     case "text":
       return "직접 입력";
+    case "account-connect":
+      return "계정 연결 (로그인)";
+    case "recipient-address":
+      return "받는 곳 입력";
   }
 }
 

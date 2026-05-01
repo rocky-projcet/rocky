@@ -17,7 +17,9 @@ export type SkillFieldKind =
   | "file-with-role"
   | "language-pair"
   | "text"
-  | "url-or-file";
+  | "url-or-file"
+  | "account-connect"
+  | "recipient-address";
 
 export interface SkillFieldOption {
   id: string;
@@ -219,6 +221,33 @@ const CONTENT_TEMPLATE: SkillTemplate = {
               ],
             },
             { id: "newsletter", label: "뉴스레터" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "content-publish-account",
+      title: "어느 계정으로 올릴까요?",
+      helper:
+        "골라주신 채널에 로그인이 필요해요. 처음이면 이 단계에서 계정을 연결해 주세요. 초안만 받고 직접 올리실 거면 건너뛰셔도 돼요.",
+      skippable: true,
+      fields: [
+        {
+          id: "publishAccount",
+          kind: "account-connect",
+          label: "발행할 계정",
+          helper:
+            "예) Instagram @brand, 네이버 블로그 ID, 뉴스레터 발송 계정. 연결된 계정이 없으면 '계정 연결하기'를 눌러주세요.",
+          optional: true,
+        },
+        {
+          id: "autoPublish",
+          kind: "single-select",
+          label: "발행 방식",
+          options: [
+            { id: "draft-only", label: "초안만 만들기 (직접 올림)" },
+            { id: "review-then-publish", label: "확인 후 자동 발행" },
+            { id: "schedule", label: "예약 발행" },
           ],
         },
       ],
@@ -823,6 +852,50 @@ const MESSAGE_TEMPLATE: SkillTemplate = {
             { id: "sms", label: "문자 (SMS/MMS)" },
             { id: "letter", label: "공식 서신·공문" },
           ],
+        },
+      ],
+    },
+    {
+      id: "message-send-account",
+      title: "어느 계정으로 보낼까요?",
+      helper:
+        "보낼 채널에 로그인이 필요해요. 처음이면 여기서 계정을 연결해 주세요. 초안만 받고 직접 보내실 거면 건너뛰셔도 돼요.",
+      skippable: true,
+      fields: [
+        {
+          id: "sendAccount",
+          kind: "account-connect",
+          label: "보내는 계정",
+          helper:
+            "예) Gmail 주소, 회사 메일(SMTP), Slack 워크스페이스, 카카오 비즈 채널, 발신 번호. 연결된 게 없으면 '계정 연결하기'를 눌러주세요.",
+          optional: true,
+        },
+        {
+          id: "sendMode",
+          kind: "single-select",
+          label: "발송 방식",
+          options: [
+            { id: "draft-only", label: "초안만 만들기 (직접 보냄)" },
+            { id: "review-then-send", label: "확인 후 자동 발송" },
+            { id: "schedule", label: "예약 발송" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "message-recipient-address",
+      title: "받는 곳을 알려주세요",
+      helper:
+        "이메일 주소·전화번호·Slack 채널 등 보낼 곳을 적어주세요. 여러 명이면 줄바꿈 또는 쉼표로 구분해주세요. 초안만 받으실 거면 건너뛰셔도 돼요.",
+      skippable: true,
+      fields: [
+        {
+          id: "recipientAddress",
+          kind: "recipient-address",
+          label: "받는 사람",
+          placeholder:
+            "이메일 주소, 전화번호(010-...), Slack #채널 또는 @사용자",
+          optional: true,
         },
       ],
     },

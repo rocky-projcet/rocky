@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Check, Plus, Upload, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Plug, Plus, Upload, X } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -147,6 +147,14 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
     return typeof value === "string" && value.trim().length > 0;
   }
 
+  if (field.kind === "account-connect") {
+    return typeof value === "string" && value.length > 0;
+  }
+
+  if (field.kind === "recipient-address") {
+    return typeof value === "string" && value.trim().length > 0;
+  }
+
   return false;
 }
 
@@ -209,8 +217,77 @@ function SkillFieldView({
         <UrlOrFileField value={value} onChange={onChange} />
       ) : field.kind === "text" ? (
         <TextField field={field} value={value} onChange={onChange} />
+      ) : field.kind === "account-connect" ? (
+        <AccountConnectField value={value} onChange={onChange} />
+      ) : field.kind === "recipient-address" ? (
+        <RecipientAddressField field={field} value={value} onChange={onChange} />
       ) : null}
     </FieldShell>
+  );
+}
+
+function AccountConnectField({
+  value,
+  onChange,
+}: {
+  value: AnswerValue;
+  onChange: (value: AnswerValue) => void;
+}) {
+  const connectedLabel = typeof value === "string" && value.length > 0 ? value : "";
+  return (
+    <div className="flex flex-col gap-2">
+      {connectedLabel ? (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-foreground/30 bg-foreground/5 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Check className="size-4 text-foreground" />
+            <span className="text-sm font-medium text-foreground">{connectedLabel}</span>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
+            연결 해제
+          </Button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            const handle = window.prompt(
+              "연결할 계정을 적어주세요. (예: @brand, hello@company.com, 워크스페이스 이름)",
+            );
+            if (handle && handle.trim().length > 0) {
+              onChange(handle.trim());
+            }
+          }}
+          className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm font-medium text-foreground transition hover:bg-muted/40"
+        >
+          <Plug className="size-4" />
+          계정 연결하기
+        </button>
+      )}
+      <p className="text-xs text-muted-foreground">
+        연결 화면에서 로그인하면 이후 같은 채널에는 다시 묻지 않아요.
+      </p>
+    </div>
+  );
+}
+
+function RecipientAddressField({
+  field,
+  value,
+  onChange,
+}: {
+  field: SkillField;
+  value: AnswerValue;
+  onChange: (value: AnswerValue) => void;
+}) {
+  const text = typeof value === "string" ? value : "";
+  return (
+    <textarea
+      value={text}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={field.placeholder ?? "받는 곳을 입력해주세요"}
+      rows={3}
+      className="w-full rounded-2xl border border-border/70 bg-card px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-foreground focus:outline-none"
+    />
   );
 }
 

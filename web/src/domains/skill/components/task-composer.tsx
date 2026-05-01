@@ -135,7 +135,7 @@ export function TaskComposer({
             ? `${pinnedSkill.title}로 ${recipientName}에게 부탁할 내용을 적어주세요`
             : `${recipientName}에게 자연어로 일을 부탁해보세요. 장착된 스킬을 알아서 골라 사용해요.`
         }
-        className="min-h-[3.5rem] resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
+        className="custom-scrollbar max-h-40 min-h-[3.5rem] resize-none overflow-y-auto border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
       />
 
       <div className="mt-2 flex items-center gap-2">

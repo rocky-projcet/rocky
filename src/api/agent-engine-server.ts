@@ -113,6 +113,7 @@ export function createAgentEngineServer(
     agentService,
     sessionService,
     nativeFileOpener: options.nativeFileOpener,
+    nativeFolderOpener: options.nativeFolderOpener,
   });
   server.register(registerAccountRoutes, {
     codexAccountService,
@@ -131,6 +132,7 @@ export function createAgentEngineServer(
   server.register(registerRunRoutes, {
     sessionService,
     nativeFileOpener: options.nativeFileOpener,
+    nativeFolderOpener: options.nativeFolderOpener,
   });
   server.register(registerMessengerRoutes, {
     agentMessengerService,

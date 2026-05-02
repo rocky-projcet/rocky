@@ -1702,6 +1702,7 @@ test("Agent engine server converts PowerPoint artifacts to PDF previews", async 
     },
   };
   const nativeOpenPaths: string[] = [];
+  const nativeFolderOpenPaths: string[] = [];
 
   const server = createAgentEngineServer({
     stateRoot,
@@ -1714,6 +1715,17 @@ test("Agent engine server converts PowerPoint artifacts to PDF previews", async 
         application: "Microsoft PowerPoint",
         fileName: path.basename(filePath),
         platform: "test",
+      };
+    },
+    nativeFolderOpener: async (folderPath) => {
+      nativeFolderOpenPaths.push(folderPath);
+      return {
+        status: "opened",
+        application: "Finder",
+        fileName: path.basename(folderPath),
+        platform: "test",
+        kind: "folder",
+        path: folderPath,
       };
     },
   });
@@ -1772,6 +1784,23 @@ test("Agent engine server converts PowerPoint artifacts to PDF previews", async 
       platform: "test",
     });
     assert.deepEqual(nativeOpenPaths, [deckPath]);
+
+    const folderOpenResponse = await fetch(
+      `${baseUrl}/runs/run-ppt/artifacts/proposal-deck/open-folder-native`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(folderOpenResponse.status, 200);
+    assert.deepEqual(await folderOpenResponse.json(), {
+      status: "opened",
+      application: "Finder",
+      fileName: path.basename(path.dirname(deckPath)),
+      platform: "test",
+      kind: "folder",
+      path: path.dirname(deckPath),
+    });
+    assert.deepEqual(nativeFolderOpenPaths, [path.dirname(deckPath)]);
   } finally {
     await server.close();
     if (previousConverter === undefined) {
@@ -1827,6 +1856,7 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
   await writeFile(videoPath, Buffer.from("fake-mp4-binary"), "utf8");
 
   const workspaceNativeOpenPaths: string[] = [];
+  const workspaceNativeFolderOpenPaths: string[] = [];
   const server = createAgentEngineServer({
     stateRoot,
     manager,
@@ -1838,6 +1868,17 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
         application: "Microsoft PowerPoint",
         fileName: path.basename(filePath),
         platform: "test",
+      };
+    },
+    nativeFolderOpener: async (folderPath) => {
+      workspaceNativeFolderOpenPaths.push(folderPath);
+      return {
+        status: "opened",
+        application: "Finder",
+        fileName: path.basename(folderPath) || folderPath,
+        platform: "test",
+        kind: "folder",
+        path: folderPath,
       };
     },
   });
@@ -2091,6 +2132,47 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
       platform: "test",
     });
     assert.deepEqual(workspaceNativeOpenPaths, [pptxPath]);
+
+    const workspaceRootOpenResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/open-native`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(workspaceRootOpenResponse.status, 200);
+    assert.equal(
+      (await workspaceRootOpenResponse.json()).path,
+      agent.workspaceRoot
+    );
+
+    const workspaceFileFolderOpenResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/open-native?path=notes%2Fsummary.md`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(workspaceFileFolderOpenResponse.status, 200);
+    assert.equal(
+      (await workspaceFileFolderOpenResponse.json()).path,
+      notesDir
+    );
+
+    const missingOutputFolderOpenResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/open-native?path=notes%2Fexpected-output.md`,
+      {
+        method: "POST",
+      }
+    );
+    assert.equal(missingOutputFolderOpenResponse.status, 200);
+    assert.equal(
+      (await missingOutputFolderOpenResponse.json()).path,
+      notesDir
+    );
+    assert.deepEqual(workspaceNativeFolderOpenPaths, [
+      agent.workspaceRoot,
+      notesDir,
+      notesDir,
+    ]);
 
     const audioPreviewMetadataResponse = await fetch(
       `${baseUrl}/agents/${agent.id}/workspace/file?path=voice.mp3`

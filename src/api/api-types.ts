@@ -37,7 +37,7 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
-import type { NativeFileOpener } from "./http/native-open.js";
+import type { NativeFileOpener, NativeFolderOpener } from "./http/native-open.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -232,4 +232,5 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   skillTemplateStore?: SkillTemplateStore;
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
+  nativeFolderOpener?: NativeFolderOpener;
 }

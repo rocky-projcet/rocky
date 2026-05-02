@@ -20,11 +20,12 @@ import {
   buildWorkspaceDirectoryRecord,
   buildWorkspaceFilePreviewRecord,
   openWorkspaceFileInPowerPoint,
+  openWorkspaceFolder,
   sendWorkspaceFileDownload,
   sendWorkspaceFilePreview,
   writeWorkspaceUploadFile,
 } from "../http/workspace.js";
-import type { NativeFileOpener } from "../http/native-open.js";
+import type { NativeFileOpener, NativeFolderOpener } from "../http/native-open.js";
 
 const AGENT_SKILL_INSTALL_BODY_LIMIT_BYTES = 100 * 1024 * 1024;
 
@@ -32,6 +33,7 @@ interface AgentRoutesOptions extends FastifyPluginOptions {
   agentService: AgentServiceLike;
   sessionService: SessionServiceLike;
   nativeFileOpener?: NativeFileOpener;
+  nativeFolderOpener?: NativeFolderOpener;
   agentLocalSkillService?: AgentLocalSkillService;
 }
 
@@ -554,6 +556,20 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
     });
 
     sendJson(reply, 200, await buildWorkspaceDirectoryRecord(agent, requestedPath));
+  });
+
+  server.post("/agents/:agentId/workspace/open-native", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    const requestedPath = parseWorkspaceQuery(request.query, {
+      required: false,
+    });
+
+    sendJson(
+      reply,
+      200,
+      await openWorkspaceFolder(agent, requestedPath, options.nativeFolderOpener)
+    );
   });
 
   server.get("/agents/:agentId/workspace/file", async (request, reply) => {

@@ -11,6 +11,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowRight,
+  FolderOpen,
   ListTodo,
   Plus,
   Sparkles,
@@ -63,6 +64,7 @@ import { readAllTaskAgentMap, rememberTaskAgent } from "../lib/task-agent-store"
 import { AgentAvatar } from "../components/agent-avatar";
 import { AgentEmojiPicker } from "../components/agent-emoji-picker";
 import type { AgentLocalSkillRecord } from "../types";
+import { agentEngineClient } from "@/shared/lib/api-client";
 
 type EquippedSkillItem = {
   record: AgentLocalSkillRecord;
@@ -122,6 +124,7 @@ export function AgentDetailPage() {
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [pendingDetach, setPendingDetach] = useState<EquippedSkillItem | null>(null);
+  const [workspaceOpenPending, setWorkspaceOpenPending] = useState(false);
 
   if (agentQuery.isLoading) {
     return (
@@ -181,6 +184,23 @@ export function AgentDetailPage() {
         },
       },
     );
+  }
+
+  function openWorkspaceFolder() {
+    if (!agent || workspaceOpenPending) return;
+
+    setWorkspaceOpenPending(true);
+    agentEngineClient
+      .openNativeFile(agentEngineClient.agentWorkspaceFolderNativeOpenPath(agent.id))
+      .then(() => {
+        toast.success("에이전트 작업 폴더를 열었습니다.");
+      })
+      .catch((error: unknown) => {
+        toast.error("작업 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setWorkspaceOpenPending(false));
   }
 
   const archived = agent.lifecycle === "archived";
@@ -253,6 +273,16 @@ export function AgentDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openWorkspaceFolder}
+              disabled={workspaceOpenPending}
+              title="실제 폴더 열기"
+            >
+              <FolderOpen className="size-4" />
+              폴더 열기
+            </Button>
             {archived ? (
               <>
                 <Button

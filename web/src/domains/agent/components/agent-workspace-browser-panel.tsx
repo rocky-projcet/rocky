@@ -9,11 +9,13 @@ import {
   File,
   FileText,
   Folder,
+  FolderOpen,
   Globe,
   ImageIcon,
   RotateCw,
   Video,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { agentEngineClient } from "@/shared/lib/api-client";
 import {
@@ -599,6 +601,7 @@ function UnsupportedPreviewMessage(props: { children: ReactNode }) {
 }
 
 function WorkspaceFilePreviewPanel(props: {
+  agentId: string;
   selectedFilePath: string | null;
   record: AgentWorkspaceFilePreviewRecord | undefined;
   isLoading: boolean;
@@ -613,6 +616,32 @@ function WorkspaceFilePreviewPanel(props: {
   className?: string;
   bare?: boolean;
 }) {
+  const [folderOpenPending, setFolderOpenPending] = useState(false);
+
+  function openActualFolder() {
+    if (!props.selectedFilePath || folderOpenPending) {
+      return;
+    }
+
+    setFolderOpenPending(true);
+    agentEngineClient
+      .openNativeFile(
+        agentEngineClient.agentWorkspaceFolderNativeOpenPath(
+          props.agentId,
+          props.selectedFilePath
+        )
+      )
+      .then(() => {
+        toast.success("파일이 있는 실제 폴더를 열었습니다.");
+      })
+      .catch((error: unknown) => {
+        toast.error("실제 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setFolderOpenPending(false));
+  }
+
   if (!props.selectedFilePath) {
     return (
       <div
@@ -672,15 +701,28 @@ function WorkspaceFilePreviewPanel(props: {
             </p>
           </div>
 
-          {props.downloadHref ? (
-            <a
-              href={props.downloadHref}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground no-underline transition hover:bg-secondary"
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={folderOpenPending}
+              onClick={openActualFolder}
+              title="실제 폴더 열기"
             >
-              <Download size={14} />
-              다운로드
-            </a>
-          ) : null}
+              <FolderOpen size={14} />
+              실제 폴더
+            </Button>
+            {props.downloadHref ? (
+              <a
+                href={props.downloadHref}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground no-underline transition hover:bg-secondary"
+              >
+                <Download size={14} />
+                다운로드
+              </a>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -1118,6 +1160,7 @@ export function AgentWorkspaceBrowserPanel(props: {
           </DialogHeader>
           <div className="min-h-0 flex-1 p-6">
             <WorkspaceFilePreviewPanel
+              agentId={props.agentId}
               selectedFilePath={selectedFilePath}
               record={filePreviewQuery.data}
               isLoading={filePreviewQuery.isLoading}

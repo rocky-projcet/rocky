@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Download, RefreshCw } from "lucide-react";
+import { Download, FolderOpen, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
 import { Button } from "@/shared/ui/button";
@@ -118,6 +120,7 @@ export function WorkspaceFilePreviewPage() {
   const [searchParams] = useSearchParams();
   const agentId = searchParams.get("agentId")?.trim() ?? "";
   const searchPath = searchParams.get("path")?.trim() ?? "";
+  const [folderOpenPending, setFolderOpenPending] = useState(false);
   const previewQuery = useQuery({
     queryKey: ["workspace-file-preview-page", agentId, searchPath],
     queryFn: () => agentEngineClient.getAgentWorkspaceFilePreview(agentId, searchPath),
@@ -129,6 +132,27 @@ export function WorkspaceFilePreviewPage() {
     : agentId && searchPath
       ? agentEngineClient.agentWorkspaceFileDownloadUrl(agentId, searchPath)
       : null;
+
+  function openActualFolder() {
+    if (!agentId || !searchPath || folderOpenPending) {
+      return;
+    }
+
+    setFolderOpenPending(true);
+    agentEngineClient
+      .openNativeFile(
+        agentEngineClient.agentWorkspaceFolderNativeOpenPath(agentId, searchPath)
+      )
+      .then(() => {
+        toast.success("파일이 있는 실제 폴더를 열었습니다.");
+      })
+      .catch((error: unknown) => {
+        toast.error("실제 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setFolderOpenPending(false));
+  }
 
   return (
     <div className="flex h-svh min-h-0 flex-col bg-background">
@@ -170,6 +194,17 @@ export function WorkspaceFilePreviewPage() {
               <Download className="size-4" />
             </Button>
           ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="실제 폴더 열기"
+            title="실제 폴더 열기"
+            disabled={!agentId || !searchPath || folderOpenPending}
+            onClick={openActualFolder}
+          >
+            <FolderOpen className="size-4" />
+          </Button>
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-hidden">

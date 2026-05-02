@@ -1027,6 +1027,8 @@ export interface NativeFileOpenRecord {
   application: string;
   fileName: string;
   platform: string;
+  kind?: "file" | "folder";
+  path?: string;
 }
 
 export type AgentWorkspacePreviewKind =
@@ -1898,6 +1900,25 @@ export class AgentEngineClient {
     search.set("path", searchPath);
 
     return `/agents/${encodeURIComponent(agentId)}/workspace/file/open-native?${search.toString()}`;
+  }
+
+  agentWorkspaceFolderNativeOpenPath(
+    agentId: string,
+    searchPath?: string | null
+  ): string {
+    const pathname = `/agents/${encodeURIComponent(agentId)}/workspace/open-native`;
+    const search = new URLSearchParams();
+    if (searchPath) {
+      search.set("path", searchPath);
+    }
+
+    return search.size > 0 ? `${pathname}?${search.toString()}` : pathname;
+  }
+
+  runArtifactFolderNativeOpenPath(runId: string, artifactRole: string): string {
+    return `/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(
+      artifactRole
+    )}/open-folder-native`;
   }
 
   resolveApiPath(pathname: string): string {

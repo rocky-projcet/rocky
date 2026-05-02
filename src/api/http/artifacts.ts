@@ -13,9 +13,11 @@ import {
   isPresentationPreviewAllowed,
 } from "../../runtime/runtime-artifact-metadata.js";
 import {
+  openFolder,
   openPowerPointFile,
   type NativeFileOpener,
   type NativeFileOpenRecord,
+  type NativeFolderOpener,
 } from "./native-open.js";
 import { contentDispositionHeader } from "./content-disposition.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
@@ -161,6 +163,16 @@ export async function openArtifactInPowerPoint(
   }
 
   return nativeFileOpener(artifactPath);
+}
+
+export async function openArtifactContainingFolder(
+  run: AgentRunRecord,
+  result: RuntimeRunResult,
+  artifactRole: string,
+  nativeFolderOpener: NativeFolderOpener = openFolder
+): Promise<NativeFileOpenRecord> {
+  const artifactPath = await resolveArtifactFile(run, result, artifactRole);
+  return nativeFolderOpener(path.dirname(artifactPath));
 }
 
 export async function sendArtifactPreview(

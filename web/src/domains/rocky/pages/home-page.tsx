@@ -17,6 +17,7 @@ import {
   FileInput,
   FileOutput,
   FileText,
+  FolderOpen,
   LayoutTemplate,
   Paperclip,
   PanelRightClose,
@@ -106,6 +107,7 @@ type RockyPreviewPanelSource = {
     | "text"
     | "spreadsheet";
   name: string;
+  folderOpenPath: string | null;
   nativeOpenPath: string | null;
   previewHref?: string | null;
 };
@@ -293,12 +295,14 @@ function buildArtifactPreviewPanelSource(
 ): RockyPreviewPanelSource | null {
   const downloadHref = agentEngineClient.resolveApiPath(artifact.downloadUrl);
   const detail = `${artifact.role} · ${artifact.contentType}`;
+  const folderOpenPath = `${artifact.downloadUrl}/open-folder-native`;
 
   if (isHtmlArtifact(artifact)) {
     return {
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "html",
       name: artifact.name,
       nativeOpenPath: null,
@@ -310,6 +314,7 @@ function buildArtifactPreviewPanelSource(
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "powerpoint",
       name: artifact.name,
       nativeOpenPath: `${artifact.downloadUrl}/open-native`,
@@ -324,6 +329,7 @@ function buildArtifactPreviewPanelSource(
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "pdf",
       name: artifact.name,
       nativeOpenPath: null,
@@ -338,6 +344,7 @@ function buildArtifactPreviewPanelSource(
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "image",
       name: artifact.name,
       nativeOpenPath: null,
@@ -352,6 +359,7 @@ function buildArtifactPreviewPanelSource(
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "markdown",
       name: artifact.name,
       nativeOpenPath: null,
@@ -363,6 +371,7 @@ function buildArtifactPreviewPanelSource(
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "spreadsheet",
       name: artifact.name,
       nativeOpenPath: null,
@@ -375,6 +384,7 @@ function buildArtifactPreviewPanelSource(
       contentType: artifact.contentType,
       detail,
       downloadHref,
+      folderOpenPath,
       kind: "text",
       name: artifact.name,
       nativeOpenPath: null,
@@ -528,6 +538,17 @@ function workspacePreviewPageHref(agentId: string, workspacePath: string): strin
   return `/workspace-preview?${params.toString()}`;
 }
 
+function nativeFolderPathForTemplateFile(file: TemplatePanelFile): string | null {
+  if (file.agentId && file.workspacePath) {
+    return agentEngineClient.agentWorkspaceFolderNativeOpenPath(
+      file.agentId,
+      file.workspacePath
+    );
+  }
+
+  return file.artifact ? `${file.artifact.downloadUrl}/open-folder-native` : null;
+}
+
 function buildWorkspacePreviewPanelSource(
   input: {
     agentId: string;
@@ -545,6 +566,10 @@ function buildWorkspacePreviewPanelSource(
     contentType: preview.contentType,
     detail,
     downloadHref,
+    folderOpenPath: agentEngineClient.agentWorkspaceFolderNativeOpenPath(
+      agentId,
+      workspacePath
+    ),
     name: preview.name,
     previewHref: inlinePreviewHref,
   };
@@ -2796,6 +2821,7 @@ function ArtifactPreviewPanel({
 }) {
   const { state } = useFetchedArtifactText(source);
   const [nativeOpenPending, setNativeOpenPending] = useState(false);
+  const [folderOpenPending, setFolderOpenPending] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
 
   const panelLabel = panelLabelFor(source.kind);
@@ -2826,6 +2852,25 @@ function ArtifactPreviewPanel({
         );
       })
       .finally(() => setNativeOpenPending(false));
+  }
+
+  function openActualFolder(): void {
+    if (!source.folderOpenPath || folderOpenPending) {
+      return;
+    }
+
+    setFolderOpenPending(true);
+    agentEngineClient
+      .openNativeFile(source.folderOpenPath)
+      .then(() => {
+        toast.success("실제 폴더를 열었습니다.");
+      })
+      .catch((error: unknown) => {
+        toast.error("실제 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setFolderOpenPending(false));
   }
 
   return (
@@ -2871,6 +2916,17 @@ function ArtifactPreviewPanel({
               className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
             >
               {nativeOpenLabel}
+            </button>
+          ) : null}
+          {source.folderOpenPath ? (
+            <button
+              type="button"
+              disabled={folderOpenPending}
+              onClick={openActualFolder}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <FolderOpen className="size-3.5" />
+              폴더
             </button>
           ) : null}
           <a
@@ -3020,9 +3076,29 @@ function EmbeddedArtifactPreviewPanel({
 }) {
   const { state } = useFetchedArtifactText(source);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
+  const [folderOpenPending, setFolderOpenPending] = useState(false);
   const previewOpenHref = source.previewHref ?? source.downloadHref;
   const canCopy =
     state.kind === "ready" && (source.kind === "markdown" || source.kind === "text");
+
+  function openActualFolder(): void {
+    if (!source.folderOpenPath || folderOpenPending) {
+      return;
+    }
+
+    setFolderOpenPending(true);
+    agentEngineClient
+      .openNativeFile(source.folderOpenPath)
+      .then(() => {
+        toast.success("실제 폴더를 열었습니다.");
+      })
+      .catch((error: unknown) => {
+        toast.error("실제 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setFolderOpenPending(false));
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -3062,6 +3138,19 @@ function EmbeddedArtifactPreviewPanel({
           >
             <ExternalLink className="size-4" />
           </Button>
+          {source.folderOpenPath ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="실제 폴더 열기"
+              title="실제 폴더 열기"
+              disabled={folderOpenPending}
+              onClick={openActualFolder}
+            >
+              <FolderOpen className="size-4" />
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -3359,6 +3448,7 @@ function TemplateSelectedFilePreview({
   refreshKey: string;
 }) {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
+  const [folderOpenPending, setFolderOpenPending] = useState(false);
   const workspacePreviewQuery = useQuery({
     queryKey: [
       "rocky-template-file-preview",
@@ -3396,6 +3486,27 @@ function TemplateSelectedFilePreview({
       : file.artifact?.previewUrl
         ? agentEngineClient.resolveApiPath(file.artifact.previewUrl)
         : downloadHref;
+  const folderOpenPath = nativeFolderPathForTemplateFile(file);
+  const fileRoleLabel = templatePanelRoleLabel(file.role);
+
+  function openActualFolder(): void {
+    if (!folderOpenPath || folderOpenPending) {
+      return;
+    }
+
+    setFolderOpenPending(true);
+    agentEngineClient
+      .openNativeFile(folderOpenPath)
+      .then(() => {
+        toast.success(`${fileRoleLabel} 실제 폴더를 열었습니다.`);
+      })
+      .catch((error: unknown) => {
+        toast.error("실제 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setFolderOpenPending(false));
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-background">
@@ -3442,6 +3553,19 @@ function TemplateSelectedFilePreview({
               render={<a href={openHref} target="_blank" rel="noreferrer" />}
             >
               <ExternalLink className="size-4" />
+            </Button>
+          ) : null}
+          {folderOpenPath ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`${fileRoleLabel} 실제 폴더 열기`}
+              title={`${fileRoleLabel} 실제 폴더 열기`}
+              disabled={folderOpenPending}
+              onClick={openActualFolder}
+            >
+              <FolderOpen className="size-4" />
             </Button>
           ) : null}
           {downloadHref ? (

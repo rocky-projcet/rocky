@@ -3,7 +3,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -93,6 +96,15 @@ const LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS = 1500;
 const PPT_CONTENT_TYPE = "application/vnd.ms-powerpoint";
 const PPTX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const TEMPLATE_FILE_PANEL_DEFAULT_WIDTH = 640;
+const TEMPLATE_FILE_PANEL_MIN_WIDTH = 360;
+const TEMPLATE_FILE_PANEL_MAX_WIDTH = 920;
+const TEMPLATE_FILE_PANEL_MAIN_MIN_WIDTH = 360;
+const TEMPLATE_FILE_PANEL_WIDTH_STEP = 24;
+const TEMPLATE_FILE_LIST_DEFAULT_HEIGHT = 240;
+const TEMPLATE_FILE_LIST_MIN_HEIGHT = 144;
+const TEMPLATE_FILE_PREVIEW_MIN_HEIGHT = 240;
+const TEMPLATE_FILE_SPLIT_STEP = 24;
 
 type RockyPreviewPanelSource = {
   contentType: string;
@@ -138,6 +150,60 @@ type TemplateFilePanelContext = {
   hasExplicitOutputFiles: boolean;
   active: boolean;
 };
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (max <= min) {
+    return min;
+  }
+
+  return Math.min(Math.max(value, min), max);
+}
+
+function maxTemplateFilePanelWidth(): number {
+  if (typeof window === "undefined") {
+    return TEMPLATE_FILE_PANEL_MAX_WIDTH;
+  }
+
+  return Math.max(
+    TEMPLATE_FILE_PANEL_MIN_WIDTH,
+    Math.min(
+      TEMPLATE_FILE_PANEL_MAX_WIDTH,
+      window.innerWidth - TEMPLATE_FILE_PANEL_MAIN_MIN_WIDTH
+    )
+  );
+}
+
+function clampTemplateFilePanelWidth(value: number): number {
+  return clampNumber(
+    value,
+    TEMPLATE_FILE_PANEL_MIN_WIDTH,
+    maxTemplateFilePanelWidth()
+  );
+}
+
+function templateFileListHeightBounds(
+  container: HTMLDivElement | null
+): { min: number; max: number } {
+  const containerHeight = container?.getBoundingClientRect().height ?? 0;
+  const availableMax =
+    containerHeight > 0
+      ? containerHeight - TEMPLATE_FILE_PREVIEW_MIN_HEIGHT
+      : TEMPLATE_FILE_LIST_DEFAULT_HEIGHT * 2;
+  const max = Math.max(TEMPLATE_FILE_LIST_MIN_HEIGHT, availableMax);
+
+  return {
+    min: Math.min(TEMPLATE_FILE_LIST_MIN_HEIGHT, max),
+    max,
+  };
+}
+
+function clampTemplateFileListHeight(
+  value: number,
+  container: HTMLDivElement | null
+): number {
+  const bounds = templateFileListHeightBounds(container);
+  return clampNumber(value, bounds.min, bounds.max);
+}
 
 const TEMPLATE_RUN_MARKER = "[Rocky 템플릿 실행]";
 
@@ -3608,20 +3674,28 @@ function TemplateSelectedFilePreview({
 function TemplateFilePanel({
   context,
   externalPreviewSource,
+  onWidthChange,
   onClearExternalPreview,
   onClose,
+  panelWidth,
   refreshKey,
 }: {
   context: TemplateFilePanelContext;
   externalPreviewSource: RockyPreviewPanelSource | null;
+  onWidthChange: (width: number) => void;
   onClearExternalPreview: () => void;
   onClose: () => void;
+  panelWidth: number;
   refreshKey: string;
 }) {
   const allFiles = [...context.outputFiles, ...context.inputFiles];
   const defaultSelectedKey =
     context.outputFiles[0]?.key ?? context.inputFiles[0]?.key ?? null;
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelectedKey);
+  const [fileListHeight, setFileListHeight] = useState(
+    TEMPLATE_FILE_LIST_DEFAULT_HEIGHT
+  );
+  const fileSplitContainerRef = useRef<HTMLDivElement | null>(null);
   const fileKeySignature = allFiles.map((file) => file.key).join("\n");
   const selectedFile =
     allFiles.find((file) => file.key === selectedKey) ??
@@ -3641,8 +3715,187 @@ function TemplateFilePanel({
     );
   }, [defaultSelectedKey, fileKeySignature]);
 
+  useEffect(() => {
+    const container = fileSplitContainerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      setFileListHeight((current) =>
+        clampTemplateFileListHeight(current, container)
+      );
+    });
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, []);
+
+  function handlePanelResizePointerDown(
+    event: ReactPointerEvent<HTMLDivElement>
+  ): void {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panelWidth;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function handlePointerMove(moveEvent: PointerEvent): void {
+      const nextWidth = startWidth - (moveEvent.clientX - startX);
+      onWidthChange(clampTemplateFilePanelWidth(nextWidth));
+    }
+
+    function cleanup(): void {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+  }
+
+  function handlePanelResizeKeyDown(
+    event: KeyboardEvent<HTMLDivElement>
+  ): void {
+    if (
+      event.key !== "ArrowLeft" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "Home" &&
+      event.key !== "End"
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.key === "Home") {
+      onWidthChange(TEMPLATE_FILE_PANEL_MIN_WIDTH);
+      return;
+    }
+
+    if (event.key === "End") {
+      onWidthChange(maxTemplateFilePanelWidth());
+      return;
+    }
+
+    onWidthChange(
+      clampTemplateFilePanelWidth(
+        panelWidth +
+          (event.key === "ArrowLeft"
+            ? TEMPLATE_FILE_PANEL_WIDTH_STEP
+            : -TEMPLATE_FILE_PANEL_WIDTH_STEP)
+      )
+    );
+  }
+
+  function handleFileSplitPointerDown(
+    event: ReactPointerEvent<HTMLDivElement>
+  ): void {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const container = fileSplitContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = fileListHeight;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    function handlePointerMove(moveEvent: PointerEvent): void {
+      const nextHeight = startHeight + (moveEvent.clientY - startY);
+      setFileListHeight(clampTemplateFileListHeight(nextHeight, container));
+    }
+
+    function cleanup(): void {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+  }
+
+  function handleFileSplitKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (
+      event.key !== "ArrowUp" &&
+      event.key !== "ArrowDown" &&
+      event.key !== "Home" &&
+      event.key !== "End"
+    ) {
+      return;
+    }
+
+    const container = fileSplitContainerRef.current;
+    const bounds = templateFileListHeightBounds(container);
+    event.preventDefault();
+
+    if (event.key === "Home") {
+      setFileListHeight(bounds.min);
+      return;
+    }
+
+    if (event.key === "End") {
+      setFileListHeight(bounds.max);
+      return;
+    }
+
+    setFileListHeight((current) =>
+      clampTemplateFileListHeight(
+        current +
+          (event.key === "ArrowDown"
+            ? TEMPLATE_FILE_SPLIT_STEP
+            : -TEMPLATE_FILE_SPLIT_STEP),
+        container
+      )
+    );
+  }
+
+  const panelStyle = {
+    "--rocky-template-file-panel-width": `${panelWidth}px`,
+  } as CSSProperties;
+
   return (
-    <aside className="flex h-[55vh] min-h-[24rem] shrink-0 flex-col border-t border-border bg-card shadow-sm lg:h-auto lg:min-h-0 lg:w-[min(42vw,42rem)] lg:border-l lg:border-t-0 xl:w-[40rem]">
+    <aside
+      className="relative flex h-[55vh] min-h-[24rem] w-full shrink-0 flex-col border-t border-border bg-card shadow-sm lg:h-auto lg:min-h-0 lg:w-[var(--rocky-template-file-panel-width)] lg:border-l lg:border-t-0"
+      style={panelStyle}
+    >
+      <div
+        role="separator"
+        aria-label="오른쪽 파일 패널 너비 조절"
+        aria-orientation="vertical"
+        aria-valuemin={TEMPLATE_FILE_PANEL_MIN_WIDTH}
+        aria-valuemax={maxTemplateFilePanelWidth()}
+        aria-valuenow={Math.round(panelWidth)}
+        tabIndex={0}
+        onPointerDown={handlePanelResizePointerDown}
+        onKeyDown={handlePanelResizeKeyDown}
+        className="group absolute -left-1 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none outline-hidden lg:block"
+      >
+        <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
+        <span className="absolute left-1/2 top-1/2 h-12 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
+      </div>
       <header className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -3683,8 +3936,14 @@ function TemplateFilePanel({
           onClose={onClearExternalPreview}
         />
       ) : (
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-rows-[minmax(10rem,0.7fr)_minmax(22rem,1.3fr)]">
-          <div className="custom-scrollbar min-h-0 space-y-5 overflow-y-auto border-b border-border px-4 py-4">
+        <div
+          ref={fileSplitContainerRef}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div
+            className="custom-scrollbar min-h-0 shrink-0 space-y-5 overflow-y-auto px-4 py-4"
+            style={{ height: fileListHeight }}
+          >
             <TemplateFileSection
               title="Output"
               files={context.outputFiles}
@@ -3704,7 +3963,18 @@ function TemplateFilePanel({
               onSelect={(file) => setSelectedKey(file.key)}
             />
           </div>
-          <div className="min-h-0 overflow-hidden p-4">
+          <div
+            role="separator"
+            aria-label="Input/Output 목록과 미리보기 높이 조절"
+            aria-orientation="horizontal"
+            tabIndex={0}
+            onPointerDown={handleFileSplitPointerDown}
+            onKeyDown={handleFileSplitKeyDown}
+            className="group relative h-2 shrink-0 cursor-row-resize touch-none border-y border-border bg-card outline-hidden"
+          >
+            <span className="absolute left-1/2 top-1/2 h-1 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden p-4">
             <TemplateSelectedFilePreview
               active={context.active}
               file={selectedFile}
@@ -3734,6 +4004,9 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const [previewPanelSource, setPreviewPanelSource] =
     useState<RockyPreviewPanelSource | null>(null);
   const [filePanelOpen, setFilePanelOpen] = useState(true);
+  const [filePanelWidth, setFilePanelWidth] = useState(
+    TEMPLATE_FILE_PANEL_DEFAULT_WIDTH
+  );
   const [runProgressByRunId, setRunProgressByRunId] = useState<Record<string, string>>(
     {}
   );
@@ -4293,8 +4566,12 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         <TemplateFilePanel
           context={filePanelContext}
           externalPreviewSource={previewPanelSource}
+          onWidthChange={(width) =>
+            setFilePanelWidth(clampTemplateFilePanelWidth(width))
+          }
           onClearExternalPreview={() => setPreviewPanelSource(null)}
           onClose={closeFilePanel}
+          panelWidth={filePanelWidth}
           refreshKey={templateFileRefreshKey}
         />
       ) : !filePanelContext && previewPanelSource ? (

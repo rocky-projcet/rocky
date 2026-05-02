@@ -1,12 +1,13 @@
 # AGENTS Index
 
-This file is an index only. Detailed workflows live in the referenced skills.
+This file is a compact index plus repo-wide defaults. Detailed workflows live in the referenced skills.
 
 ## Local Skills
 
 - `rocky-dev` -> `.agents/skills/rocky-dev/SKILL.md`
 - `rocky-service-run` -> `.agents/skills/rocky-service-run/SKILL.md`
 - `rocky-web-ui-dev` -> `.agents/skills/rocky-web-ui-dev/SKILL.md`
+- `karpathy-guidelines` -> `.agents/skills/karpathy-guidelines/SKILL.md`
 - `requirement-understanding` -> `.agents/skills/requirement-understanding/SKILL.md`
 - `rocky-runtime-probe` -> `.agents/skills/rocky-runtime-probe/SKILL.md`
 - `mcp-on-demand` -> `.agents/skills/mcp-on-demand/SKILL.md`
@@ -25,3 +26,7 @@ This file is an index only. Detailed workflows live in the referenced skills.
 - New ad-hoc implementation work: create one tracker entry and one related hub document
 - If the user provides an existing Notion link, treat that page as the source of truth
 - Prefer `notion-api-publisher` for document-hub capture when the goal is direct publish without MCP context
+
+## Coding Defaults
+
+- Apply `karpathy-guidelines` for implementation, review, and refactor work: state assumptions when needed, keep scope minimal, touch only requested code, and verify with relevant checks.

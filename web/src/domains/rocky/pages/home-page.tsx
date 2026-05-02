@@ -55,13 +55,6 @@ import {
   isTerminalRockyRunEvent,
   rockyRunProgressLabelForEvent,
 } from "@/domains/rocky/lib/rocky-run-progress";
-import {
-  formatRockyTaskDateTime,
-  formatRockyTaskDuration,
-  getRockyTaskEndedAt,
-  getRockyTaskLastActivityAt,
-  getRockyTaskStartedAt,
-} from "@/domains/rocky/lib/rocky-task-model";
 import type {
   AgentSessionArtifactManifestEntry,
   AgentSessionMessage,
@@ -2614,6 +2607,23 @@ function ChatReplyAvatar({ chatId }: { chatId: string }) {
   return <RockyReplyMark />;
 }
 
+function formatRockyAnswerSeconds(
+  startedAt: string | null | undefined,
+  endedAt: string | null | undefined
+): string | null {
+  if (!startedAt || !endedAt) {
+    return null;
+  }
+
+  const start = new Date(startedAt).getTime();
+  const end = new Date(endedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return null;
+  }
+
+  return `${Math.max(1, Math.round((end - start) / 1000))}초`;
+}
+
 function MessageAttachmentList({
   attachments,
   isRocky,
@@ -2681,6 +2691,7 @@ function MessageBubble({
   message,
   onOpenConversationFile,
   runProgressByRunId,
+  showAnswerDuration,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
@@ -2688,6 +2699,7 @@ function MessageBubble({
   message: RockyMessageRecord;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   runProgressByRunId: Record<string, string>;
+  showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   const isRocky = message.role === "rocky";
@@ -2772,6 +2784,12 @@ function MessageBubble({
     isRocky && rockyMessageState.kind === "error"
       ? "text-destructive"
       : "text-foreground";
+  const answerSeconds = isRocky && showAnswerDuration
+    ? formatRockyAnswerSeconds(
+        dispatch?.orchestration?.startedAt ?? dispatch?.createdAt,
+        dispatch?.orchestration?.endedAt ?? message.createdAt
+      )
+    : null;
 
   return (
     <div
@@ -2823,59 +2841,12 @@ function MessageBubble({
             onOpenConversationFile={onOpenConversationFile}
           />
         ) : null}
-      </article>
-    </div>
-  );
-}
-
-function formatTaskTimeRange(
-  startedAt: string | null,
-  endedAt: string | null
-): string {
-  if (!startedAt) {
-    return "아직 없음";
-  }
-
-  return `${formatRockyTaskDateTime(startedAt)} ~ ${
-    endedAt ? formatRockyTaskDateTime(endedAt) : "진행 중"
-  }`;
-}
-
-function TaskConversationTimingSummary({ chat }: { chat: RockyChatRecord }) {
-  const startedAt = getRockyTaskStartedAt(chat);
-  const endedAt = getRockyTaskEndedAt(chat);
-  const lastActivityAt = getRockyTaskLastActivityAt(chat);
-  const items = [
-    {
-      label: "작업 시간",
-      value: formatTaskTimeRange(startedAt, endedAt),
-    },
-    {
-      label: "최근 작업",
-      value: formatRockyTaskDateTime(lastActivityAt),
-    },
-    {
-      label: "총 실행시간",
-      value: formatRockyTaskDuration(startedAt, endedAt),
-    },
-  ];
-
-  return (
-    <div className="mx-auto mb-5 grid w-full max-w-4xl gap-3 rounded-lg border border-border/70 bg-card px-4 py-3 text-xs shadow-sm sm:grid-cols-[1.4fr_1fr_0.8fr]">
-      {items.map((item, index) => (
-        <div
-          key={item.label}
-          className={cn(
-            "min-w-0",
-            index > 0 ? "sm:border-l sm:border-border/70 sm:pl-3" : null
-          )}
-        >
-          <div className="font-medium text-muted-foreground">{item.label}</div>
-          <div className="mt-1 break-keep text-sm font-semibold leading-5 text-foreground">
-            {item.value}
+        {answerSeconds ? (
+          <div className="mt-3 text-[11px] font-medium leading-4 text-muted-foreground">
+            답변 {answerSeconds}
           </div>
-        </div>
-      ))}
+        ) : null}
+      </article>
     </div>
   );
 }
@@ -2886,6 +2857,7 @@ function MessageList({
   endRef,
   onOpenConversationFile,
   runProgressByRunId,
+  showAnswerDuration,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
@@ -2893,6 +2865,7 @@ function MessageList({
   endRef: RefObject<HTMLDivElement | null>;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   runProgressByRunId: Record<string, string>;
+  showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   return (
@@ -2905,6 +2878,7 @@ function MessageList({
           message={message}
           onOpenConversationFile={onOpenConversationFile}
           runProgressByRunId={runProgressByRunId}
+          showAnswerDuration={showAnswerDuration}
           transcriptsBySessionId={transcriptsBySessionId}
         />
       ))}
@@ -6224,17 +6198,15 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               ) : null}
             </div>
           ) : chat && messageCount > 0 ? (
-            <>
-              {isTaskDetail ? <TaskConversationTimingSummary chat={chat} /> : null}
-              <MessageList
-                agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
-                chat={chat}
-                endRef={messagesEndRef}
-                onOpenConversationFile={openConversationFile}
-                runProgressByRunId={runProgressByRunId}
-                transcriptsBySessionId={transcriptsBySessionId}
-              />
-            </>
+            <MessageList
+              agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
+              chat={chat}
+              endRef={messagesEndRef}
+              onOpenConversationFile={openConversationFile}
+              runProgressByRunId={runProgressByRunId}
+              showAnswerDuration={isTaskDetail}
+              transcriptsBySessionId={transcriptsBySessionId}
+            />
           ) : (
             <EmptyChatState
               disabled={pending}

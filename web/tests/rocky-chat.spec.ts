@@ -427,6 +427,9 @@ test("conversation file clicks select the file management preview panel", async 
 
   await page.goto(`/tasks/${chatId}`);
 
+  await expect(page.getByText("작업 시간")).toHaveCount(0);
+  await expect(page.getByText("총 실행시간")).toHaveCount(0);
+  await expect(page.getByText("답변 1초")).toBeVisible();
   await expect(page.getByText("파일 관리").first()).toBeVisible();
   await expect(
     page.getByRole("button", { name: /output\.md outputs\/output\.md/ })

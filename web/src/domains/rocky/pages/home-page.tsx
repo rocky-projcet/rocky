@@ -13,6 +13,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
+  AtSign,
   BarChart3,
   Copy,
   Download,
@@ -139,6 +140,11 @@ type TemplatePanelFile = {
   artifact: AgentSessionArtifactManifestEntry | null;
   createdAt: string;
   expected: boolean;
+};
+
+type FileMentionRange = {
+  start: number;
+  end: number;
 };
 
 type TemplateFilePanelContext = {
@@ -2406,31 +2412,167 @@ function SelectedFileList({
   );
 }
 
+type ActiveFileMention = FileMentionRange & {
+  query: string;
+};
+
+function activeFileMentionAt(value: string, caretIndex: number): ActiveFileMention | null {
+  const beforeCaret = value.slice(0, caretIndex);
+  const match = /(^|\s)@([^\s@]*)$/.exec(beforeCaret);
+
+  if (!match) {
+    return null;
+  }
+
+  const leadingSpace = match[1] ?? "";
+  const query = match[2] ?? "";
+  const start = beforeCaret.length - match[0].length + leadingSpace.length;
+
+  return {
+    start,
+    end: caretIndex,
+    query,
+  };
+}
+
+function fileMentionMatches(file: TemplatePanelFile, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return [file.name, file.detail, templatePanelRoleLabel(file.role)]
+    .join(" ")
+    .toLowerCase()
+    .includes(normalizedQuery);
+}
+
+function FileMentionMenu({
+  activeIndex,
+  files,
+  onHover,
+  onSelect,
+}: {
+  activeIndex: number;
+  files: TemplatePanelFile[];
+  onHover: (index: number) => void;
+  onSelect: (file: TemplatePanelFile) => void;
+}) {
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-2 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 shadow-lg">
+      <div className="px-2 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+        파일 지정
+      </div>
+      {files.map((file, index) => {
+        const Icon = file.role === "input" ? FileInput : FileOutput;
+
+        return (
+          <button
+            key={file.key}
+            type="button"
+            onMouseEnter={() => onHover(index)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelect(file);
+            }}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition",
+              index === activeIndex
+                ? "bg-accent text-accent-foreground"
+                : "hover:bg-secondary"
+            )}
+          >
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
+              <Icon className="size-3.5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{fileMentionToken(file)}</span>
+              <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                {panelFileDisplayDetail(file)}
+              </span>
+            </span>
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {templatePanelRoleLabel(file.role)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ChatComposer({
   canSend,
   canStop,
   errorMessage,
   files,
+  mentionableFiles,
   message,
   onFilesChange,
   onFileRemove,
+  onInsertFileMention,
   onStop,
   onMessageChange,
   onSubmit,
+  textareaRef,
   stopPending,
 }: {
   canSend: boolean;
   canStop: boolean;
   errorMessage: string | undefined;
   files: File[];
+  mentionableFiles: TemplatePanelFile[];
   message: string;
   onFilesChange: (files: File[]) => void;
   onFileRemove: (file: File) => void;
+  onInsertFileMention: (file: TemplatePanelFile, range?: FileMentionRange) => void;
   onStop: () => void;
   onMessageChange: (message: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   stopPending: boolean;
 }) {
+  const [activeMention, setActiveMention] = useState<ActiveFileMention | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const mentionOptions = useMemo(() => {
+    if (!activeMention) {
+      return [];
+    }
+
+    return mentionableFiles
+      .filter((file) => fileMentionMatches(file, activeMention.query))
+      .slice(0, 8);
+  }, [activeMention, mentionableFiles]);
+
+  useEffect(() => {
+    setActiveMentionIndex(0);
+  }, [activeMention?.query, mentionOptions.length]);
+
+  function updateActiveMention(value: string, caretIndex: number) {
+    setActiveMention(
+      mentionableFiles.length > 0
+        ? activeFileMentionAt(value, caretIndex)
+        : null
+    );
+  }
+
+  function insertMention(file: TemplatePanelFile) {
+    if (!activeMention) {
+      onInsertFileMention(file);
+      return;
+    }
+
+    onInsertFileMention(file, {
+      start: activeMention.start,
+      end: activeMention.end,
+    });
+    setActiveMention(null);
+  }
+
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
       <form
@@ -2438,6 +2580,13 @@ function ChatComposer({
         onSubmit={onSubmit}
       >
         <SelectedFileList files={files} onRemove={onFileRemove} />
+
+        <FileMentionMenu
+          activeIndex={activeMentionIndex}
+          files={mentionOptions}
+          onHover={setActiveMentionIndex}
+          onSelect={insertMention}
+        />
 
         <div className="flex min-h-12 items-center gap-1">
           <Button
@@ -2461,12 +2610,51 @@ function ChatComposer({
             />
           </Button>
           <Textarea
+            ref={textareaRef}
             value={message}
-            onChange={(event) => onMessageChange(event.target.value)}
+            onBlur={() => {
+              window.setTimeout(() => setActiveMention(null), 120);
+            }}
+            onChange={(event) => {
+              onMessageChange(event.target.value);
+              updateActiveMention(
+                event.target.value,
+                event.target.selectionStart ?? event.target.value.length
+              );
+            }}
+            onClick={(event) => {
+              updateActiveMention(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart ?? event.currentTarget.value.length
+              );
+            }}
             placeholder="PPT나 자료를 넣고 원하는 일을 말해보세요."
             aria-label="Rocky에게 말하기"
             className="max-h-36 min-h-10 flex-1 border-0 bg-transparent px-2 py-2.5 text-sm leading-5 shadow-none focus-visible:ring-0"
             onKeyDown={(event) => {
+              if (activeMention && mentionOptions.length > 0) {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveMentionIndex((current) => {
+                    const offset = event.key === "ArrowDown" ? 1 : -1;
+                    return (current + offset + mentionOptions.length) % mentionOptions.length;
+                  });
+                  return;
+                }
+
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  insertMention(mentionOptions[activeMentionIndex] ?? mentionOptions[0]);
+                  return;
+                }
+
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setActiveMention(null);
+                  return;
+                }
+              }
+
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
@@ -3323,12 +3511,18 @@ function templatePanelRoleLabel(role: TemplatePanelFileRole): string {
   return role === "input" ? "Input" : "Output";
 }
 
+function fileMentionToken(file: TemplatePanelFile): string {
+  return `@${file.name}`;
+}
+
 function TemplateFileRow({
   file,
+  onMention,
   selected,
   onSelect,
 }: {
   file: TemplatePanelFile;
+  onMention?: (file: TemplatePanelFile) => void;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -3339,17 +3533,19 @@ function TemplateFileRow({
       : "border-sky-500/25 bg-sky-500/8 text-sky-700";
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       className={cn(
-        "w-full rounded-lg border px-3 py-2.5 text-left transition",
+        "group relative flex w-full rounded-lg border text-left transition",
         selected
           ? "border-primary/45 bg-primary/5 shadow-sm"
           : "border-border bg-background hover:bg-secondary/60"
       )}
     >
-      <div className="flex min-w-0 items-start gap-2.5">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex min-w-0 flex-1 items-start gap-2.5 rounded-lg px-3 py-2.5 pr-12 text-left outline-hidden focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
         <span
           className={cn(
             "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md border",
@@ -3375,20 +3571,34 @@ function TemplateFileRow({
             {typeof file.size === "number" ? <span>{formatFileSize(file.size)}</span> : null}
           </span>
         </span>
-      </div>
-    </button>
+      </button>
+      {onMention ? (
+        <button
+          type="button"
+          aria-label={`${file.name} 채팅에 지정`}
+          title="채팅에 지정"
+          onClick={() => onMention(file)}
+          className="absolute right-2 top-2 inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground opacity-0 shadow-sm transition hover:bg-secondary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+        >
+          <AtSign className="size-3" />
+          지정
+        </button>
+      ) : null}
+    </div>
   );
 }
 
 function TemplateFileSection({
   emptyText,
   files,
+  onMention,
   onSelect,
   selectedKey,
   title,
 }: {
   emptyText: string;
   files: TemplatePanelFile[];
+  onMention?: (file: TemplatePanelFile) => void;
   onSelect: (file: TemplatePanelFile) => void;
   selectedKey: string | null;
   title: string;
@@ -3407,6 +3617,7 @@ function TemplateFileSection({
             <TemplateFileRow
               key={file.key}
               file={file}
+              onMention={onMention}
               selected={selectedKey === file.key}
               onSelect={() => onSelect(file)}
             />
@@ -3781,12 +3992,14 @@ function TemplateFilePanel({
   context,
   onWidthChange,
   onClose,
+  onMentionFile,
   panelWidth,
   selectionRequest,
 }: {
   context: TemplateFilePanelContext;
   onWidthChange: (width: number) => void;
   onClose: () => void;
+  onMentionFile: (file: TemplatePanelFile) => void;
   panelWidth: number;
   selectionRequest: TemplateFilePanelSelectionRequest | null;
 }) {
@@ -4078,6 +4291,7 @@ function TemplateFilePanel({
             title="Output"
             files={context.outputFiles}
             selectedKey={selectionError ? null : selectedFile?.key ?? selectedKey}
+            onMention={onMentionFile}
             emptyText={
               context.hasExplicitOutputFiles
                 ? "지정된 output 파일이 아직 생성되지 않았습니다."
@@ -4092,6 +4306,7 @@ function TemplateFilePanel({
             title="Input"
             files={context.inputFiles}
             selectedKey={selectionError ? null : selectedFile?.key ?? selectedKey}
+            onMention={onMentionFile}
             emptyText="연결된 input 파일이 없습니다."
             onSelect={(file) => {
               setSelectionError(null);
@@ -4149,6 +4364,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     {}
   );
   const submitInFlightRef = useRef(false);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const filePanelSignatureRef = useRef<string | null>(null);
   const filePanelSelectionRequestIdRef = useRef(0);
@@ -4580,9 +4796,45 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         }
       : null;
   const visibleFilePanelContext = filePanelContext ?? fallbackFilePanelContext;
+  const mentionablePanelFiles = visibleFilePanelContext
+    ? [...visibleFilePanelContext.outputFiles, ...visibleFilePanelContext.inputFiles]
+    : [];
   const closeFilePanel = () => {
     setFilePanelOpen(false);
     setFilePanelSelectionRequest(null);
+  };
+
+  const insertFileMention = (
+    file: TemplatePanelFile,
+    range?: FileMentionRange
+  ) => {
+    let nextCursor = 0;
+
+    setMessage((current) => {
+      const textarea = composerTextareaRef.current;
+      const fallbackStart = textarea?.selectionStart ?? current.length;
+      const fallbackEnd = textarea?.selectionEnd ?? fallbackStart;
+      const start = Math.max(0, Math.min(range?.start ?? fallbackStart, current.length));
+      const end = Math.max(start, Math.min(range?.end ?? fallbackEnd, current.length));
+      const prefix = current.slice(0, start);
+      const suffix = current.slice(end);
+      const leadingSpace = prefix.length > 0 && !/\s$/.test(prefix) ? " " : "";
+      const trailingSpace = suffix.length === 0 || !/^\s/.test(suffix) ? " " : "";
+      const mention = `${leadingSpace}${fileMentionToken(file)}${trailingSpace}`;
+      nextCursor = prefix.length + mention.length;
+
+      return `${prefix}${mention}${suffix}`;
+    });
+
+    window.requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
   };
 
   return (
@@ -4657,16 +4909,19 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
           canStop={canStop}
           errorMessage={errorMessage}
           files={files}
+          mentionableFiles={mentionablePanelFiles}
           message={message}
           onFilesChange={setFiles}
           onFileRemove={(file) =>
             setFiles((current) => current.filter((item) => item !== file))
           }
+          onInsertFileMention={insertFileMention}
           onStop={() => {
             void stopActiveResponse();
           }}
           onMessageChange={setMessage}
           onSubmit={submit}
+          textareaRef={composerTextareaRef}
           stopPending={cancelRockyChatMutation.isPending}
         />
       </section>
@@ -4697,6 +4952,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
             setFilePanelWidth(clampTemplateFilePanelWidth(width))
           }
           onClose={closeFilePanel}
+          onMentionFile={insertFileMention}
           panelWidth={filePanelWidth}
           selectionRequest={filePanelSelectionRequest}
         />

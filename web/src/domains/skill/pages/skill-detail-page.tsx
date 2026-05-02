@@ -17,9 +17,12 @@ import {
   FileText,
   ListTodo,
   Paperclip,
+  Search,
+  UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useAgentsQuery } from "@/domains/agent/hooks";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
@@ -27,7 +30,7 @@ import {
   getRockyTaskRequest,
   getRockyTaskStatus,
   getRockyTaskSummary,
-  getRockyTaskTemplateGroup,
+  isRockyTaskForTemplateSkill,
   rockyTaskStatusLabel,
   rockyTaskStatusTone,
 } from "@/domains/rocky/lib/rocky-task-model";
@@ -37,11 +40,22 @@ import type {
   MdTemplateInputArtifact,
 } from "@/domains/template/types";
 import { PageContainer } from "@/shared/components/page-container";
-import { Button } from "@/shared/ui/button";
+import { Button, buttonVariants } from "@/shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { agentEngineClient } from "@/shared/lib/api-client";
-import type { AgentLocalSkillFileInput } from "@/shared/lib/agent-engine-client";
+import type {
+  AgentLocalSkillFileInput,
+  AgentRecord,
+  RockyChatRecord,
+} from "@/shared/lib/agent-engine-client";
 import {
   parseXlsxPreview,
   type XlsxPreviewSheet,
@@ -56,19 +70,23 @@ export function SkillDetailPage() {
     () => userTemplates.find((entry) => entry.id === skillId) ?? null,
     [skillId, userTemplates],
   );
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
 
   const chatsQuery = useRockyChatsQuery();
+  const agentsQuery = useAgentsQuery({ includeArchived: true });
+  const agents = agentsQuery.data ?? [];
 
   const tasks = useMemo(() => {
     if (!skill) return [];
     const all = chatsQuery.data ?? [];
     return all
-      .filter((chat) => {
-        const group = getRockyTaskTemplateGroup(chat, userTemplates);
-        return group.id === skill.id;
-      })
+      .filter((chat) => isRockyTaskForTemplateSkill(chat, skill, userTemplates))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [chatsQuery.data, skill, userTemplates]);
+  const filteredTasks = useMemo(
+    () => filterSkillTasks(tasks, taskSearchQuery, agents),
+    [agents, taskSearchQuery, tasks],
+  );
 
   if (!skill) {
     return <SkillNotFound />;
@@ -151,13 +169,27 @@ export function SkillDetailPage() {
       <SkillAttachmentSection skill={skill} />
 
       <section>
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <ListTodo className="size-4 text-muted-foreground" />
-          이 스킬로 한 작업
-          <span className="ml-auto text-xs font-normal text-muted-foreground">
-            {tasks.length}개
-          </span>
-        </h2>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <ListTodo className="size-4 text-muted-foreground" />
+            이 스킬로 한 작업
+            <span className="text-xs font-normal text-muted-foreground">
+              {taskSearchQuery.trim()
+                ? `${filteredTasks.length}/${tasks.length}개`
+                : `${tasks.length}개`}
+            </span>
+          </h2>
+          <div className="relative w-full sm:w-72">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={taskSearchQuery}
+              onChange={(event) => setTaskSearchQuery(event.target.value)}
+              placeholder="작업 검색"
+              aria-label="이 스킬로 한 작업 검색"
+              className="pl-9"
+            />
+          </div>
+        </div>
 
         {chatsQuery.isLoading ? (
           <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
@@ -167,12 +199,17 @@ export function SkillDetailPage() {
           <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
             아직 이 스킬로 한 작업이 없습니다.
           </div>
+        ) : filteredTasks.length === 0 ? (
+          <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
+            검색 결과가 없습니다.
+          </div>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {tasks.map((chat) => {
+            {filteredTasks.map((chat) => {
               const status = getRockyTaskStatus(chat);
               const summary = getRockyTaskSummary(chat);
               const request = getRockyTaskRequest(chat);
+              const agentLabel = getRockyTaskAgentLabel(chat, agents);
               return (
                 <li key={chat.id}>
                   <Link
@@ -193,6 +230,10 @@ export function SkillDetailPage() {
                     <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-foreground">
                       {chat.title || request || "제목 없음"}
                     </h3>
+                    <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                      <UserRound className="size-3.5 shrink-0" />
+                      <span className="truncate">{agentLabel}</span>
+                    </div>
                     {summary ? (
                       <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
                         {summary}
@@ -210,6 +251,82 @@ export function SkillDetailPage() {
       </section>
     </PageContainer>
   );
+}
+
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function getRockyTaskAgentId(chat: RockyChatRecord): string | null {
+  if (chat.worker?.agentId) {
+    return chat.worker.agentId;
+  }
+
+  for (const dispatch of [...chat.dispatches].reverse()) {
+    if (dispatch.orchestration?.agentId) {
+      return dispatch.orchestration.agentId;
+    }
+  }
+
+  return null;
+}
+
+function getRockyTaskAgentRecord(
+  chat: RockyChatRecord,
+  agents: AgentRecord[],
+): AgentRecord | null {
+  const agentId = getRockyTaskAgentId(chat);
+  if (!agentId) {
+    return null;
+  }
+
+  return agents.find((agent) => agent.id === agentId) ?? null;
+}
+
+function getRockyTaskAgentLabel(
+  chat: RockyChatRecord,
+  agents: AgentRecord[],
+): string {
+  const agent = getRockyTaskAgentRecord(chat, agents);
+  if (agent?.name) {
+    return agent.name;
+  }
+
+  if (chat.worker?.displayName) {
+    return chat.worker.displayName;
+  }
+
+  const agentId = getRockyTaskAgentId(chat);
+  return agentId ? `에이전트 ${agentId}` : "에이전트 정보 없음";
+}
+
+function filterSkillTasks(
+  tasks: RockyChatRecord[],
+  query: string,
+  agents: AgentRecord[],
+): RockyChatRecord[] {
+  const normalizedQuery = normalizeSearchValue(query);
+  if (!normalizedQuery) {
+    return tasks;
+  }
+
+  return tasks.filter((chat) => {
+    const request = getRockyTaskRequest(chat);
+    const summary = getRockyTaskSummary(chat);
+    const agentLabel = getRockyTaskAgentLabel(chat, agents);
+    const haystack = [
+      chat.title,
+      request,
+      summary,
+      agentLabel,
+      chat.worker?.displayName ?? "",
+      getRockyTaskAgentId(chat) ?? "",
+    ]
+      .join("\n")
+      .toLowerCase();
+
+    return haystack.includes(normalizedQuery);
+  });
 }
 
 function SkillSummary({ skill }: { skill: MdTemplateDefinition }) {
@@ -575,31 +692,24 @@ function SkillAttachmentPreview({
 
 function SkillAttachmentSection({ skill }: { skill: MdTemplateDefinition }) {
   const artifacts = skill.inputArtifacts ?? [];
-  const [selectedId, setSelectedId] = useState<string | null>(
-    artifacts[0]?.id ?? null
-  );
+  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
   const filesQuery = useQuery({
     queryKey: ["skill-template-files", skill.id],
     queryFn: () => agentEngineClient.getSkillTemplateFiles(skill.id),
-    enabled: artifacts.length > 0,
+    enabled: artifacts.length > 0 && Boolean(previewAttachmentId),
   });
   const attachments = useMemo(
     () => buildSkillAttachmentViews(skill, filesQuery.data ?? []),
     [filesQuery.data, skill]
   );
-  const selectedAttachment =
-    attachments.find((attachment) => attachment.artifact.id === selectedId) ??
-    attachments[0] ??
+  const previewAttachment =
+    attachments.find((attachment) => attachment.artifact.id === previewAttachmentId) ??
     null;
-  const objectUrl = useAttachmentObjectUrl(selectedAttachment);
+  const objectUrl = useAttachmentObjectUrl(previewAttachment);
 
   useEffect(() => {
-    setSelectedId((current) =>
-      current && attachments.some((attachment) => attachment.artifact.id === current)
-        ? current
-        : attachments[0]?.artifact.id ?? null
-    );
-  }, [attachments]);
+    setPreviewAttachmentId(null);
+  }, [skill.id]);
 
   return (
     <section className="rounded-2xl border border-border/70 bg-card p-4">
@@ -616,88 +726,91 @@ function SkillAttachmentSection({ skill }: { skill: MdTemplateDefinition }) {
           이 스킬에 고정 첨부 파일은 없습니다.
         </div>
       ) : (
-        <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
-          <div className="space-y-2">
-            {attachments.map((attachment) => (
-              <button
-                key={attachment.artifact.id}
-                type="button"
-                onClick={() => setSelectedId(attachment.artifact.id)}
-                className={cn(
-                  "w-full rounded-lg border px-3 py-2.5 text-left transition",
-                  selectedAttachment?.artifact.id === attachment.artifact.id
-                    ? "border-primary/45 bg-primary/5 shadow-sm"
-                    : "border-border bg-background hover:bg-secondary/60"
-                )}
-              >
-                <div className="flex min-w-0 items-start gap-2.5">
-                  <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-                    <FileText className="size-4" />
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {attachments.map((attachment) => (
+            <button
+              key={attachment.artifact.id}
+              type="button"
+              onClick={() => setPreviewAttachmentId(attachment.artifact.id)}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-left transition hover:border-foreground/30 hover:bg-secondary/60"
+            >
+              <div className="flex min-w-0 items-start gap-2.5">
+                <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                  <FileText className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-foreground">
+                    {attachment.artifact.fileName}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-foreground">
-                      {attachment.artifact.fileName}
-                    </span>
-                    <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
-                      {attachment.artifact.skillPath ?? attachment.file?.path ?? "패키지 경로 없음"}
-                    </span>
-                    <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-                      <span className="rounded-md bg-muted px-1.5 py-0.5">
-                        {attachment.artifact.contentType ?? "application/octet-stream"}
-                      </span>
-                      <span>{formatFileSize(attachment.artifact.size)}</span>
-                    </span>
+                  <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                    {attachment.artifact.skillPath ?? "패키지 경로 없음"}
                   </span>
-                </div>
-              </button>
-            ))}
-          </div>
+                  <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                    <span className="rounded-md bg-muted px-1.5 py-0.5">
+                      {attachment.artifact.contentType ?? "application/octet-stream"}
+                    </span>
+                    <span>{formatFileSize(attachment.artifact.size)}</span>
+                  </span>
+                </span>
+                <Eye className="mt-1 size-4 shrink-0 text-muted-foreground" />
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
-          <div className="flex h-[32rem] max-h-[70vh] min-w-0 flex-col overflow-hidden rounded-lg border bg-background">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b px-3 py-3">
+      <Dialog
+        open={Boolean(previewAttachmentId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPreviewAttachmentId(null);
+          }
+        }}
+      >
+        <DialogContent className="flex h-[min(88vh,56rem)] max-h-[88vh] w-[min(96vw,72rem)] max-w-[72rem] flex-col gap-0 overflow-hidden border-border bg-background p-0">
+          <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14">
+            <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
                   <Eye className="size-3.5" />
                   Preview
                 </div>
-                <div className="mt-1 truncate text-sm font-semibold text-foreground">
-                  {selectedAttachment?.artifact.fileName ?? "파일 미리보기"}
-                </div>
+                <DialogTitle className="mt-2 truncate text-xl font-semibold text-foreground">
+                  {previewAttachment?.artifact.fileName ?? "첨부 파일 미리보기"}
+                </DialogTitle>
+                <DialogDescription className="mt-1 break-all text-xs leading-6">
+                  {previewAttachment?.artifact.skillPath ??
+                    previewAttachment?.file?.path ??
+                    "패키지 경로 없음"}
+                </DialogDescription>
               </div>
-              {selectedAttachment?.file && objectUrl ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="첨부 파일 다운로드"
-                  title="첨부 파일 다운로드"
-                  render={
-                    <a
-                      href={objectUrl}
-                      download={selectedAttachment.artifact.fileName}
-                    />
-                  }
+              {previewAttachment?.file && objectUrl ? (
+                <a
+                  href={objectUrl}
+                  download={previewAttachment.artifact.fileName}
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
                 >
                   <Download className="size-4" />
-                </Button>
+                  원본
+                </a>
               ) : null}
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              {filesQuery.isLoading ? (
-                <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
-                  첨부 파일을 불러오는 중입니다.
-                </div>
-              ) : filesQuery.isError ? (
-                <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
-                  첨부 파일을 불러오지 못했습니다.
-                </div>
-              ) : (
-                <SkillAttachmentPreview attachment={selectedAttachment} />
-              )}
-            </div>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {filesQuery.isLoading ? (
+              <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                첨부 파일을 불러오는 중입니다.
+              </div>
+            ) : filesQuery.isError ? (
+              <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                첨부 파일을 불러오지 못했습니다.
+              </div>
+            ) : (
+              <SkillAttachmentPreview attachment={previewAttachment} />
+            )}
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -35,7 +35,12 @@ import {
   rockyTaskStatusLabel,
   rockyTaskStatusTone,
 } from "@/domains/rocky/lib/rocky-task-model";
-import { useCreateRockyChatMutation, useRockyChatsQuery } from "@/domains/rocky/hooks";
+import {
+  useCreateRockyChatMutation,
+  useDeleteRockyChatMutation,
+  useRockyChatsQuery,
+} from "@/domains/rocky/hooks";
+import type { RockyChatRecord } from "@/domains/rocky/types";
 import type { MdTemplateDefinition } from "@/domains/template/types";
 import {
   countCompletedRockyTasksForAgent,
@@ -124,7 +129,27 @@ export function AgentDetailPage() {
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [pendingDetach, setPendingDetach] = useState<EquippedSkillItem | null>(null);
+  const [pendingTaskDelete, setPendingTaskDelete] = useState<RockyChatRecord | null>(null);
   const [workspaceOpenPending, setWorkspaceOpenPending] = useState(false);
+  const deleteChatMutation = useDeleteRockyChatMutation(null);
+
+  function confirmTaskDelete() {
+    if (!pendingTaskDelete) return;
+    const target = pendingTaskDelete;
+    deleteChatMutation.mutate(target.id, {
+      onSuccess: () => {
+        toast.success("작업을 삭제했습니다.", {
+          description: target.title || undefined,
+        });
+        setPendingTaskDelete(null);
+      },
+      onError: (error) => {
+        toast.error("작업 삭제에 실패했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      },
+    });
+  }
 
   if (agentQuery.isLoading) {
     return (
@@ -394,6 +419,7 @@ export function AgentDetailPage() {
             chats={chats}
             taskAgentMap={taskAgentMap}
             loading={chatsQuery.isLoading}
+            onDelete={(chat) => setPendingTaskDelete(chat)}
           />
         </section>
       </div>
@@ -444,6 +470,23 @@ export function AgentDetailPage() {
         destructive
         onConfirm={performDelete}
         pending={deleteMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingTaskDelete)}
+        onOpenChange={(next) => {
+          if (!next) setPendingTaskDelete(null);
+        }}
+        title="작업을 삭제할까요?"
+        description={
+          pendingTaskDelete
+            ? `"${pendingTaskDelete.title || "제목 없음"}" 작업과 대화 기록을 되돌릴 수 없게 삭제합니다.`
+            : undefined
+        }
+        confirmLabel="삭제"
+        destructive
+        pending={deleteChatMutation.isPending}
+        onConfirm={confirmTaskDelete}
       />
 
       <ConfirmDialog
@@ -655,11 +698,13 @@ function AgentTaskList({
   chats,
   taskAgentMap,
   loading,
+  onDelete,
 }: {
   agentId: string;
   chats: Parameters<typeof listRockyChatsForAgent>[0];
   taskAgentMap: TaskAgentMap;
   loading: boolean;
+  onDelete: (chat: RockyChatRecord) => void;
 }) {
   if (loading) {
     return (
@@ -671,6 +716,7 @@ function AgentTaskList({
 
   const items = listRockyChatsForAgent(chats, agentId, taskAgentMap)
     .map((chat) => ({
+      chat,
       id: chat.id,
       title: chat.title || getRockyTaskRequest(chat) || "제목 없음",
       summary: getRockyTaskSummary(chat),
@@ -695,7 +741,7 @@ function AgentTaskList({
         <li key={item.id}>
           <Link
             to={item.href}
-            className="block h-full rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+            className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
           >
             <div className="flex items-start justify-between gap-2">
               <span
@@ -718,6 +764,22 @@ function AgentTaskList({
             ) : null}
             <div className="mt-3 text-[11px] text-muted-foreground">
               {formatRockyTaskDateTime(item.updatedAt)}
+            </div>
+            <div className="mt-3 flex flex-1 items-end justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onDelete(item.chat);
+                }}
+                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 />
+                삭제
+              </Button>
             </div>
           </Link>
         </li>

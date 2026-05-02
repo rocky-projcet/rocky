@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
+import { AuthGate } from "@/domains/codex/components/auth-gate";
 import { SidebarIdentity } from "@/domains/codex/components/sidebar-identity";
 import { SidebarLogo } from "./sidebar-logo";
 import { SiteHeader } from "./site-header";
@@ -92,9 +93,11 @@ function isArchiveRoute(pathname: string): boolean {
 
 export function AppShell() {
   return (
-    <SidebarProvider className="h-svh max-h-svh">
-      <AppShellInner />
-    </SidebarProvider>
+    <AuthGate>
+      <SidebarProvider className="h-svh max-h-svh">
+        <AppShellInner />
+      </SidebarProvider>
+    </AuthGate>
   );
 }
 

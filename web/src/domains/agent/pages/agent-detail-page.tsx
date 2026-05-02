@@ -24,7 +24,6 @@ import {
   useDeleteAgentMutation,
   useUpdateAgentMutation,
 } from "../hooks";
-import { useAgentSessionsQuery } from "@/domains/session/hooks";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import {
@@ -37,6 +36,11 @@ import {
 } from "@/domains/rocky/lib/rocky-task-model";
 import { useCreateRockyChatMutation, useRockyChatsQuery } from "@/domains/rocky/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
+import {
+  countCompletedRockyTasksForAgent,
+  listRockyChatsForAgent,
+  type TaskAgentMap,
+} from "../lib/agent-task-summary";
 import {
   TaskComposer,
   composeFreeFormPrompt,
@@ -75,11 +79,21 @@ export function AgentDetailPage() {
   const { skillIds, skillRecords, attachSkill, detachSkill, isMutating: skillMutating } =
     useAgentSkills(agentId);
   const { userTemplates } = useMdTemplates();
-  const sessionsQuery = useAgentSessionsQuery(agentId, { includeArchived: true });
   const chatsQuery = useRockyChatsQuery();
 
   const agent = agentQuery.data ?? null;
   const { emoji, setEmoji } = useAgentEmoji(agentId);
+  const chats = chatsQuery.data ?? [];
+  const taskAgentMap = useMemo(() => readAllTaskAgentMap(), [chats]);
+  const completedTaskCount = useMemo(
+    () =>
+      countCompletedRockyTasksForAgent(
+        chats,
+        agent?.id ?? agentId ?? "",
+        taskAgentMap,
+      ),
+    [agent?.id, agentId, chats, taskAgentMap],
+  );
 
   const equippedSkillItems = useMemo<EquippedSkillItem[]>(
     () =>
@@ -105,7 +119,6 @@ export function AgentDetailPage() {
     [skillIds, userTemplates],
   );
 
-  const taskCount = (chatsQuery.data ?? []).length + (sessionsQuery.data ?? []).length;
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [pendingDetach, setPendingDetach] = useState<EquippedSkillItem | null>(null);
@@ -270,7 +283,7 @@ export function AgentDetailPage() {
 
         <CharacterStats
           skillCount={skillRecords.length}
-          taskCount={taskCount}
+          taskCount={completedTaskCount}
         />
 
         <section>
@@ -346,7 +359,12 @@ export function AgentDetailPage() {
             <ListTodo className="size-4 text-muted-foreground" />
             이 에이전트가 한 작업
           </h2>
-          <AgentTaskList agentId={agent.id} />
+          <AgentTaskList
+            agentId={agent.id}
+            chats={chats}
+            taskAgentMap={taskAgentMap}
+            loading={chatsQuery.isLoading}
+          />
         </section>
       </div>
 
@@ -602,12 +620,18 @@ function SkillPickerDialog({
   );
 }
 
-function AgentTaskList({ agentId }: { agentId: string }) {
-  const chatsQuery = useRockyChatsQuery();
-  const chats = chatsQuery.data ?? [];
-  const taskAgentMap = useMemo(() => readAllTaskAgentMap(), [chats]);
-
-  if (chatsQuery.isLoading) {
+function AgentTaskList({
+  agentId,
+  chats,
+  taskAgentMap,
+  loading,
+}: {
+  agentId: string;
+  chats: Parameters<typeof listRockyChatsForAgent>[0];
+  taskAgentMap: TaskAgentMap;
+  loading: boolean;
+}) {
+  if (loading) {
     return (
       <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
         작업을 불러오는 중입니다.
@@ -615,15 +639,7 @@ function AgentTaskList({ agentId }: { agentId: string }) {
     );
   }
 
-  const items = chats
-    .filter(
-      (chat) =>
-        taskAgentMap[chat.id] === agentId ||
-        chat.worker?.agentId === agentId ||
-        chat.dispatches.some(
-          (dispatch) => dispatch.orchestration?.agentId === agentId,
-        ),
-    )
+  const items = listRockyChatsForAgent(chats, agentId, taskAgentMap)
     .map((chat) => ({
       id: chat.id,
       title: chat.title || getRockyTaskRequest(chat) || "제목 없음",

@@ -18,13 +18,16 @@ import {
   ListTodo,
   Paperclip,
   Search,
-  UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import { useAgentsQuery } from "@/domains/agent/hooks";
+import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
+import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
+import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import {
   formatRockyTaskDateTime,
   getRockyTaskRequest,
@@ -74,7 +77,14 @@ export function SkillDetailPage() {
 
   const chatsQuery = useRockyChatsQuery();
   const agentsQuery = useAgentsQuery({ includeArchived: true });
-  const agents = agentsQuery.data ?? [];
+  const agents = useMemo(
+    () => filterUserManagedAgents(agentsQuery.data ?? []),
+    [agentsQuery.data],
+  );
+  const taskAgentMap = useMemo(
+    () => readAllTaskAgentMap(),
+    [chatsQuery.data],
+  );
 
   const tasks = useMemo(() => {
     if (!skill) return [];
@@ -84,8 +94,8 @@ export function SkillDetailPage() {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [chatsQuery.data, skill, userTemplates]);
   const filteredTasks = useMemo(
-    () => filterSkillTasks(tasks, taskSearchQuery, agents),
-    [agents, taskSearchQuery, tasks],
+    () => filterSkillTasks(tasks, taskSearchQuery, agents, taskAgentMap),
+    [agents, taskAgentMap, taskSearchQuery, tasks],
   );
 
   if (!skill) {
@@ -206,44 +216,14 @@ export function SkillDetailPage() {
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {filteredTasks.map((chat) => {
-              const status = getRockyTaskStatus(chat);
-              const summary = getRockyTaskSummary(chat);
-              const request = getRockyTaskRequest(chat);
-              const agentLabel = getRockyTaskAgentLabel(chat, agents);
+              const agent = getRockyTaskAgentRecord(chat, agents, taskAgentMap);
               return (
-                <li key={chat.id}>
-                  <Link
-                    to={`/tasks/${encodeURIComponent(chat.id)}`}
-                    className="block h-full rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                          rockyTaskStatusTone(status),
-                        )}
-                      >
-                        {rockyTaskStatusLabel(status)}
-                      </span>
-                      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-                    </div>
-                    <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-foreground">
-                      {chat.title || request || "제목 없음"}
-                    </h3>
-                    <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                      <UserRound className="size-3.5 shrink-0" />
-                      <span className="truncate">{agentLabel}</span>
-                    </div>
-                    {summary ? (
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                        {summary}
-                      </p>
-                    ) : null}
-                    <div className="mt-3 text-[11px] text-muted-foreground">
-                      {formatRockyTaskDateTime(chat.updatedAt)}
-                    </div>
-                  </Link>
-                </li>
+                <SkillTaskCard
+                  key={chat.id}
+                  chat={chat}
+                  agent={agent}
+                  agentLabel={getRockyTaskAgentLabel(chat, agents, taskAgentMap)}
+                />
               );
             })}
           </ul>
@@ -253,11 +233,21 @@ export function SkillDetailPage() {
   );
 }
 
+type TaskAgentMap = Record<string, string>;
+
 function normalizeSearchValue(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function getRockyTaskAgentId(chat: RockyChatRecord): string | null {
+function getRockyTaskAgentId(
+  chat: RockyChatRecord,
+  taskAgentMap?: TaskAgentMap,
+): string | null {
+  const mappedAgentId = taskAgentMap?.[chat.id];
+  if (mappedAgentId) {
+    return mappedAgentId;
+  }
+
   if (chat.worker?.agentId) {
     return chat.worker.agentId;
   }
@@ -274,8 +264,9 @@ function getRockyTaskAgentId(chat: RockyChatRecord): string | null {
 function getRockyTaskAgentRecord(
   chat: RockyChatRecord,
   agents: AgentRecord[],
+  taskAgentMap?: TaskAgentMap,
 ): AgentRecord | null {
-  const agentId = getRockyTaskAgentId(chat);
+  const agentId = getRockyTaskAgentId(chat, taskAgentMap);
   if (!agentId) {
     return null;
   }
@@ -286,8 +277,9 @@ function getRockyTaskAgentRecord(
 function getRockyTaskAgentLabel(
   chat: RockyChatRecord,
   agents: AgentRecord[],
+  taskAgentMap?: TaskAgentMap,
 ): string {
-  const agent = getRockyTaskAgentRecord(chat, agents);
+  const agent = getRockyTaskAgentRecord(chat, agents, taskAgentMap);
   if (agent?.name) {
     return agent.name;
   }
@@ -296,7 +288,7 @@ function getRockyTaskAgentLabel(
     return chat.worker.displayName;
   }
 
-  const agentId = getRockyTaskAgentId(chat);
+  const agentId = getRockyTaskAgentId(chat, taskAgentMap);
   return agentId ? `에이전트 ${agentId}` : "에이전트 정보 없음";
 }
 
@@ -304,6 +296,7 @@ function filterSkillTasks(
   tasks: RockyChatRecord[],
   query: string,
   agents: AgentRecord[],
+  taskAgentMap: TaskAgentMap,
 ): RockyChatRecord[] {
   const normalizedQuery = normalizeSearchValue(query);
   if (!normalizedQuery) {
@@ -313,20 +306,94 @@ function filterSkillTasks(
   return tasks.filter((chat) => {
     const request = getRockyTaskRequest(chat);
     const summary = getRockyTaskSummary(chat);
-    const agentLabel = getRockyTaskAgentLabel(chat, agents);
+    const agentLabel = getRockyTaskAgentLabel(chat, agents, taskAgentMap);
     const haystack = [
       chat.title,
       request,
       summary,
       agentLabel,
       chat.worker?.displayName ?? "",
-      getRockyTaskAgentId(chat) ?? "",
+      getRockyTaskAgentId(chat, taskAgentMap) ?? "",
     ]
       .join("\n")
       .toLowerCase();
 
     return haystack.includes(normalizedQuery);
   });
+}
+
+function SkillTaskCard({
+  chat,
+  agent,
+  agentLabel,
+}: {
+  chat: RockyChatRecord;
+  agent: AgentRecord | null;
+  agentLabel: string;
+}) {
+  const status = getRockyTaskStatus(chat);
+  const summary = getRockyTaskSummary(chat);
+  const request = getRockyTaskRequest(chat);
+  const { emoji } = useAgentEmoji(agent?.id);
+  const agentStyle = agent?.color
+    ? {
+        borderColor: `color-mix(in srgb, ${agent.color} 36%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 8%, var(--card))`,
+      }
+    : undefined;
+
+  return (
+    <li>
+      <Link
+        to={`/tasks/${encodeURIComponent(chat.id)}`}
+        className="block h-full rounded-2xl border border-border/70 bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+              rockyTaskStatusTone(status),
+            )}
+          >
+            {rockyTaskStatusLabel(status)}
+          </span>
+          <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+        </div>
+        <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-foreground">
+          {chat.title || request || "제목 없음"}
+        </h3>
+        <div
+          className={cn(
+            "mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium",
+            agent
+              ? "border-border bg-muted/40 text-foreground"
+              : "border-border/60 bg-muted/40 text-muted-foreground",
+          )}
+          style={agentStyle}
+        >
+          {agent ? (
+            <AgentAvatar
+              emoji={emoji}
+              color={agent.color}
+              size="sm"
+              className="size-5 rounded-lg text-xs shadow-none"
+            />
+          ) : (
+            <Bot className="size-3.5 shrink-0" />
+          )}
+          <span className="truncate">{agentLabel}</span>
+        </div>
+        {summary ? (
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+            {summary}
+          </p>
+        ) : null}
+        <div className="mt-3 text-[11px] text-muted-foreground">
+          {formatRockyTaskDateTime(chat.updatedAt)}
+        </div>
+      </Link>
+    </li>
+  );
 }
 
 function SkillSummary({ skill }: { skill: MdTemplateDefinition }) {
@@ -360,19 +427,6 @@ type SkillAttachmentView = {
   artifact: MdTemplateInputArtifact;
   file: AgentLocalSkillFileInput | null;
 };
-
-function formatFileSize(size: number | null | undefined): string {
-  if (typeof size !== "number" || !Number.isFinite(size)) {
-    return "크기 정보 없음";
-  }
-  if (size < 1024) {
-    return `${size} B`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function baseContentType(value: string | null | undefined): string {
   return value?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
@@ -741,15 +795,6 @@ function SkillAttachmentSection({ skill }: { skill: MdTemplateDefinition }) {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold text-foreground">
                     {attachment.artifact.fileName}
-                  </span>
-                  <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
-                    {attachment.artifact.skillPath ?? "패키지 경로 없음"}
-                  </span>
-                  <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-                    <span className="rounded-md bg-muted px-1.5 py-0.5">
-                      {attachment.artifact.contentType ?? "application/octet-stream"}
-                    </span>
-                    <span>{formatFileSize(attachment.artifact.size)}</span>
                   </span>
                 </span>
                 <Eye className="mt-1 size-4 shrink-0 text-muted-foreground" />

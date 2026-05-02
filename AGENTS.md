@@ -7,6 +7,7 @@ This file is an index only. Detailed workflows live in the referenced skills.
 - `rocky-dev` -> `.agents/skills/rocky-dev/SKILL.md`
 - `rocky-service-run` -> `.agents/skills/rocky-service-run/SKILL.md`
 - `rocky-web-ui-dev` -> `.agents/skills/rocky-web-ui-dev/SKILL.md`
+- `requirement-understanding` -> `.agents/skills/requirement-understanding/SKILL.md`
 - `rocky-runtime-probe` -> `.agents/skills/rocky-runtime-probe/SKILL.md`
 - `mcp-on-demand` -> `.agents/skills/mcp-on-demand/SKILL.md`
 - `git-safe-operations` -> `.agents/skills/git-safe-operations/SKILL.md`

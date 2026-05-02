@@ -1,0 +1,4 @@
+interface:
+  display_name: "Requirement Understanding"
+  short_description: "Explain requirement understanding before implementation"
+  default_prompt: "Use $requirement-understanding to explain how you understand the listed requirements before implementation."

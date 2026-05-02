@@ -66,6 +66,7 @@ import {
 } from "@/shared/ui/dialog";
 import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
+import type { WorkspacePreviewPathKind } from "@/shared/lib/workspace-link-target";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
   AgentWorkspaceEntryRecord,
@@ -151,6 +152,34 @@ type TemplateFilePanelContext = {
   hasExplicitOutputFiles: boolean;
   active: boolean;
 };
+
+type TemplateFilePanelSelectionError = {
+  title: string;
+  detail: string;
+  message: string;
+};
+
+type TemplateFilePanelSelectionRequest = {
+  id: number;
+  selectedKey: string | null;
+  error: TemplateFilePanelSelectionError | null;
+};
+
+type RockyConversationFileTarget =
+  | {
+      kind: "artifact";
+      artifact: AgentSessionArtifactManifestEntry;
+    }
+  | {
+      kind: "attachment";
+      attachment: RockyAttachmentRecord;
+    }
+  | {
+      kind: "workspace-path";
+      agentId: string;
+      path: string;
+      pathKind: WorkspacePreviewPathKind;
+    };
 
 function clampNumber(value: number, min: number, max: number): number {
   if (max <= min) {
@@ -616,6 +645,161 @@ function nativeFolderPathForTemplateFile(file: TemplatePanelFile): string | null
   return file.artifact ? `${file.artifact.downloadUrl}/open-folder-native` : null;
 }
 
+function templateFilePanelFiles(
+  context: TemplateFilePanelContext | null
+): TemplatePanelFile[] {
+  return context ? [...context.outputFiles, ...context.inputFiles] : [];
+}
+
+function templateFilePathEquals(
+  left: string | null | undefined,
+  right: string | null | undefined
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return templateFileKey(left) === templateFileKey(right);
+}
+
+function findPanelFileForWorkspacePath(
+  context: TemplateFilePanelContext | null,
+  agentId: string,
+  workspacePath: string
+): TemplatePanelFile | null {
+  const normalizedPath = normalizeTemplateFilePath(workspacePath);
+  if (!normalizedPath) {
+    return null;
+  }
+
+  return (
+    templateFilePanelFiles(context).find(
+      (file) =>
+        file.workspacePath &&
+        templateFilePathEquals(file.workspacePath, normalizedPath) &&
+        (!file.agentId || file.agentId === agentId)
+    ) ?? null
+  );
+}
+
+function panelFileMatchesArtifact(
+  file: TemplatePanelFile,
+  artifact: AgentSessionArtifactManifestEntry
+): boolean {
+  if (file.artifact?.downloadUrl === artifact.downloadUrl) {
+    return true;
+  }
+
+  if (
+    file.artifact &&
+    file.artifact.role === artifact.role &&
+    file.artifact.name === artifact.name
+  ) {
+    return true;
+  }
+
+  if (
+    artifact.workspaceRelativePath &&
+    templateFilePathEquals(file.workspacePath, artifact.workspaceRelativePath)
+  ) {
+    return true;
+  }
+
+  return (
+    file.role === "output" &&
+    file.name === artifact.name &&
+    (!file.contentType || file.contentType === artifact.contentType)
+  );
+}
+
+function findPanelFileForArtifact(
+  context: TemplateFilePanelContext | null,
+  artifact: AgentSessionArtifactManifestEntry
+): TemplatePanelFile | null {
+  const files = templateFilePanelFiles(context);
+
+  return (
+    files.find(
+      (file) => file.role === "output" && panelFileMatchesArtifact(file, artifact)
+    ) ??
+    files.find((file) => panelFileMatchesArtifact(file, artifact)) ??
+    null
+  );
+}
+
+function findPanelFileForAttachment(
+  context: TemplateFilePanelContext | null,
+  attachment: RockyAttachmentRecord
+): TemplatePanelFile | null {
+  const inputFiles = templateFilePanelFiles(context).filter(
+    (file) => file.role === "input"
+  );
+  const workspacePath = attachment.workspacePath
+    ? normalizeTemplateFilePath(attachment.workspacePath)
+    : null;
+  const expectedKey = `input:${workspacePath ?? attachment.id}`;
+
+  return (
+    inputFiles.find((file) => file.key === expectedKey) ??
+    inputFiles.find(
+      (file) => workspacePath && templateFilePathEquals(file.workspacePath, workspacePath)
+    ) ??
+    inputFiles.find(
+      (file) =>
+        file.name === attachment.name &&
+        file.size === attachment.size &&
+        file.createdAt === attachment.addedAt
+    ) ??
+    null
+  );
+}
+
+function findPanelFileForConversationTarget(
+  context: TemplateFilePanelContext | null,
+  target: RockyConversationFileTarget
+): TemplatePanelFile | null {
+  switch (target.kind) {
+    case "artifact":
+      return findPanelFileForArtifact(context, target.artifact);
+    case "attachment":
+      return findPanelFileForAttachment(context, target.attachment);
+    case "workspace-path":
+      return findPanelFileForWorkspacePath(context, target.agentId, target.path);
+  }
+}
+
+function conversationFileTargetName(target: RockyConversationFileTarget): string {
+  switch (target.kind) {
+    case "artifact":
+      return target.artifact.name;
+    case "attachment":
+      return target.attachment.name;
+    case "workspace-path":
+      return templateFileName(target.path);
+  }
+}
+
+function conversationFileTargetDetail(target: RockyConversationFileTarget): string {
+  switch (target.kind) {
+    case "artifact":
+      return target.artifact.workspaceRelativePath ?? target.artifact.role;
+    case "attachment":
+      return target.attachment.workspacePath ?? "업로드 원본";
+    case "workspace-path":
+      return target.pathKind === "directory" ? `${target.path}/` : target.path;
+  }
+}
+
+function buildConversationFileSelectionError(
+  target: RockyConversationFileTarget
+): TemplateFilePanelSelectionError {
+  return {
+    title: conversationFileTargetName(target),
+    detail: conversationFileTargetDetail(target),
+    message: "이 파일은 현재 Input/Output 목록에 없어 미리볼 수 없습니다.",
+  };
+}
+
 function buildWorkspacePreviewPanelSource(
   input: {
     agentId: string;
@@ -951,84 +1135,28 @@ function normalizeInlineMarkdownTables(markdown: string): string {
 
 function openRockyArtifact(
   artifact: AgentSessionArtifactManifestEntry,
-  onOpenPreviewPanel?: (source: RockyPreviewPanelSource) => void
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void
 ): void {
-  const previewPanelSource = buildArtifactPreviewPanelSource(artifact);
-
-  if (previewPanelSource) {
-    if (onOpenPreviewPanel) {
-      onOpenPreviewPanel(previewPanelSource);
-      return;
-    }
-
-    window.open(
-      previewPanelSource.previewHref ?? previewPanelSource.downloadHref,
-      "_blank",
-      "noopener,noreferrer"
-    );
-    return;
-  }
-
-  const target = artifact.previewUrl ?? artifact.downloadUrl;
-  window.open(agentEngineClient.resolveApiPath(target), "_blank", "noopener,noreferrer");
+  onOpenConversationFile({ kind: "artifact", artifact });
 }
 
-async function openRockyWorkspacePath(
+function openRockyWorkspacePath(
   agentId: string,
   path: string,
   pathKind: "file" | "directory" | "ambiguous",
-  onOpenPreviewPanel?: (source: RockyPreviewPanelSource) => void
-): Promise<void> {
-  if (pathKind === "directory") {
-    return;
-  }
-
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void
+): void {
   const normalizedPath = path.replace(/^\.\/+/, "").replace(/\/+$/, "");
   if (!normalizedPath) {
     return;
   }
 
-  const popup = onOpenPreviewPanel ? null : window.open("", "_blank");
-
-  try {
-    const preview = await agentEngineClient.getAgentWorkspaceFilePreview(
-      agentId,
-      normalizedPath
-    );
-    const previewPanelSource = buildWorkspacePreviewPanelSource({
-      agentId,
-      preview,
-      workspacePath: normalizedPath,
-    });
-
-    if (previewPanelSource && onOpenPreviewPanel) {
-      onOpenPreviewPanel(previewPanelSource);
-      return;
-    }
-
-    if (preview.inlinePreviewUrl) {
-      openPopupLocation(
-        popup,
-        agentEngineClient.resolveApiPath(preview.inlinePreviewUrl)
-      );
-      return;
-    }
-
-    if (preview.previewKind === "html" && preview.text && !preview.truncated) {
-      openPopupLocation(
-        popup,
-        `data:${preview.contentType};base64,${encodeUtf8Base64(preview.text)}`
-      );
-      return;
-    }
-
-    openPopupLocation(
-      popup,
-      agentEngineClient.resolveApiPath(preview.downloadUrl)
-    );
-  } catch {
-    popup?.close();
-  }
+  onOpenConversationFile({
+    kind: "workspace-path",
+    agentId,
+    path: normalizedPath,
+    pathKind,
+  });
 }
 
 function TemplateCategoryIcon({ category }: { category: MdTemplateCategory }) {
@@ -1759,13 +1887,13 @@ function RockyMarkdownViewer({
   agentId,
   artifacts,
   markdown,
-  onOpenPreviewPanel,
+  onOpenConversationFile,
   workspaceRoot,
 }: {
   agentId: string | null;
   artifacts: AgentSessionArtifactManifestEntry[];
   markdown: string;
-  onOpenPreviewPanel: (source: RockyPreviewPanelSource) => void;
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   workspaceRoot: string | null;
 }) {
   const artifactByRole = new Map(artifacts.map((artifact) => [artifact.role, artifact]));
@@ -1817,7 +1945,7 @@ function RockyMarkdownViewer({
                     decodeURIComponent(href.slice("#rocky-artifact-".length))
                   );
                   if (artifact) {
-                    openRockyArtifact(artifact, onOpenPreviewPanel);
+                    openRockyArtifact(artifact, onOpenConversationFile);
                   }
                 }}
                 className="inline border-0 bg-transparent p-0 font-medium text-foreground underline decoration-border underline-offset-4"
@@ -1829,11 +1957,11 @@ function RockyMarkdownViewer({
                 href={href}
                 workspaceRoot={workspaceRoot}
                 onOpenWorkspacePath={(path, pathKind) => {
-                  void openRockyWorkspacePath(
+                  openRockyWorkspacePath(
                     agentId,
                     path,
                     pathKind,
-                    onOpenPreviewPanel
+                    onOpenConversationFile
                   );
                 }}
                 className="inline border-0 bg-transparent p-0 font-medium text-foreground underline decoration-border underline-offset-4"
@@ -1921,10 +2049,10 @@ function RockyMarkdownViewer({
 
 function RockyArtifactGrid({
   artifacts,
-  onOpenPreviewPanel,
+  onOpenConversationFile,
 }: {
   artifacts: AgentSessionArtifactManifestEntry[];
-  onOpenPreviewPanel: (source: RockyPreviewPanelSource) => void;
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void;
 }) {
   if (artifacts.length === 0) {
     return null;
@@ -1947,7 +2075,7 @@ function RockyArtifactGrid({
           <button
             key={artifact.role}
             type="button"
-            onClick={() => openRockyArtifact(artifact, onOpenPreviewPanel)}
+            onClick={() => openRockyArtifact(artifact, onOpenConversationFile)}
             className="inline-flex h-9 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground shadow-sm transition hover:bg-secondary"
           >
             <ArtifactIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -1994,9 +2122,11 @@ function ChatReplyAvatar({ chatId }: { chatId: string }) {
 function MessageAttachmentList({
   attachments,
   isRocky,
+  onOpenConversationFile,
 }: {
   attachments: RockyAttachmentRecord[];
   isRocky: boolean;
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void;
 }) {
   if (attachments.length === 0) {
     return null;
@@ -2005,16 +2135,18 @@ function MessageAttachmentList({
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {attachments.map((attachment) => (
-        <span
+        <button
           key={attachment.id}
+          type="button"
+          onClick={() => onOpenConversationFile({ kind: "attachment", attachment })}
           className={cn(
-            "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs",
+            "inline-flex max-w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs transition",
             isRocky ? "bg-muted" : "bg-background/15"
           )}
         >
           <FileText className="size-3" />
-          {attachment.name}
-        </span>
+          <span className="truncate">{attachment.name}</span>
+        </button>
       ))}
     </div>
   );
@@ -2052,14 +2184,14 @@ function MessageBubble({
   agentWorkspaceRootsByAgentId,
   chat,
   message,
-  onOpenPreviewPanel,
+  onOpenConversationFile,
   runProgressByRunId,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
   chat: RockyChatRecord;
   message: RockyMessageRecord;
-  onOpenPreviewPanel: (source: RockyPreviewPanelSource) => void;
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   runProgressByRunId: Record<string, string>;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
@@ -2178,18 +2310,22 @@ function MessageBubble({
               agentId={agentId}
               artifacts={userFacingArtifacts}
               markdown={bubbleText}
-              onOpenPreviewPanel={onOpenPreviewPanel}
+              onOpenConversationFile={onOpenConversationFile}
               workspaceRoot={workspaceRoot}
             />
           )
         ) : (
           <div className="whitespace-pre-wrap">{bubbleText}</div>
         )}
-        <MessageAttachmentList attachments={attachments} isRocky={isRocky} />
+        <MessageAttachmentList
+          attachments={attachments}
+          isRocky={isRocky}
+          onOpenConversationFile={onOpenConversationFile}
+        />
         {isRocky ? (
           <RockyArtifactGrid
             artifacts={userFacingArtifacts}
-            onOpenPreviewPanel={onOpenPreviewPanel}
+            onOpenConversationFile={onOpenConversationFile}
           />
         ) : null}
       </article>
@@ -2201,14 +2337,14 @@ function MessageList({
   agentWorkspaceRootsByAgentId,
   chat,
   endRef,
-  onOpenPreviewPanel,
+  onOpenConversationFile,
   runProgressByRunId,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
   chat: RockyChatRecord;
   endRef: RefObject<HTMLDivElement | null>;
-  onOpenPreviewPanel: (source: RockyPreviewPanelSource) => void;
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   runProgressByRunId: Record<string, string>;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
@@ -2220,7 +2356,7 @@ function MessageList({
           key={message.id}
           chat={chat}
           message={message}
-          onOpenPreviewPanel={onOpenPreviewPanel}
+          onOpenConversationFile={onOpenConversationFile}
           runProgressByRunId={runProgressByRunId}
           transcriptsBySessionId={transcriptsBySessionId}
         />
@@ -3423,6 +3559,31 @@ function TemplateFileSection({
   );
 }
 
+function TemplateFilePanelSelectionErrorView({
+  error,
+}: {
+  error: TemplateFilePanelSelectionError;
+}) {
+  return (
+    <div className="flex h-full min-h-64 items-center justify-center rounded-lg border border-destructive/25 bg-destructive/5 px-5 text-center">
+      <div className="max-w-sm">
+        <div className="text-sm font-semibold text-destructive">
+          파일을 미리볼 수 없습니다.
+        </div>
+        <div className="mt-2 truncate text-sm font-medium text-foreground">
+          {error.title}
+        </div>
+        <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+          {error.detail}
+        </div>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          {error.message}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function WorkspacePreviewBody({
   mode,
   record,
@@ -3756,34 +3917,41 @@ function TemplateSelectedFilePreview({
 
 function TemplateFilePanel({
   context,
-  externalPreviewSource,
   onWidthChange,
-  onClearExternalPreview,
   onClose,
   panelWidth,
+  selectionRequest,
 }: {
   context: TemplateFilePanelContext;
-  externalPreviewSource: RockyPreviewPanelSource | null;
   onWidthChange: (width: number) => void;
-  onClearExternalPreview: () => void;
   onClose: () => void;
   panelWidth: number;
+  selectionRequest: TemplateFilePanelSelectionRequest | null;
 }) {
   const allFiles = [...context.outputFiles, ...context.inputFiles];
   const defaultSelectedKey =
     context.outputFiles[0]?.key ?? context.inputFiles[0]?.key ?? null;
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelectedKey);
+  const [selectionError, setSelectionError] =
+    useState<TemplateFilePanelSelectionError | null>(null);
   const [fileListHeight, setFileListHeight] = useState(
     TEMPLATE_FILE_LIST_DEFAULT_HEIGHT
   );
   const fileSplitContainerRef = useRef<HTMLDivElement | null>(null);
+  const appliedSelectionRequestIdRef = useRef<number | null>(null);
   const fileKeySignature = allFiles.map((file) => file.key).join("\n");
   const selectedFile =
-    allFiles.find((file) => file.key === selectedKey) ??
-    allFiles.find((file) => file.key === defaultSelectedKey) ??
-    null;
+    selectionError
+      ? null
+      : allFiles.find((file) => file.key === selectedKey) ??
+        allFiles.find((file) => file.key === defaultSelectedKey) ??
+        null;
 
   useEffect(() => {
+    if (selectionError) {
+      return;
+    }
+
     if (!defaultSelectedKey) {
       setSelectedKey(null);
       return;
@@ -3794,7 +3962,32 @@ function TemplateFilePanel({
         ? current
         : defaultSelectedKey
     );
-  }, [defaultSelectedKey, fileKeySignature]);
+  }, [defaultSelectedKey, fileKeySignature, selectionError]);
+
+  useEffect(() => {
+    if (
+      !selectionRequest ||
+      appliedSelectionRequestIdRef.current === selectionRequest.id
+    ) {
+      return;
+    }
+
+    appliedSelectionRequestIdRef.current = selectionRequest.id;
+
+    if (selectionRequest.error) {
+      setSelectionError(selectionRequest.error);
+      setSelectedKey(null);
+      return;
+    }
+
+    if (
+      selectionRequest.selectedKey &&
+      allFiles.some((file) => file.key === selectionRequest.selectedKey)
+    ) {
+      setSelectionError(null);
+      setSelectedKey(selectionRequest.selectedKey);
+    }
+  }, [allFiles, selectionRequest]);
 
   useEffect(() => {
     const container = fileSplitContainerRef.current;
@@ -4011,58 +4204,61 @@ function TemplateFilePanel({
         </div>
       </header>
 
-      {externalPreviewSource ? (
-        <EmbeddedArtifactPreviewPanel
-          source={externalPreviewSource}
-          onClose={onClearExternalPreview}
-        />
-      ) : (
+      <div
+        ref={fileSplitContainerRef}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <div
-          ref={fileSplitContainerRef}
-          className="flex min-h-0 flex-1 flex-col"
+          className="custom-scrollbar min-h-0 shrink-0 space-y-5 overflow-y-auto px-4 py-4"
+          style={{ height: fileListHeight }}
         >
-          <div
-            className="custom-scrollbar min-h-0 shrink-0 space-y-5 overflow-y-auto px-4 py-4"
-            style={{ height: fileListHeight }}
-          >
-            <TemplateFileSection
-              title="Output"
-              files={context.outputFiles}
-              selectedKey={selectedFile?.key ?? selectedKey}
-              emptyText={
-                context.hasExplicitOutputFiles
-                  ? "지정된 output 파일이 아직 생성되지 않았습니다."
-                  : "아직 생성된 output 파일이 없습니다."
-              }
-              onSelect={(file) => setSelectedKey(file.key)}
-            />
-            <TemplateFileSection
-              title="Input"
-              files={context.inputFiles}
-              selectedKey={selectedFile?.key ?? selectedKey}
-              emptyText="연결된 input 파일이 없습니다."
-              onSelect={(file) => setSelectedKey(file.key)}
-            />
-          </div>
-          <div
-            role="separator"
-            aria-label="Input/Output 목록과 미리보기 높이 조절"
-            aria-orientation="horizontal"
-            tabIndex={0}
-            onPointerDown={handleFileSplitPointerDown}
-            onKeyDown={handleFileSplitKeyDown}
-            className="group relative h-2 shrink-0 cursor-row-resize touch-none border-y border-border bg-card outline-hidden"
-          >
-            <span className="absolute left-1/2 top-1/2 h-1 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
-          </div>
-          <div className="min-h-0 flex-1 overflow-hidden p-4">
+          <TemplateFileSection
+            title="Output"
+            files={context.outputFiles}
+            selectedKey={selectionError ? null : selectedFile?.key ?? selectedKey}
+            emptyText={
+              context.hasExplicitOutputFiles
+                ? "지정된 output 파일이 아직 생성되지 않았습니다."
+                : "아직 생성된 output 파일이 없습니다."
+            }
+            onSelect={(file) => {
+              setSelectionError(null);
+              setSelectedKey(file.key);
+            }}
+          />
+          <TemplateFileSection
+            title="Input"
+            files={context.inputFiles}
+            selectedKey={selectionError ? null : selectedFile?.key ?? selectedKey}
+            emptyText="연결된 input 파일이 없습니다."
+            onSelect={(file) => {
+              setSelectionError(null);
+              setSelectedKey(file.key);
+            }}
+          />
+        </div>
+        <div
+          role="separator"
+          aria-label="Input/Output 목록과 미리보기 높이 조절"
+          aria-orientation="horizontal"
+          tabIndex={0}
+          onPointerDown={handleFileSplitPointerDown}
+          onKeyDown={handleFileSplitKeyDown}
+          className="group relative h-2 shrink-0 cursor-row-resize touch-none border-y border-border bg-card outline-hidden"
+        >
+          <span className="absolute left-1/2 top-1/2 h-1 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden p-4">
+          {selectionError ? (
+            <TemplateFilePanelSelectionErrorView error={selectionError} />
+          ) : (
             <TemplateSelectedFilePreview
               active={context.active}
               file={selectedFile}
             />
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </aside>
   );
 }
@@ -4081,8 +4277,8 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const [submitInFlight, setSubmitInFlight] = useState(false);
   const [templateExecutionTemplate, setTemplateExecutionTemplate] =
     useState<MdTemplateDefinition | null>(null);
-  const [previewPanelSource, setPreviewPanelSource] =
-    useState<RockyPreviewPanelSource | null>(null);
+  const [filePanelSelectionRequest, setFilePanelSelectionRequest] =
+    useState<TemplateFilePanelSelectionRequest | null>(null);
   const [filePanelOpen, setFilePanelOpen] = useState(true);
   const [filePanelWidth, setFilePanelWidth] = useState(
     TEMPLATE_FILE_PANEL_DEFAULT_WIDTH
@@ -4093,6 +4289,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const submitInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const filePanelSignatureRef = useRef<string | null>(null);
+  const filePanelSelectionRequestIdRef = useRef(0);
   const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
   const { userTemplates } = useMdTemplates();
   const createChatMutation = useCreateRockyChatMutation();
@@ -4236,34 +4433,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       ].join("\n")
     : null;
 
-  const autoPreviewedTaskIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!isTaskDetail || !chat) return;
-    if (previewPanelSource) return;
-    if (autoPreviewedTaskIdRef.current === chat.id) return;
-    if (filePanelContext) return;
-
-    const latest = findLatestPreviewableArtifact(chat, transcriptsBySessionId);
-    const source = latest
-      ? buildArtifactPreviewPanelSource(latest)
-      : buildChatAttachmentPreviewSource(chat);
-    if (!source) return;
-
-    autoPreviewedTaskIdRef.current = chat.id;
-    setPreviewPanelSource(source);
-  }, [
-    isTaskDetail,
-    chat,
-    previewPanelSource,
-    filePanelContext,
-    transcriptRefreshMarker,
-  ]);
-  useEffect(() => {
-    if (!isTaskDetail) {
-      autoPreviewedTaskIdRef.current = null;
-    }
-  }, [isTaskDetail, routeTaskId]);
-
   useEffect(() => {
     if (!filePanelSignature) {
       filePanelSignatureRef.current = null;
@@ -4331,12 +4500,12 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   useEffect(() => {
     if (!isTaskDetail) {
       setChat(null);
-      setPreviewPanelSource(null);
+      setFilePanelSelectionRequest(null);
       return;
     }
 
     setChat((current) => (current?.id === routeTaskId ? current : null));
-    setPreviewPanelSource(null);
+    setFilePanelSelectionRequest(null);
     setTemplateExecutionTemplate(null);
   }, [isTaskDetail, routeTaskId]);
 
@@ -4473,6 +4642,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       setChat(nextChat);
       setMessage("");
       setFiles([]);
+      setFilePanelSelectionRequest(null);
       if (!isTaskDetail) {
         navigate(`/tasks/${encodeURIComponent(nextChat.id)}`);
       }
@@ -4525,21 +4695,38 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   };
 
-  const openPreviewPanel = (source: RockyPreviewPanelSource) => {
-    setPreviewPanelSource(source);
-    if (filePanelContext) {
-      setFilePanelOpen(true);
-    }
+  const openConversationFile = (target: RockyConversationFileTarget) => {
+    const selectedFile = findPanelFileForConversationTarget(filePanelContext, target);
+    const nextId = filePanelSelectionRequestIdRef.current + 1;
+    filePanelSelectionRequestIdRef.current = nextId;
+    setFilePanelSelectionRequest({
+      id: nextId,
+      selectedKey: selectedFile?.key ?? null,
+      error: selectedFile ? null : buildConversationFileSelectionError(target),
+    });
+    setFilePanelOpen(true);
   };
+  const fallbackFilePanelContext =
+    filePanelSelectionRequest?.error && !filePanelContext
+      ? {
+          title: "파일 미리보기",
+          outputFormatLabel: "Input / Output",
+          inputFiles: [],
+          outputFiles: [],
+          hasExplicitOutputFiles: false,
+          active: false,
+        }
+      : null;
+  const visibleFilePanelContext = filePanelContext ?? fallbackFilePanelContext;
   const closeFilePanel = () => {
     setFilePanelOpen(false);
-    setPreviewPanelSource(null);
+    setFilePanelSelectionRequest(null);
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background lg:flex-row">
       <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {filePanelContext ? (
+        {visibleFilePanelContext ? (
           <div className="pointer-events-none absolute right-4 top-4 z-20">
             <Button
               type="button"
@@ -4588,7 +4775,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
               chat={chat}
               endRef={messagesEndRef}
-              onOpenPreviewPanel={openPreviewPanel}
+              onOpenConversationFile={openConversationFile}
               runProgressByRunId={runProgressByRunId}
               transcriptsBySessionId={transcriptsBySessionId}
             />
@@ -4641,21 +4828,15 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         template={templateExecutionTemplate}
       />
 
-      {filePanelContext && filePanelOpen ? (
+      {visibleFilePanelContext && filePanelOpen ? (
         <TemplateFilePanel
-          context={filePanelContext}
-          externalPreviewSource={previewPanelSource}
+          context={visibleFilePanelContext}
           onWidthChange={(width) =>
             setFilePanelWidth(clampTemplateFilePanelWidth(width))
           }
-          onClearExternalPreview={() => setPreviewPanelSource(null)}
           onClose={closeFilePanel}
           panelWidth={filePanelWidth}
-        />
-      ) : !filePanelContext && previewPanelSource ? (
-        <ArtifactPreviewPanel
-          source={previewPanelSource}
-          onClose={() => setPreviewPanelSource(null)}
+          selectionRequest={filePanelSelectionRequest}
         />
       ) : null}
     </div>

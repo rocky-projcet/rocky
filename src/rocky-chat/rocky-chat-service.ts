@@ -228,6 +228,68 @@ function isActiveOrchestrationStatus(
   return status === "planned" || status === "running";
 }
 
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function latestTimestamp(values: Array<string | null | undefined>): string | null {
+  let latest: { value: string; ms: number } | null = null;
+  for (const value of values) {
+    const ms = timestampMs(value);
+    if (ms === null || !value) {
+      continue;
+    }
+    if (!latest || ms > latest.ms) {
+      latest = { value, ms };
+    }
+  }
+
+  return latest?.value ?? null;
+}
+
+function orchestrationActivityUpdatedAt(
+  orchestration: RockyOrchestrationRecord | null,
+  fallback: string | null | undefined = null
+): string | null {
+  if (!orchestration) {
+    return fallback ?? null;
+  }
+
+  if (isActiveOrchestrationStatus(orchestration.status)) {
+    return latestTimestamp([
+      orchestration.updatedAt,
+      orchestration.startedAt,
+      fallback,
+    ]);
+  }
+
+  return latestTimestamp([
+    orchestration.endedAt,
+    orchestration.startedAt,
+    fallback,
+  ]);
+}
+
+function rockyChatActivityUpdatedAt(chat: RockyChatRecord): string {
+  const dispatchTimes = chat.dispatches.flatMap((dispatch) => [
+    dispatch.createdAt,
+    orchestrationActivityUpdatedAt(dispatch.orchestration, dispatch.createdAt),
+  ]);
+  const latest = latestTimestamp([
+    chat.createdAt,
+    ...chat.messages.map((message) => message.createdAt),
+    ...dispatchTimes,
+    orchestrationActivityUpdatedAt(chat.orchestration),
+  ]);
+
+  return latest ?? chat.updatedAt;
+}
+
 function sanitizeUploadedFilename(filename: string): string {
   const basename = path.basename(filename.trim()).normalize("NFKC");
   const sanitized = basename
@@ -659,7 +721,9 @@ export class RockyChatService {
 
     return refreshed.sort(
       (left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt) ||
+        rockyChatActivityUpdatedAt(right).localeCompare(
+          rockyChatActivityUpdatedAt(left)
+        ) ||
         right.createdAt.localeCompare(left.createdAt) ||
         left.id.localeCompare(right.id)
     );
@@ -2157,13 +2221,19 @@ export class RockyChatService {
       orchestration,
     });
     const metadataChanged = displayNameRefresh.changed;
-    const refreshed: RockyChatRecord = {
+    const refreshedActivity: RockyChatRecord = {
       ...hydrated,
       messages: displayNameRefresh.messages,
       dispatches,
       orchestration,
       executionStarted: dispatches.some((dispatch) => dispatch.executionStarted),
-      updatedAt: changed ? this.now() : hydrated.updatedAt,
+      updatedAt: hydrated.updatedAt,
+    };
+    const refreshed: RockyChatRecord = {
+      ...refreshedActivity,
+      updatedAt: changed
+        ? rockyChatActivityUpdatedAt(refreshedActivity)
+        : hydrated.updatedAt,
     };
 
     if ((changed || metadataChanged) && options.persist) {

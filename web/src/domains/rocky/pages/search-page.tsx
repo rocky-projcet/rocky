@@ -12,6 +12,7 @@ import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
   formatRockyTaskDateTime,
+  getRockyTaskLastActivityAt,
   getRockyTaskRequest,
   getRockyTaskStatus,
   getRockyTaskSummary,
@@ -117,7 +118,9 @@ export function SearchPage() {
     () =>
       chats
         .filter((chat) => chatMatches(chat, userTemplates, normalizedQuery))
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+        .sort((left, right) =>
+          getRockyTaskLastActivityAt(right).localeCompare(getRockyTaskLastActivityAt(left)),
+        ),
     [chats, normalizedQuery, userTemplates],
   );
   const skillResults = useMemo(
@@ -340,7 +343,7 @@ function TaskSearchResult({
               {getRockyTaskSummary(chat)}
             </p>
             <div className="mt-2 text-[11px] text-muted-foreground">
-              {formatRockyTaskDateTime(chat.updatedAt)}
+              {formatRockyTaskDateTime(getRockyTaskLastActivityAt(chat))}
             </div>
           </div>
         </div>

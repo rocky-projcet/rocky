@@ -151,6 +151,29 @@ function resultAssistantText(result: RuntimeRunResult | null): string | null {
   return content || null;
 }
 
+function isActiveOrchestrationStatus(status: RockyOrchestrationStatus): boolean {
+  return status === "planned" || status === "running";
+}
+
+function refreshedOrchestrationUpdatedAt(input: {
+  status: RockyOrchestrationStatus;
+  orchestration: RockyOrchestrationRecord;
+  run: AgentRunRecord | null;
+  result: RuntimeRunResult | null;
+  now: string;
+}): string {
+  if (isActiveOrchestrationStatus(input.status)) {
+    return input.now;
+  }
+
+  return (
+    input.result?.endedAt ??
+    input.run?.endedAt ??
+    input.orchestration.endedAt ??
+    input.orchestration.updatedAt
+  );
+}
+
 export class RockyOrchestratorService {
   private readonly sessionService: RockySessionServiceLike | undefined;
   private readonly now: () => string;
@@ -212,9 +235,13 @@ export class RockyOrchestratorService {
 
     try {
       const started = await startRun(input.reuseSessionId ?? null);
+      const status = runStatusToOrchestrationStatus(started.run.status);
+      const updatedAt = isActiveOrchestrationStatus(status)
+        ? this.now()
+        : started.run.endedAt ?? this.now();
       return {
         id: orchestrationId,
-        status: runStatusToOrchestrationStatus(started.run.status),
+        status,
         agentId,
         sessionId: started.sessionId,
         runId: started.run.id,
@@ -222,16 +249,20 @@ export class RockyOrchestratorService {
         error: null,
         startedAt: started.run.startedAt,
         endedAt: started.run.endedAt,
-        updatedAt: this.now(),
+        updatedAt,
       };
     } catch (error) {
       let finalError = error;
       if (input.reuseSessionId && isUnknownRuntimeRecordError(error)) {
         try {
           const started = await startRun(null);
+          const status = runStatusToOrchestrationStatus(started.run.status);
+          const updatedAt = isActiveOrchestrationStatus(status)
+            ? this.now()
+            : started.run.endedAt ?? this.now();
           return {
             id: orchestrationId,
-            status: runStatusToOrchestrationStatus(started.run.status),
+            status,
             agentId,
             sessionId: started.sessionId,
             runId: started.run.id,
@@ -239,13 +270,14 @@ export class RockyOrchestratorService {
             error: null,
             startedAt: started.run.startedAt,
             endedAt: started.run.endedAt,
-            updatedAt: this.now(),
+            updatedAt,
           };
         } catch (retryError) {
           finalError = retryError;
         }
       }
 
+      const timestamp = this.now();
       return {
         id: orchestrationId,
         status: "failed",
@@ -255,8 +287,8 @@ export class RockyOrchestratorService {
         output: null,
         error: errorMessage(finalError),
         startedAt: null,
-        endedAt: this.now(),
-        updatedAt: this.now(),
+        endedAt: timestamp,
+        updatedAt: timestamp,
       };
     }
   }
@@ -292,12 +324,13 @@ export class RockyOrchestratorService {
       error: unknown
     ): RockyOrchestrationRecord | null => {
       if (!isTerminal && isUnknownRuntimeRecordError(error)) {
+        const timestamp = this.now();
         return {
           ...orchestration,
           status: "failed",
           error: missingRuntimeRecordMessage(error),
-          endedAt: orchestration.endedAt ?? this.now(),
-          updatedAt: this.now(),
+          endedAt: orchestration.endedAt ?? timestamp,
+          updatedAt: timestamp,
         };
       }
 
@@ -356,6 +389,14 @@ export class RockyOrchestratorService {
       terminalRunSummary ??
       transcriptOutput ??
       orchestration.output;
+    const updatedAt = refreshedOrchestrationUpdatedAt({
+      status,
+      orchestration,
+      run,
+      result,
+      now: this.now(),
+    });
+
     return {
       ...orchestration,
       status,
@@ -367,7 +408,7 @@ export class RockyOrchestratorService {
         : orchestration.error,
       startedAt: run?.startedAt ?? orchestration.startedAt,
       endedAt: run?.endedAt ?? orchestration.endedAt,
-      updatedAt: this.now(),
+      updatedAt,
     };
   }
 }

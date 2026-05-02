@@ -5,6 +5,7 @@ import { ArrowRight, Clock, FileText, Plus, Sparkles, Trophy } from "lucide-reac
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
   formatRockyTaskDateTime,
+  getRockyTaskLastActivityAt,
   getRockyTaskRequest,
   getRockyTaskStatus,
   getRockyTaskTemplateGroup,
@@ -245,7 +246,7 @@ function RecentTaskCard({
       ) : null}
 
       <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>{formatRockyTaskDateTime(chat.updatedAt)}</span>
+        <span>{formatRockyTaskDateTime(getRockyTaskLastActivityAt(chat))}</span>
         <ArrowRight className="size-4" />
       </div>
     </Link>
@@ -260,7 +261,9 @@ function RecentTasksSection() {
   const tasks = useMemo(() => {
     const all = chatsQuery.data ?? [];
     return [...all]
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) =>
+        getRockyTaskLastActivityAt(right).localeCompare(getRockyTaskLastActivityAt(left))
+      )
       .slice(0, MAX_COUNT);
   }, [chatsQuery.data]);
 

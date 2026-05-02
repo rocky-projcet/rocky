@@ -162,6 +162,7 @@ function createRockyChatTestServer(stateRoot: string) {
 
   const server = createAgentEngineServer({
     stateRoot,
+    now: () => "2026-04-21T00:00:00.000Z",
     agentService: {
       async createAgent(input) {
         const agentId = input?.id ?? "rocky-core";
@@ -1896,6 +1897,8 @@ test("rocky chat refreshes Rocky Core status from the backing run", async () => 
     assert.equal(refreshed.messages[1]?.text, "Rocky Core가 작업을 정리했습니다.");
     assert.equal(refreshed.dispatches[0]?.orchestration?.status, "completed");
     assert.equal(refreshed.dispatches[0]?.orchestration?.endedAt, "2026-04-21T00:01:00.000Z");
+    assert.equal(refreshed.dispatches[0]?.orchestration?.updatedAt, "2026-04-21T00:01:00.000Z");
+    assert.equal(refreshed.updatedAt, "2026-04-21T00:01:00.000Z");
   } finally {
     await server.close();
   }

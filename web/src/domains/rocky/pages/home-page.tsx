@@ -55,6 +55,13 @@ import {
   isTerminalRockyRunEvent,
   rockyRunProgressLabelForEvent,
 } from "@/domains/rocky/lib/rocky-run-progress";
+import {
+  formatRockyTaskDateTime,
+  formatRockyTaskDuration,
+  getRockyTaskEndedAt,
+  getRockyTaskLastActivityAt,
+  getRockyTaskStartedAt,
+} from "@/domains/rocky/lib/rocky-task-model";
 import type {
   AgentSessionArtifactManifestEntry,
   AgentSessionMessage,
@@ -2817,6 +2824,58 @@ function MessageBubble({
           />
         ) : null}
       </article>
+    </div>
+  );
+}
+
+function formatTaskTimeRange(
+  startedAt: string | null,
+  endedAt: string | null
+): string {
+  if (!startedAt) {
+    return "아직 없음";
+  }
+
+  return `${formatRockyTaskDateTime(startedAt)} ~ ${
+    endedAt ? formatRockyTaskDateTime(endedAt) : "진행 중"
+  }`;
+}
+
+function TaskConversationTimingSummary({ chat }: { chat: RockyChatRecord }) {
+  const startedAt = getRockyTaskStartedAt(chat);
+  const endedAt = getRockyTaskEndedAt(chat);
+  const lastActivityAt = getRockyTaskLastActivityAt(chat);
+  const items = [
+    {
+      label: "작업 시간",
+      value: formatTaskTimeRange(startedAt, endedAt),
+    },
+    {
+      label: "최근 작업",
+      value: formatRockyTaskDateTime(lastActivityAt),
+    },
+    {
+      label: "총 실행시간",
+      value: formatRockyTaskDuration(startedAt, endedAt),
+    },
+  ];
+
+  return (
+    <div className="mx-auto mb-5 grid w-full max-w-4xl gap-3 rounded-lg border border-border/70 bg-card px-4 py-3 text-xs shadow-sm sm:grid-cols-[1.4fr_1fr_0.8fr]">
+      {items.map((item, index) => (
+        <div
+          key={item.label}
+          className={cn(
+            "min-w-0",
+            index > 0 ? "sm:border-l sm:border-border/70 sm:pl-3" : null
+          )}
+        >
+          <div className="font-medium text-muted-foreground">{item.label}</div>
+          <div className="mt-1 break-keep text-sm font-semibold leading-5 text-foreground">
+            {item.value}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -6165,14 +6224,17 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               ) : null}
             </div>
           ) : chat && messageCount > 0 ? (
-            <MessageList
-              agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
-              chat={chat}
-              endRef={messagesEndRef}
-              onOpenConversationFile={openConversationFile}
-              runProgressByRunId={runProgressByRunId}
-              transcriptsBySessionId={transcriptsBySessionId}
-            />
+            <>
+              {isTaskDetail ? <TaskConversationTimingSummary chat={chat} /> : null}
+              <MessageList
+                agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
+                chat={chat}
+                endRef={messagesEndRef}
+                onOpenConversationFile={openConversationFile}
+                runProgressByRunId={runProgressByRunId}
+                transcriptsBySessionId={transcriptsBySessionId}
+              />
+            </>
           ) : (
             <EmptyChatState
               disabled={pending}

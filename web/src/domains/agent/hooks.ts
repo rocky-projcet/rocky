@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
   AgentCreateInput,
+  AgentLocalSkillFileInput,
   AgentUpdateInput,
   AuthProfileCreateInput,
   AuthProfileUpdateInput,
@@ -12,6 +13,7 @@ export const agentQueryKeys = {
   agents: (includeArchived = false) =>
     ["agents", includeArchived ? "all" : "active"] as const,
   agent: (agentId: string) => ["agent", agentId] as const,
+  agentLocalSkills: (agentId: string) => ["agent-local-skills", agentId] as const,
   workspaceDirectory: (agentId: string, searchPath: string) =>
     ["agent-workspace-directory", agentId, searchPath] as const,
   workspaceFile: (agentId: string, searchPath: string) =>
@@ -41,6 +43,77 @@ export function useAgentQuery(agentId: string | undefined) {
     queryKey: agentQueryKeys.agent(agentId ?? "unknown"),
     queryFn: () => agentEngineClient.getAgent(agentId!),
     enabled: Boolean(agentId),
+  });
+}
+
+export function useAgentLocalSkillsQuery(agentId: string | undefined) {
+  return useQuery({
+    queryKey: agentQueryKeys.agentLocalSkills(agentId ?? "unknown"),
+    queryFn: () => agentEngineClient.listAgentLocalSkills(agentId!),
+    enabled: Boolean(agentId),
+  });
+}
+
+export function useUpsertAgentLocalSkillMutation(agentId: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      skillId: string;
+      replace?: boolean;
+      files: AgentLocalSkillFileInput[];
+    }) => {
+      if (!agentId) {
+        throw new Error("Agent id is required to install a skill.");
+      }
+
+      return agentEngineClient.upsertAgentLocalSkill(agentId, input.skillId, {
+        replace: input.replace,
+        files: input.files,
+      });
+    },
+    onSuccess: async (result) => {
+      queryClient.setQueryData(
+        agentQueryKeys.agentLocalSkills(agentId!),
+        result.skills,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: agentQueryKeys.agents(false),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: agentQueryKeys.agents(true),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useDeleteAgentLocalSkillMutation(agentId: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (skillId: string) => {
+      if (!agentId) {
+        throw new Error("Agent id is required to delete a skill.");
+      }
+
+      return agentEngineClient.deleteAgentLocalSkill(agentId, skillId);
+    },
+    onSuccess: async (result) => {
+      queryClient.setQueryData(
+        agentQueryKeys.agentLocalSkills(agentId!),
+        result.skills,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: agentQueryKeys.agents(false),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: agentQueryKeys.agents(true),
+        }),
+      ]);
+    },
   });
 }
 

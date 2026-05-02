@@ -24,6 +24,7 @@ import { registerRunRoutes } from "./routes/run-routes.js";
 import { registerRuntimeRoutes } from "./routes/runtime-routes.js";
 import { registerRockyChatRoutes } from "./routes/rocky-chat-routes.js";
 import { registerSessionRoutes } from "./routes/session-routes.js";
+import { registerSkillRoutes } from "./routes/skill-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { SystemHardwareStatusService } from "../system/hardware-status-service.js";
 
@@ -112,6 +113,7 @@ export function createAgentEngineServer(
     agentService,
     sessionService,
     nativeFileOpener: options.nativeFileOpener,
+    nativeFolderOpener: options.nativeFolderOpener,
   });
   server.register(registerAccountRoutes, {
     codexAccountService,
@@ -130,12 +132,19 @@ export function createAgentEngineServer(
   server.register(registerRunRoutes, {
     sessionService,
     nativeFileOpener: options.nativeFileOpener,
+    nativeFolderOpener: options.nativeFolderOpener,
   });
   server.register(registerMessengerRoutes, {
     agentMessengerService,
   });
   server.register(registerRuntimeRoutes, {
     runtimeRegistry,
+  });
+  server.register(registerSkillRoutes, {
+    stateRoot: options.stateRoot,
+    now: options.now,
+    idGenerator: options.idGenerator,
+    skillTemplateStore: options.skillTemplateStore,
   });
   server.register(registerTaskRoutes, {
     taskService,

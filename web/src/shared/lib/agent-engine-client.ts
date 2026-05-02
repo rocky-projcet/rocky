@@ -28,6 +28,11 @@ export interface AgentLocalSkillRecord {
   id: string;
   workspacePath: string;
   skillPath: string;
+  displayName: string;
+  description: string | null;
+  invocation: string;
+  runtimePath: string | null;
+  runtimeSkillPath: string | null;
 }
 
 export interface AgentLocalSkillDeleteResult {
@@ -47,6 +52,60 @@ export interface AgentLocalSkillUpsertResult {
   id: string;
   skill: AgentLocalSkillRecord;
   skills: AgentLocalSkillRecord[];
+}
+
+export type SkillTemplateCategory = "document" | "content" | "data";
+
+export interface SkillTemplateInputArtifactRecord {
+  id: string;
+  runId: string;
+  fieldId: string;
+  fileName: string;
+  contentType: string | null;
+  size: number | null;
+  runtimePath: string;
+  skillPath?: string | null;
+  uploadedAt: string;
+}
+
+export interface SavedSkillTemplateRecord {
+  id: string;
+  source: "builtin" | "user";
+  category: SkillTemplateCategory;
+  title: string;
+  description: string;
+  triggerLabel: string;
+  requiredInputs: string[];
+  inputFiles?: string[];
+  inputArtifacts?: SkillTemplateInputArtifactRecord[];
+  sourceRunId?: string | null;
+  outputFormatLabel: string;
+  outputFiles?: string[];
+  defaultInstructions: string;
+  skill: {
+    id: string;
+    displayName: string;
+    description: string;
+    invocation: string;
+    skillMarkdown: string;
+    openAiYaml: string;
+    syncStatus: "local" | "syncing" | "synced" | "failed";
+    workspacePath: string | null;
+    lastSyncedAt?: string;
+    lastSyncError?: string;
+  };
+  sortOrder: number;
+  archived?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SkillTemplateRunRecord {
+  id: string;
+  templateKind: string | null;
+  status: "draft" | "completed";
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AgentCreateInput {
@@ -635,6 +694,11 @@ export interface RockySkillCandidateRecord {
   createdAt: string;
 }
 
+export interface RockyUsedSkillRecord {
+  id: string;
+  displayName: string;
+}
+
 export type RockyAbilityIcon = "message-square" | "presentation";
 
 export interface RockyAbilityCardRecord {
@@ -689,6 +753,7 @@ export interface RockyMessageRecord {
   domain: RockyChatDomain;
   workerId: string | null;
   skillCandidateIds: string[];
+  usedSkills: RockyUsedSkillRecord[];
   dispatchId: string | null;
   createdAt: string;
 }
@@ -767,6 +832,8 @@ export interface RockyCoreManagementRecord {
 export interface RockyChatCreateInput {
   message: string;
   attachments?: RockyAttachmentInput[];
+  agentId?: string | null;
+  skillId?: string | null;
 }
 
 export type RockyTemplateCategory = "document" | "content" | "data";
@@ -960,6 +1027,8 @@ export interface NativeFileOpenRecord {
   application: string;
   fileName: string;
   platform: string;
+  kind?: "file" | "folder";
+  path?: string;
 }
 
 export type AgentWorkspacePreviewKind =
@@ -1299,6 +1368,70 @@ export class AgentEngineClient {
       `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
       {
         method: "DELETE",
+      }
+    );
+  }
+
+  listSkillTemplates(): Promise<SavedSkillTemplateRecord[]> {
+    return this.request<SavedSkillTemplateRecord[]>("/skills");
+  }
+
+  upsertSkillTemplate(
+    skill: SavedSkillTemplateRecord
+  ): Promise<SavedSkillTemplateRecord> {
+    return this.request<SavedSkillTemplateRecord>(
+      `/skills/${encodeURIComponent(skill.id)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(skill),
+      }
+    );
+  }
+
+  deleteSkillTemplate(skillId: string): Promise<{ id: string; deleted: boolean }> {
+    return this.request<{ id: string; deleted: boolean }>(
+      `/skills/${encodeURIComponent(skillId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  getSkillTemplateFiles(skillId: string): Promise<AgentLocalSkillFileInput[]> {
+    return this.request<AgentLocalSkillFileInput[]>(
+      `/skills/${encodeURIComponent(skillId)}/files`
+    );
+  }
+
+  createSkillTemplateRun(input: {
+    templateKind?: string | null;
+  } = {}): Promise<SkillTemplateRunRecord> {
+    return this.request<SkillTemplateRunRecord>("/skill-template-runs", {
+      method: "POST",
+      body: JSON.stringify({
+        templateKind: input.templateKind ?? null,
+      }),
+    });
+  }
+
+  async uploadSkillTemplateRunFile(input: {
+    runId: string;
+    fieldId: string;
+    file: File;
+  }): Promise<SkillTemplateInputArtifactRecord> {
+    const contentBase64 = await fileToBase64(input.file);
+
+    return this.request<SkillTemplateInputArtifactRecord>(
+      `/skill-template-runs/${encodeURIComponent(input.runId)}/uploads`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          fieldId: input.fieldId,
+          fileName: input.file.name,
+          contentType: input.file.type || null,
+          size: input.file.size,
+          contentBase64,
+        }),
       }
     );
   }
@@ -1767,6 +1900,25 @@ export class AgentEngineClient {
     search.set("path", searchPath);
 
     return `/agents/${encodeURIComponent(agentId)}/workspace/file/open-native?${search.toString()}`;
+  }
+
+  agentWorkspaceFolderNativeOpenPath(
+    agentId: string,
+    searchPath?: string | null
+  ): string {
+    const pathname = `/agents/${encodeURIComponent(agentId)}/workspace/open-native`;
+    const search = new URLSearchParams();
+    if (searchPath) {
+      search.set("path", searchPath);
+    }
+
+    return search.size > 0 ? `${pathname}?${search.toString()}` : pathname;
+  }
+
+  runArtifactFolderNativeOpenPath(runId: string, artifactRole: string): string {
+    return `/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(
+      artifactRole
+    )}/open-folder-native`;
   }
 
   resolveApiPath(pathname: string): string {

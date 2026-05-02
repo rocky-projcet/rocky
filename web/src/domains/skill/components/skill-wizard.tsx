@@ -5,6 +5,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Progress } from "@/shared/ui/progress";
 import { cn } from "@/shared/lib/utils";
+import type { MdTemplateInputArtifact } from "@/domains/template/types";
 import {
   LANGUAGE_OPTIONS,
   type SkillField,
@@ -18,7 +19,8 @@ type AnswerValue =
   | string[]
   | { primary: string; detail?: string; custom?: string }
   | { from: string; to: string }
-  | { fileName: string; role?: string }[]
+  | MdTemplateInputArtifact
+  | Array<MdTemplateInputArtifact & { role?: string }>
   | null;
 
 export type SkillWizardAnswers = Record<string, AnswerValue>;
@@ -28,11 +30,16 @@ export function SkillWizard({
   onCancel,
   onSubmit,
   finishLabel = "다음",
+  onUploadFile,
 }: {
   template: SkillTemplate;
   onCancel: () => void;
   onSubmit: (answers: SkillWizardAnswers) => void;
   finishLabel?: string;
+  onUploadFile?: (input: {
+    fieldId: string;
+    file: File;
+  }) => Promise<MdTemplateInputArtifact>;
 }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [answers, setAnswers] = useState<SkillWizardAnswers>({});
@@ -76,7 +83,13 @@ export function SkillWizard({
         <Progress value={progress} className="h-1.5" />
       </div>
 
-      <SkillStepView key={step.id} step={step} answers={answers} onChange={patchAnswer} />
+      <SkillStepView
+        key={step.id}
+        step={step}
+        answers={answers}
+        onChange={patchAnswer}
+        onUploadFile={onUploadFile}
+      />
 
       <div className="flex items-center justify-between gap-2 pt-2">
         <Button variant="ghost" onClick={goBack}>
@@ -132,7 +145,7 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
   }
 
   if (field.kind === "file-upload") {
-    return typeof value === "string" && value.length > 0;
+    return (typeof value === "string" && value.length > 0) || isInputArtifact(value);
   }
 
   if (field.kind === "file-with-role") {
@@ -140,7 +153,7 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
   }
 
   if (field.kind === "url-or-file") {
-    return typeof value === "string" && value.length > 0;
+    return (typeof value === "string" && value.length > 0) || isInputArtifact(value);
   }
 
   if (field.kind === "text") {
@@ -162,10 +175,15 @@ function SkillStepView({
   step,
   answers,
   onChange,
+  onUploadFile,
 }: {
   step: SkillStep;
   answers: SkillWizardAnswers;
   onChange: (fieldId: string, value: AnswerValue) => void;
+  onUploadFile?: (input: {
+    fieldId: string;
+    file: File;
+  }) => Promise<MdTemplateInputArtifact>;
 }) {
   return (
     <div className="animate-in fade-in slide-in-from-right-4 duration-200">
@@ -183,6 +201,7 @@ function SkillStepView({
             field={field}
             value={answers[field.id]}
             onChange={(next) => onChange(field.id, next)}
+            onUploadFile={onUploadFile}
           />
         ))}
       </div>
@@ -194,10 +213,15 @@ function SkillFieldView({
   field,
   value,
   onChange,
+  onUploadFile,
 }: {
   field: SkillField;
   value: AnswerValue;
   onChange: (value: AnswerValue) => void;
+  onUploadFile?: (input: {
+    fieldId: string;
+    file: File;
+  }) => Promise<MdTemplateInputArtifact>;
 }) {
   return (
     <FieldShell label={field.label} helper={field.helper}>
@@ -210,11 +234,26 @@ function SkillFieldView({
       ) : field.kind === "language-pair" ? (
         <LanguagePairField value={value} onChange={onChange} />
       ) : field.kind === "file-upload" ? (
-        <FileUploadField field={field} value={value} onChange={onChange} />
+        <FileUploadField
+          field={field}
+          value={value}
+          onChange={onChange}
+          onUploadFile={onUploadFile}
+        />
       ) : field.kind === "file-with-role" ? (
-        <FileWithRoleField field={field} value={value} onChange={onChange} />
+        <FileWithRoleField
+          field={field}
+          value={value}
+          onChange={onChange}
+          onUploadFile={onUploadFile}
+        />
       ) : field.kind === "url-or-file" ? (
-        <UrlOrFileField value={value} onChange={onChange} />
+        <UrlOrFileField
+          field={field}
+          value={value}
+          onChange={onChange}
+          onUploadFile={onUploadFile}
+        />
       ) : field.kind === "text" ? (
         <TextField field={field} value={value} onChange={onChange} />
       ) : field.kind === "account-connect" ? (
@@ -655,22 +694,63 @@ function LanguageColumn({
   );
 }
 
+function isInputArtifact(value: AnswerValue | unknown): value is MdTemplateInputArtifact {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as MdTemplateInputArtifact).fileName === "string" &&
+    typeof (value as MdTemplateInputArtifact).runtimePath === "string"
+  );
+}
+
+function answerFileName(value: AnswerValue): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (isInputArtifact(value)) {
+    return value.fileName;
+  }
+  return "";
+}
+
 function FileUploadField({
   field,
   value,
   onChange,
+  onUploadFile,
 }: {
   field: SkillField;
   value: AnswerValue;
   onChange: (value: AnswerValue) => void;
+  onUploadFile?: (input: {
+    fieldId: string;
+    file: File;
+  }) => Promise<MdTemplateInputArtifact>;
 }) {
-  const fileName = typeof value === "string" ? value : "";
+  const fileName = answerFileName(value);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function pick(event: ChangeEvent<HTMLInputElement>) {
+  async function pick(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    onChange(file.name);
+    if (!onUploadFile) {
+      onChange(file.name);
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    try {
+      onChange(await onUploadFile({ fieldId: field.id, file }));
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "파일을 업로드하지 못했습니다.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
   }
 
   return (
@@ -689,42 +769,78 @@ function FileUploadField({
       >
         <Upload className="size-4 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-sm">
-          {fileName ? fileName : "파일을 골라주세요"}
+          {uploading ? "업로드 중..." : fileName ? fileName : "파일을 골라주세요"}
         </span>
         {fileName ? (
           <span className="text-xs text-muted-foreground">바꾸기</span>
         ) : null}
       </button>
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }
 
 function FileWithRoleField({
-  field: _field,
+  field,
   value,
   onChange,
+  onUploadFile,
 }: {
   field: SkillField;
   value: AnswerValue;
   onChange: (value: AnswerValue) => void;
+  onUploadFile?: (input: {
+    fieldId: string;
+    file: File;
+  }) => Promise<MdTemplateInputArtifact>;
 }) {
   const list = Array.isArray(value)
-    ? (value as { fileName: string; role?: string }[])
+    ? (value as Array<MdTemplateInputArtifact & { role?: string }>)
     : [];
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [pendingFileName, setPendingFileName] = useState<string | null>(null);
+  const [pendingArtifact, setPendingArtifact] =
+    useState<(MdTemplateInputArtifact & { role?: string }) | null>(null);
   const [pendingRole, setPendingRole] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function pickFile(event: ChangeEvent<HTMLInputElement>) {
+  async function pickFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setPendingFileName(file.name);
+    setError(null);
+    if (!onUploadFile) {
+      setPendingArtifact({
+        id: file.name,
+        runId: "",
+        fieldId: field.id,
+        fileName: file.name,
+        contentType: file.type || null,
+        size: file.size,
+        runtimePath: "",
+        skillPath: null,
+        uploadedAt: "",
+      });
+      return;
+    }
+
+    setUploading(true);
+    try {
+      setPendingArtifact(await onUploadFile({ fieldId: field.id, file }));
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "파일을 업로드하지 못했습니다.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
   }
 
   function commit() {
-    if (!pendingFileName) return;
-    onChange([...list, { fileName: pendingFileName, role: pendingRole.trim() || undefined }]);
-    setPendingFileName(null);
+    if (!pendingArtifact) return;
+    onChange([
+      ...list,
+      { ...pendingArtifact, role: pendingRole.trim() || undefined },
+    ]);
+    setPendingArtifact(null);
     setPendingRole("");
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -775,10 +891,13 @@ function FileWithRoleField({
             파일 선택
           </Button>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {pendingFileName ?? "파일을 고르고 역할을 적어주세요"}
+            {uploading
+              ? "업로드 중..."
+              : pendingArtifact?.fileName ?? "파일을 고르고 역할을 적어주세요"}
           </span>
         </div>
-        {pendingFileName ? (
+        {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+        {pendingArtifact ? (
           <div className="mt-2 flex items-center gap-2">
             <Input
               value={pendingRole}
@@ -797,19 +916,43 @@ function FileWithRoleField({
 }
 
 function UrlOrFileField({
+  field,
   value,
   onChange,
+  onUploadFile,
 }: {
+  field: SkillField;
   value: AnswerValue;
   onChange: (value: AnswerValue) => void;
+  onUploadFile?: (input: {
+    fieldId: string;
+    file: File;
+  }) => Promise<MdTemplateInputArtifact>;
 }) {
   const text = typeof value === "string" ? value : "";
+  const fileName = isInputArtifact(value) ? value.fileName : "";
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function pickFile(event: ChangeEvent<HTMLInputElement>) {
+  async function pickFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    onChange(file.name);
+    if (!onUploadFile) {
+      onChange(file.name);
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    try {
+      onChange(await onUploadFile({ fieldId: field.id, file }));
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "파일을 업로드하지 못했습니다.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
   }
 
   return (
@@ -829,9 +972,12 @@ function UrlOrFileField({
       >
         <Upload className="size-4 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">
-          {text && !text.startsWith("http") ? text : "파일 올리기"}
+          {uploading
+            ? "업로드 중..."
+            : fileName || (text && !text.startsWith("http") ? text : "파일 올리기")}
         </span>
       </button>
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -854,4 +1000,3 @@ function TextField({
     />
   );
 }
-

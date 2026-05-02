@@ -34,12 +34,71 @@ test("reserved system skill names are rejected from the workspace-local inventor
   const overlay = buildWorkspaceAgentsOverlay(workspaceRoot, skills);
 
   assert.deepEqual(skills.map((skill) => skill.name), ["local-helper"]);
-  assert.match(overlay, /- local-helper: Agent-local workspace skill\./);
-  assert.match(overlay, /\*\*System \(read-only\)\*\*/);
-  assert.match(overlay, /openai-docs: OpenAI 제품\/API 관련 최신 공식 문서 기반 안내/);
-  assert.match(overlay, /Repository-root developer skills are unavailable in agent sessions/);
-  assert.doesNotMatch(overlay, /- system-reporter: Agent-local workspace skill\./);
-  assert.doesNotMatch(overlay, /- \.system: Agent-local workspace skill\./);
+  assert.equal(skills[0]?.displayName, "Local Helper");
+  assert.equal(skills[0]?.invocation, "$local-helper");
+  assert.match(overlay, /- Local Helper: Agent-local skill\./);
+  assert.match(overlay, /User-facing agent skills/);
+  assert.match(
+    overlay,
+    /report only the skill display names above/u
+  );
+  assert.match(
+    overlay,
+    /Do not expose internal skill identifiers, invocation strings, file paths/u
+  );
+  assert.match(
+    overlay,
+    /inspect its directory under `.agents\/skills`, read its `SKILL\.md`/u
+  );
+  assert.match(
+    overlay,
+    /Generic file searches may skip hidden skill directories/u
+  );
+  assert.doesNotMatch(overlay, /\*\*System \(read-only\)\*\*/);
+  assert.doesNotMatch(overlay, /openai-docs: OpenAI 제품\/API/u);
+  assert.doesNotMatch(overlay, /\$local-helper/u);
+  assert.match(
+    overlay,
+    /Repository-root developer skills from parent directories are development-only and unavailable/u
+  );
+  assert.doesNotMatch(overlay, /\$system-reporter/u);
+  assert.doesNotMatch(overlay, /\$\.system/u);
+});
+
+test("workspace-local overlay includes skill titles and descriptions", async () => {
+  const workspaceRoot = await mkdtemp(
+    path.join(os.tmpdir(), "agent-workspace-skill-metadata-")
+  );
+  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "md-document-1rhh6bd");
+
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-document-1rhh6bd",
+      'description: "Use when running the saved 특허 리서치 workflow."',
+      "---",
+      "",
+      "# 특허 리서치",
+      "",
+    ].join("\n")
+  );
+
+  const skills = await listWorkspaceLocalSkills(workspaceRoot);
+  const overlay = buildWorkspaceAgentsOverlay(workspaceRoot, skills);
+
+  assert.equal(skills[0]?.name, "md-document-1rhh6bd");
+  assert.equal(skills[0]?.displayName, "특허 리서치");
+  assert.equal(
+    skills[0]?.description,
+    "Use when running the saved 특허 리서치 workflow."
+  );
+  assert.match(
+    overlay,
+    /- 특허 리서치: Use when running the saved 특허 리서치 workflow\./u
+  );
+  assert.doesNotMatch(overlay, /\$md-document-1rhh6bd/u);
 });
 
 test("workspace-local inventory reads legacy skills but prefers .agents/skills", async () => {

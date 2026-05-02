@@ -11,9 +11,14 @@ export interface NativeFileOpenRecord {
   application: string;
   fileName: string;
   platform: NodeJS.Platform | "test";
+  kind?: "file" | "folder";
+  path?: string;
 }
 
 export type NativeFileOpener = (filePath: string) => Promise<NativeFileOpenRecord>;
+export type NativeFolderOpener = (
+  folderPath: string
+) => Promise<NativeFileOpenRecord>;
 
 type ExecFilePromise = (
   file: string,
@@ -22,6 +27,11 @@ type ExecFilePromise = (
 ) => Promise<unknown>;
 
 interface OpenPowerPointFileOptions {
+  execFile?: ExecFilePromise;
+  platform?: NodeJS.Platform | "test";
+}
+
+interface OpenFolderOptions {
   execFile?: ExecFilePromise;
   platform?: NodeJS.Platform | "test";
 }
@@ -62,5 +72,76 @@ export async function openPowerPointFile(
     application: POWERPOINT_APP_NAME,
     fileName: path.basename(filePath),
     platform,
+  };
+}
+
+function folderOpenCommand(
+  platform: NodeJS.Platform | "test",
+  folderPath: string
+): { file: string; args: string[]; application: string } | null {
+  if (platform === "darwin") {
+    return {
+      file: "open",
+      args: [folderPath],
+      application: "Finder",
+    };
+  }
+
+  if (platform === "win32") {
+    return {
+      file: "explorer.exe",
+      args: [folderPath],
+      application: "File Explorer",
+    };
+  }
+
+  if (platform === "linux") {
+    return {
+      file: "xdg-open",
+      args: [folderPath],
+      application: "file manager",
+    };
+  }
+
+  return null;
+}
+
+export async function openFolder(
+  folderPath: string,
+  options: OpenFolderOptions = {}
+): Promise<NativeFileOpenRecord> {
+  const platform = options.platform ?? process.platform;
+  const command = folderOpenCommand(platform, folderPath);
+  if (!command) {
+    throw statusError(
+      `실제 폴더 열기는 현재 지원되지 않는 로컬 서버 플랫폼입니다: ${platform}`,
+      501
+    );
+  }
+
+  const execFileImpl = options.execFile ?? (execFileAsync as ExecFilePromise);
+
+  try {
+    await execFileImpl(command.file, command.args, {
+      timeout: NATIVE_OPEN_TIMEOUT_MS,
+      windowsHide: true,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw statusError(
+      `${command.application}에서 폴더를 열지 못했습니다. ${detail}`,
+      503
+    );
+  }
+
+  const resolvedPath = path.resolve(folderPath);
+
+  return {
+    status: "opened",
+    application: command.application,
+    fileName: path.basename(resolvedPath) || resolvedPath,
+    platform,
+    kind: "folder",
+    path: resolvedPath,
   };
 }

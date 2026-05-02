@@ -1,5 +1,136 @@
 import { expect, test } from "@playwright/test";
 
+const testNow = "2026-01-01T00:00:00.000Z";
+
+function mockDiagnostics(provider: "codex" | "claude") {
+  return {
+    command: provider === "codex" ? "codex" : "claude",
+    resolvedPath: `/usr/local/bin/${provider === "codex" ? "codex" : "claude"}`,
+    installStatus: "installed",
+    installMethod: "unknown",
+    currentVersion: "test",
+    rawVersionText: "test",
+    checkedAt: testNow,
+    latestVersion: null,
+    latestStatus: "unknown",
+    latestCheckedAt: null,
+    latestSource: null,
+    statusText: "설치됨",
+  };
+}
+
+function mockUpdate() {
+  return {
+    status: "idle",
+    supported: false,
+    installMethod: "unknown",
+    commandPreview: null,
+    startedAt: null,
+    completedAt: null,
+    output: [],
+    lastError: null,
+  };
+}
+
+function mockProviderAccount(provider: "codex" | "claude", status = "logged-out") {
+  const base = {
+    provider,
+    providerLabel: provider === "codex" ? "Codex CLI" : "Claude Code",
+    status,
+    statusText: status === "pending" ? "로그인 진행 중" : "로그인되지 않음",
+    homePath: null,
+    updatedAt: testNow,
+    accountInfo: {
+      label: null,
+      email: null,
+      name: null,
+      userId: null,
+      planType: null,
+      organizationTitle: null,
+      authMode: null,
+    },
+    loginMethods: [
+      {
+        id: "browser-login",
+        label: provider === "codex" ? "OpenAI 로그인" : "Claude 로그인",
+        description: "브라우저 로그인",
+        kind: "primary",
+        hiddenByDefault: false,
+        supported: true,
+      },
+    ],
+    primaryLoginMethodId: "browser-login",
+    diagnostics: mockDiagnostics(provider),
+    update: mockUpdate(),
+  };
+
+  if (provider === "codex") {
+    return {
+      ...base,
+      codexBin: "codex",
+      deviceAuth: {
+        status: "idle",
+        mode: null,
+        startedAt: null,
+        completedAt: null,
+        output: [],
+        verificationUri: null,
+        userCode: null,
+        instructions: null,
+        lastError: null,
+      },
+    };
+  }
+
+  return {
+    ...base,
+    claudeBin: "claude",
+    apiProvider: null,
+    browserAuth: {
+      status: "idle",
+      mode: null,
+      startedAt: null,
+      completedAt: null,
+      verificationUri: null,
+      instructions: null,
+      lastError: null,
+    },
+  };
+}
+
+test("site header shows codex login action when providers are logged out", async ({ page }) => {
+  let codexLoginRequested = false;
+
+  await page.route("**/api/account/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        providers: [mockProviderAccount("codex"), mockProviderAccount("claude")],
+        updatedAt: testNow,
+      }),
+    });
+  });
+  await page.route("**/api/account/login", async (route) => {
+    codexLoginRequested = true;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify(mockProviderAccount("codex", "pending")),
+    });
+  });
+
+  await page.goto("/agents");
+
+  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await expect(page.getByText("AI 서비스 로그인 상태를 관리합니다.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Codex 로그인" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Claude 로그인" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Codex 로그인" }).click();
+  await expect.poll(() => codexLoginRequested).toBe(true);
+});
+
 test("account page shows both provider cards and CLI diagnostics", async ({ page }) => {
   await page.goto("/settings");
 

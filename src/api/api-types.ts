@@ -24,6 +24,7 @@ import type {
   AgentTaskUpdateInput,
 } from "../tasks/task-types.js";
 import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
+import type { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type {
   RuntimeKind,
   RuntimeEvent,
@@ -36,7 +37,7 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
-import type { NativeFileOpener } from "./http/native-open.js";
+import type { NativeFileOpener, NativeFolderOpener } from "./http/native-open.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -228,6 +229,8 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   runtimeRegistry?: RuntimeRegistryLike;
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
+  skillTemplateStore?: SkillTemplateStore;
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
+  nativeFolderOpener?: NativeFolderOpener;
 }

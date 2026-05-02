@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 
 import { AgentManager } from "../../src/agents/agent-manager.js";
 import { AgentLocalSkillService } from "../../src/agents/agent-local-skill-service.js";
@@ -73,4 +73,105 @@ test("AgentLocalSkillService rejects traversal, reserved, and protected skill id
     }),
     /Protected agent skill/
   );
+});
+
+test("AgentLocalSkillService installs template skills into workspace and Codex home", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-local-skills-install-"));
+  const manager = new AgentManager({
+    stateRoot,
+    idGenerator: () => "install-agent",
+    now: () => "2026-04-26T00:00:00.000Z",
+  });
+  const agent = await manager.createAgent({
+    name: "install-agent",
+  });
+  const service = new AgentLocalSkillService();
+
+  const installed = await service.upsertAgentLocalSkill(
+    agent,
+    "patent-research",
+    [
+      {
+        path: "SKILL.md",
+        content:
+          "---\nname: patent-research\ndescription: \"Use for patent research reports.\"\n---\n\n# 특허 리서치\n",
+      },
+      {
+        path: "agents/openai.yaml",
+        content:
+          "interface:\n  display_name: \"특허 리서치\"\n  default_prompt: \"Use $patent-research to run a patent report.\"\n",
+      },
+      {
+        path: "assets/inputs/dataset/upload-001/sales.csv",
+        content: "sku,sales\nA,10\n",
+      },
+    ],
+    {
+      replace: true,
+    }
+  );
+
+  const workspaceSkillPath = path.join(
+    agent.workspaceRoot,
+    ".agents",
+    "skills",
+    "patent-research",
+    "SKILL.md"
+  );
+  const runtimeSkillPath = path.join(
+    agent.runtimeHome,
+    ".codex",
+    "skills",
+    "patent-research",
+    "SKILL.md"
+  );
+
+  assert.equal(installed.skill.id, "patent-research");
+  assert.equal(installed.skill.displayName, "특허 리서치");
+  assert.equal(installed.skill.description, "Use for patent research reports.");
+  assert.equal(installed.skill.invocation, "$patent-research");
+  assert.equal(
+    installed.skill.runtimePath,
+    path.join(".codex", "skills", "patent-research")
+  );
+  assert.equal(await readFile(workspaceSkillPath, "utf8"), await readFile(runtimeSkillPath, "utf8"));
+  assert.equal(
+    await readFile(
+      path.join(
+        agent.workspaceRoot,
+        ".agents",
+        "skills",
+        "patent-research",
+        "assets",
+        "inputs",
+        "dataset",
+        "upload-001",
+        "sales.csv"
+      ),
+      "utf8"
+    ),
+    "sku,sales\nA,10\n"
+  );
+  assert.equal(
+    await readFile(
+      path.join(
+        agent.runtimeHome,
+        ".codex",
+        "skills",
+        "patent-research",
+        "assets",
+        "inputs",
+        "dataset",
+        "upload-001",
+        "sales.csv"
+      ),
+      "utf8"
+    ),
+    "sku,sales\nA,10\n"
+  );
+
+  const deleted = await service.deleteAgentLocalSkill(agent, "patent-research");
+  assert.equal(deleted.deleted, true);
+  await assert.rejects(access(path.dirname(workspaceSkillPath)));
+  await assert.rejects(access(path.dirname(runtimeSkillPath)));
 });

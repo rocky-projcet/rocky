@@ -3,7 +3,7 @@ import { Sparkles, Zap } from "lucide-react";
 
 import { useAgentSessionsQuery } from "@/domains/session/hooks";
 import { getRunningTaskRequests, summarizeTaskRequests } from "@/domains/session/lib/request-status";
-import { readAgentSkillIds } from "../lib/agent-skill-store";
+import { useAgentSkillCount } from "../lib/agent-skill-store";
 import { useAgentEmoji } from "../lib/agent-avatar-store";
 import { AgentAvatar } from "./agent-avatar";
 import type { AgentSummary } from "./agent-grid-view";
@@ -16,7 +16,7 @@ export function AgentCard({ agent }: { agent: AgentSummary }) {
   const runningCount = getRunningTaskRequests(sessions).length;
   const completedCount = summary.counts.completed;
 
-  const equippedSkillCount = readAgentSkillIds(agent.id).length;
+  const equippedSkillCount = useAgentSkillCount(agent.id);
   const archived = agent.lifecycle === "archived";
 
   const tinted = agent.color

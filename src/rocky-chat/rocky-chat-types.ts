@@ -60,6 +60,11 @@ export interface RockySkillCandidateRecord {
   createdAt: string;
 }
 
+export interface RockyUsedSkillRecord {
+  id: string;
+  displayName: string;
+}
+
 export type RockyAbilityIcon = "message-square" | "presentation";
 
 export interface RockyAbilityCardRecord {
@@ -114,6 +119,7 @@ export interface RockyMessageRecord {
   domain: RockyChatDomain;
   workerId: string | null;
   skillCandidateIds: string[];
+  usedSkills: RockyUsedSkillRecord[];
   dispatchId: string | null;
   createdAt: string;
 }
@@ -192,6 +198,8 @@ export interface RockyCoreManagementRecord {
 export interface RockyChatCreateInput {
   message: string;
   attachments?: RockyAttachmentInput[];
+  agentId?: string | null;
+  skillId?: string | null;
 }
 
 export interface RockyChatMessageInput {

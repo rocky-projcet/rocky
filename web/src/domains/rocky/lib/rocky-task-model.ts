@@ -1,10 +1,10 @@
-import type { MdTemplateDefinition } from "@/domains/template/types";
+import type { MdTemplateDefinition } from "../../template/types.js";
 import type {
   RockyAttachmentRecord,
   RockyChatRecord,
   RockyOrchestrationRecord,
   RockyOrchestrationStatus,
-} from "@/domains/rocky/types";
+} from "../../../shared/lib/agent-engine-client.js";
 
 const TEMPLATE_RUN_MARKER = "[Rocky 템플릿 실행]";
 
@@ -195,6 +195,105 @@ export function getRockyTaskTemplateGroup(
     id: template?.id ?? `template-title:${templateTitle}`,
     label: template?.title ?? templateTitle,
   };
+}
+
+function normalizedSkillToken(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.toLowerCase() : null;
+}
+
+function addSkillToken(target: Set<string>, value: string | null | undefined) {
+  const normalized = normalizedSkillToken(value);
+  if (normalized) {
+    target.add(normalized);
+  }
+}
+
+function skillTokenSetHas(
+  target: Set<string>,
+  value: string | null | undefined
+): boolean {
+  const normalized = normalizedSkillToken(value);
+  return normalized ? target.has(normalized) : false;
+}
+
+function buildTemplateSkillIdTokens(template: MdTemplateDefinition): Set<string> {
+  const tokens = new Set<string>();
+  addSkillToken(tokens, template.id);
+  addSkillToken(tokens, template.skill.id);
+  addSkillToken(tokens, template.skill.invocation);
+  addSkillToken(tokens, template.skill.invocation.replace(/^\$/u, ""));
+  addSkillToken(tokens, `$${template.skill.id}`);
+  return tokens;
+}
+
+function buildTemplateSkillNameTokens(template: MdTemplateDefinition): Set<string> {
+  const tokens = new Set<string>();
+  addSkillToken(tokens, template.title);
+  addSkillToken(tokens, template.triggerLabel);
+  addSkillToken(tokens, template.skill.displayName);
+  return tokens;
+}
+
+function buildTemplateSkillInvocationTokens(
+  template: MdTemplateDefinition
+): string[] {
+  const tokens = new Set<string>();
+  const invocation = template.skill.invocation.trim();
+  if (invocation) {
+    tokens.add(invocation);
+  }
+
+  const skillId = template.skill.id.trim();
+  if (skillId) {
+    tokens.add(`$${skillId}`);
+  }
+
+  return [...tokens];
+}
+
+export function isRockyTaskForTemplateSkill(
+  chat: RockyChatRecord,
+  template: MdTemplateDefinition,
+  templates: MdTemplateDefinition[]
+): boolean {
+  const group = getRockyTaskTemplateGroup(chat, templates);
+  if (group.id === template.id) {
+    return true;
+  }
+
+  const legacyTemplateTitle = getRockyTaskTemplateTitle(chat);
+  const nameTokens = buildTemplateSkillNameTokens(template);
+  if (skillTokenSetHas(nameTokens, legacyTemplateTitle)) {
+    return true;
+  }
+
+  const idTokens = buildTemplateSkillIdTokens(template);
+
+  if (
+    chat.messages.some((message) =>
+      (message.usedSkills ?? []).some(
+        (skill) =>
+          skillTokenSetHas(idTokens, skill.id) ||
+          skillTokenSetHas(nameTokens, skill.displayName)
+      )
+    )
+  ) {
+    return true;
+  }
+
+  if (chat.dispatches.some((dispatch) => skillTokenSetHas(idTokens, dispatch.skillId))) {
+    return true;
+  }
+
+  if (skillTokenSetHas(idTokens, chat.worker?.skillId)) {
+    return true;
+  }
+
+  const invocationTokens = buildTemplateSkillInvocationTokens(template);
+  return chat.messages.some((message) =>
+    invocationTokens.some((token) => message.text.includes(token))
+  );
 }
 
 export function getRockyTaskInputFiles(

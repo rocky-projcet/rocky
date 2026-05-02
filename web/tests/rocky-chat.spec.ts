@@ -1,5 +1,418 @@
 import { expect, test } from "@playwright/test";
 
+test("right file preview does not reload while Rocky is answering", async ({ page }) => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const chatId = "preview-refresh-test";
+  const agentId = "agent-preview-refresh";
+  const sessionId = "session-preview-refresh";
+  let chatRequests = 0;
+  let previewRequests = 0;
+
+  const runningChat = () => {
+    chatRequests += 1;
+    const updatedAt = new Date(Date.parse(now) + chatRequests * 1000).toISOString();
+
+    return {
+      id: chatId,
+      title: "미리보기 안정성 테스트",
+      intent: "conversation",
+      domain: "general",
+      worker: {
+        id: "worker-preview-refresh",
+        skillId: "general",
+        domain: "general",
+        displayName: "General",
+        agentId,
+        reason: "test",
+        status: "ready",
+        createdAt: now,
+        updatedAt,
+      },
+      attachments: [
+        {
+          id: "attachment-source",
+          name: "source.md",
+          contentType: "text/markdown",
+          size: 20,
+          workspacePath: "uploads/rocky/source.md",
+          addedAt: now,
+        },
+      ],
+      messages: [
+        {
+          id: "message-user",
+          chatId,
+          role: "user",
+          intent: "conversation",
+          text: "파일을 보고 답변해줘",
+          attachmentIds: ["attachment-source"],
+          domain: "general",
+          workerId: "worker-preview-refresh",
+          skillCandidateIds: [],
+          usedSkills: [],
+          dispatchId: null,
+          createdAt: now,
+        },
+        {
+          id: "message-rocky",
+          chatId,
+          role: "rocky",
+          intent: "conversation",
+          text: "",
+          attachmentIds: [],
+          domain: "general",
+          workerId: "worker-preview-refresh",
+          skillCandidateIds: [],
+          usedSkills: [],
+          dispatchId: "dispatch-preview-refresh",
+          createdAt: now,
+        },
+      ],
+      skillCandidates: [],
+      dispatches: [
+        {
+          id: "dispatch-preview-refresh",
+          chatId,
+          messageId: "message-user",
+          skillId: "general",
+          intent: "conversation",
+          domain: "general",
+          workerId: "worker-preview-refresh",
+          attachmentIds: ["attachment-source"],
+          originalRequest: "파일을 보고 답변해줘",
+          skillCandidateIds: [],
+          protectionHints: [],
+          orchestration: {
+            id: "orchestration-preview-refresh",
+            status: "running",
+            agentId,
+            sessionId,
+            runId: null,
+            output: null,
+            error: null,
+            startedAt: now,
+            endedAt: null,
+            updatedAt,
+          },
+          executionStarted: true,
+          createdAt: now,
+        },
+      ],
+      orchestration: null,
+      executionStarted: true,
+      createdAt: now,
+      updatedAt,
+    };
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(runningChat()),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "Preview Refresh Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/preview-refresh-agent",
+        runtimeHome: "/tmp/preview-refresh-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace/file?**`, async (route) => {
+    previewRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/preview-refresh-agent",
+        path: "uploads/rocky/source.md",
+        name: "source.md",
+        contentType: "text/markdown",
+        size: 20,
+        updatedAt: now,
+        previewKind: "markdown",
+        text: "stable preview body",
+        lineCount: 1,
+        truncated: false,
+        downloadUrl: `/agents/${agentId}/workspace/file/content?path=uploads%2Frocky%2Fsource.md`,
+        inlinePreviewUrl: null,
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("Input / Output").first()).toBeVisible();
+  await expect(page.getByText("stable preview body")).toBeVisible();
+  expect(previewRequests).toBe(1);
+
+  await page.waitForTimeout(3600);
+  expect(previewRequests).toBe(1);
+});
+
+test("conversation file clicks select the Input Output preview panel", async ({ page }) => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const chatId = "io-panel-click-test";
+  const agentId = "agent-io-panel-click";
+  const sessionId = "session-io-panel-click";
+  const runId = "run-io-panel-click";
+  const missingPreviewPaths: string[] = [];
+  const rockyOutput = "결과를 만들었습니다. 참고 [stray.md](drafts/stray.md)";
+
+  const chat = {
+    id: chatId,
+    title: "Input Output 클릭 테스트",
+    intent: "conversation",
+    domain: "general",
+    worker: {
+      id: "worker-io-panel-click",
+      skillId: "general",
+      domain: "general",
+      displayName: "General",
+      agentId,
+      reason: "test",
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    },
+    attachments: [
+      {
+        id: "attachment-source",
+        name: "source.md",
+        contentType: "text/markdown",
+        size: 20,
+        workspacePath: "uploads/rocky/source.md",
+        addedAt: now,
+      },
+    ],
+    messages: [
+      {
+        id: "message-user",
+        chatId,
+        role: "user",
+        intent: "conversation",
+        text: "source.md를 보고 output.md를 만들어줘",
+        attachmentIds: ["attachment-source"],
+        domain: "general",
+        workerId: "worker-io-panel-click",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: null,
+        createdAt: now,
+      },
+      {
+        id: "message-rocky",
+        chatId,
+        role: "rocky",
+        intent: "conversation",
+        text: rockyOutput,
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-io-panel-click",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: "dispatch-io-panel-click",
+        createdAt: now,
+      },
+    ],
+    skillCandidates: [],
+    dispatches: [
+      {
+        id: "dispatch-io-panel-click",
+        chatId,
+        messageId: "message-user",
+        skillId: "general",
+        intent: "conversation",
+        domain: "general",
+        workerId: "worker-io-panel-click",
+        attachmentIds: ["attachment-source"],
+        originalRequest: "source.md를 보고 output.md를 만들어줘",
+        skillCandidateIds: [],
+        protectionHints: [],
+        orchestration: {
+          id: "orchestration-io-panel-click",
+          status: "completed",
+          agentId,
+          sessionId,
+          runId,
+          output: rockyOutput,
+          error: null,
+          startedAt: now,
+          endedAt: now,
+          updatedAt: now,
+        },
+        executionStarted: true,
+        createdAt: now,
+      },
+    ],
+    orchestration: null,
+    executionStarted: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(chat),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: "transcript-output",
+          sessionId,
+          runId,
+          role: "assistant",
+          content: rockyOutput,
+          source: "codex",
+          createdAt: now,
+          artifacts: [
+            {
+              kind: "file",
+              role: "output",
+              name: "output.md",
+              workspaceRelativePath: "outputs/output.md",
+              contentType: "text/markdown",
+              presentation: "file",
+              size: 32,
+              previewable: true,
+              previewUrl: null,
+              downloadUrl: `/runs/${runId}/artifacts/output`,
+              preferredAction: "preview",
+            },
+          ],
+        },
+      ]),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "Input Output Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/io-panel-click-agent",
+        runtimeHome: "/tmp/io-panel-click-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace/file?**`, async (route) => {
+    const url = new URL(route.request().url());
+    const workspacePath = url.searchParams.get("path");
+    const previews: Record<string, string> = {
+      "outputs/output.md": "output preview body",
+      "uploads/rocky/source.md": "source preview body",
+    };
+    const text = workspacePath ? previews[workspacePath] : undefined;
+
+    if (!workspacePath || !text) {
+      if (workspacePath) {
+        missingPreviewPaths.push(workspacePath);
+      }
+      await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/io-panel-click-agent",
+        path: workspacePath,
+        name: workspacePath.split("/").at(-1),
+        contentType: "text/markdown",
+        size: text.length,
+        updatedAt: now,
+        previewKind: "markdown",
+        text,
+        lineCount: 1,
+        truncated: false,
+        downloadUrl: `/agents/${agentId}/workspace/file/content?path=${encodeURIComponent(
+          workspacePath
+        )}`,
+        inlinePreviewUrl: null,
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("Input / Output").first()).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /output\.md outputs\/output\.md/ })
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "output.md 파일" }).click();
+  await expect(page.getByText("output preview body")).toBeVisible();
+
+  await page.getByRole("button", { name: "source.md", exact: true }).click();
+  await expect(page.getByText("source preview body")).toBeVisible();
+
+  await page.getByRole("button", { name: "stray.md" }).click();
+  await expect(page.getByText("파일을 미리볼 수 없습니다.")).toBeVisible();
+  await expect(
+    page.getByText("이 파일은 현재 Input/Output 목록에 없어 미리볼 수 없습니다.")
+  ).toBeVisible();
+  expect(missingPreviewPaths).not.toContain("drafts/stray.md");
+});
+
 test("home starts Rocky work and task routes own the conversation", async ({
   page,
   request,

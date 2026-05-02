@@ -4,6 +4,18 @@ export type MdTemplateSource = "builtin" | "user";
 
 export type MdTemplateSkillSyncStatus = "local" | "syncing" | "synced" | "failed";
 
+export interface MdTemplateInputArtifact {
+  id: string;
+  runId: string;
+  fieldId: string;
+  fileName: string;
+  contentType: string | null;
+  size: number | null;
+  runtimePath: string;
+  skillPath?: string | null;
+  uploadedAt: string;
+}
+
 export interface MdTemplateOpenAiSkill {
   id: string;
   displayName: string;
@@ -26,6 +38,8 @@ export interface MdTemplateDefinition {
   triggerLabel: string;
   requiredInputs: string[];
   inputFiles?: string[];
+  inputArtifacts?: MdTemplateInputArtifact[];
+  sourceRunId?: string | null;
   outputFormatLabel: string;
   outputFiles?: string[];
   defaultInstructions: string;
@@ -43,6 +57,9 @@ export interface MdTemplateDraft {
   description: string;
   triggerLabel: string;
   requiredInputs: string[];
+  inputFiles?: string[];
+  inputArtifacts?: MdTemplateInputArtifact[];
+  sourceRunId?: string | null;
   outputFormatLabel: string;
   defaultInstructions: string;
 }

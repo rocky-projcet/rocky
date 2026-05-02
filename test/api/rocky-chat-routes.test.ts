@@ -841,6 +841,383 @@ test("rocky chat keeps task requests on Rocky Core", async () => {
   }
 });
 
+test("rocky chat routes agent detail requests through the selected agent", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const {
+    agents,
+    createSessionCalls,
+    runs,
+    sendTurnCalls,
+    server,
+    sessions,
+  } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "smart-factory",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "smart-factory",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "smart-factory",
+      name: "스마트팩토리 비서",
+      description: "제조 현장과 특허 리서치 요청을 처리합니다.",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const patentSkillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-document-1rhh6bd"
+  );
+  await mkdir(patentSkillRoot, { recursive: true });
+  await writeFile(
+    path.join(patentSkillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-document-1rhh6bd",
+      'description: "특허 리서치 업무를 정리합니다."',
+      "---",
+      "",
+      "# 특허 리서치",
+      "",
+    ].join("\n")
+  );
+  const packagedInputRoot = path.join(
+    patentSkillRoot,
+    "assets",
+    "inputs",
+    "datasets",
+    "upload-001"
+  );
+  await mkdir(packagedInputRoot, { recursive: true });
+  await writeFile(
+    path.join(packagedInputRoot, "prior-art.xlsx"),
+    "placeholder"
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "특허 준비하려고 하는데 뭐 부터 해야할까?",
+        agentId: "smart-factory",
+        skillId: "md-document-1rhh6bd",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const chat = response.json<RockyChatRecord>();
+    assert.equal(chat.worker?.displayName, "스마트팩토리 비서");
+    assert.equal(chat.worker?.skillId, "agent.smart-factory");
+    assert.equal(chat.worker?.agentId, "smart-factory");
+    assert.equal(chat.dispatches.length, 1);
+    assert.equal(chat.dispatches[0]?.skillId, "agent.smart-factory");
+    assert.equal(chat.dispatches[0]?.orchestration?.agentId, "smart-factory");
+    assert.equal(chat.dispatches[0]?.orchestration?.sessionId, "session-1");
+    assert.equal(chat.dispatches[0]?.orchestration?.runId, "run-1");
+    assert.equal(agents.length, 1);
+    assert.deepEqual(agents.map((agent) => agent.id), ["smart-factory"]);
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.agentId, "smart-factory");
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.agentId, "smart-factory");
+    assert.equal(createSessionCalls.length, 1);
+    assert.equal(createSessionCalls[0]?.agentId, "smart-factory");
+    assert.equal(createSessionCalls[0]?.runtimeKind, undefined);
+    assert.equal(sendTurnCalls.length, 1);
+    assert.equal(chat.messages[0]?.text, "특허 준비하려고 하는데 뭐 부터 해야할까?");
+    assert.doesNotMatch(chat.messages[0]?.text ?? "", /Rocky 스킬 실행|\$/u);
+    assert.deepEqual(chat.messages[1]?.usedSkills, [
+      {
+        id: "md-document-1rhh6bd",
+        displayName: "특허 리서치",
+      },
+    ]);
+    assert.match(
+      sendTurnCalls[0]?.prompt ?? "",
+      /^\$md-document-1rhh6bd\n\n특허 준비하려고 하는데 뭐 부터 해야할까\?/u
+    );
+    assert.doesNotMatch(
+      sendTurnCalls[0]?.prompt ?? "",
+      /Rocky 스킬 실행|호출명|목표/u
+    );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions[0] ?? "",
+      /"스마트팩토리 비서" agent/u
+    );
+    assert.doesNotMatch(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      /Rocky Core instructions|rocky\.core/u
+    );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      /answer only with this agent's installed skill display names/u
+    );
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      /rocky-used-skills/u
+    );
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${chat.dispatches[0]!.id}.md`;
+    const agentContext = await readFile(
+      path.join(workspaceRoot, contextPath),
+      "utf8"
+    );
+    assert.match(agentContext, /Execution mode: agent session/u);
+    assert.match(agentContext, /Agent ID: smart-factory/u);
+    assert.match(agentContext, /스킬 포함 파일:/u);
+    assert.match(agentContext, /prior-art\.xlsx \(스킬: 특허 리서치\)/u);
+    assert.doesNotMatch(agentContext, /assets\/inputs/u);
+
+    const followUp = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${chat.id}/messages`,
+      payload: {
+        message: "계속 같은 에이전트에서 이어서 답해줘.",
+      },
+    });
+    assert.equal(followUp.statusCode, 201);
+    const updated = followUp.json<RockyChatRecord>();
+    assert.equal(updated.worker?.agentId, "smart-factory");
+    assert.equal(updated.dispatches[1]?.skillId, "agent.smart-factory");
+    assert.equal(updated.dispatches[1]?.orchestration?.agentId, "smart-factory");
+    assert.equal(updated.dispatches[1]?.orchestration?.sessionId, "session-1");
+    assert.equal(updated.dispatches[1]?.orchestration?.runId, "run-2");
+    assert.equal(agents.length, 1);
+    assert.equal(sessions.length, 1);
+    assert.equal(runs.length, 2);
+    assert.equal(sendTurnCalls.length, 2);
+    assert.equal(sendTurnCalls[1]?.sessionId, "session-1");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat reports used agent skills without exposing internal ids", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const {
+    agents,
+    completedRunSummaries,
+    sendTurnCalls,
+    server,
+  } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      description: "블로그 글 작성을 돕습니다.",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const blogSkillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-content-0m8fbwf"
+  );
+  await mkdir(blogSkillRoot, { recursive: true });
+  await writeFile(
+    path.join(blogSkillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-content-0m8fbwf",
+      'description: "네이버 블로그 콘텐츠 초안을 작성합니다."',
+      "---",
+      "",
+      "# 블로그 · 네이버 블로그 콘텐츠",
+      "",
+    ].join("\n")
+  );
+  completedRunSummaries.push(
+    [
+      "오늘 작업 내용을 보내주시면 블로그 글 구조로 정리해드릴게요.",
+      "",
+      '<!-- rocky-used-skills: ["블로그 · 네이버 블로그 콘텐츠"] -->',
+    ].join("\n")
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "오늘 작업한거 블로그로 작성하려고 하는데 어떻게 하면 될까?",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const chat = refreshedResponse.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    assert.doesNotMatch(sendTurnCalls[0]?.prompt ?? "", /^\$/u);
+    assert.equal(
+      chat.messages[1]?.text,
+      "오늘 작업 내용을 보내주시면 블로그 글 구조로 정리해드릴게요."
+    );
+    assert.deepEqual(chat.messages[1]?.usedSkills, [
+      {
+        id: "md-content-0m8fbwf",
+        displayName: "블로그 · 네이버 블로그 콘텐츠",
+      },
+    ]);
+    assert.doesNotMatch(
+      chat.messages[1]?.text ?? "",
+      /rocky-used-skills|workspace-local|호출 ID|\$md-content|SKILL\.md|read-only|system/u
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat routes agent skill inventory questions through the selected agent", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const {
+    agents,
+    completedRunSummaries,
+    sendTurnCalls,
+    server,
+  } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      description: "블로그 글 작성을 돕습니다.",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const blogSkillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-content-0m8fbwf"
+  );
+  const emailSkillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-content-0obltu7"
+  );
+  await mkdir(blogSkillRoot, { recursive: true });
+  await mkdir(emailSkillRoot, { recursive: true });
+  await writeFile(
+    path.join(blogSkillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-content-0m8fbwf",
+      'description: "네이버 블로그 콘텐츠 초안을 작성합니다."',
+      "---",
+      "",
+      "# 블로그 · 네이버 블로그 콘텐츠",
+      "",
+    ].join("\n")
+  );
+  await writeFile(
+    path.join(emailSkillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-content-0obltu7",
+      'description: "외부 영업 이메일을 작성합니다."',
+      "---",
+      "",
+      "# 이메일 · 외부 영업·아웃리치 작성",
+      "",
+    ].join("\n")
+  );
+  completedRunSummaries.push(
+    [
+      "사용 가능한 스킬은 2개입니다.",
+      "",
+      "- 블로그 · 네이버 블로그 콘텐츠",
+      "- 이메일 · 외부 영업·아웃리치 작성",
+    ].join("\n")
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "사용할 수 있는 스킬 알려줘",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    assert.equal(created.dispatches.length, 1);
+    assert.equal(sendTurnCalls[0]?.prompt, "사용할 수 있는 스킬 알려줘");
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      /answer only with this agent's installed skill display names/u
+    );
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const chat = refreshedResponse.json<RockyChatRecord>();
+    assert.match(chat.messages[1]?.text ?? "", /사용 가능한 스킬은 2개입니다/u);
+    assert.match(
+      chat.messages[1]?.text ?? "",
+      /블로그 · 네이버 블로그 콘텐츠/u
+    );
+    assert.match(
+      chat.messages[1]?.text ?? "",
+      /이메일 · 외부 영업·아웃리치 작성/u
+    );
+    assert.doesNotMatch(
+      chat.messages[1]?.text ?? "",
+      /workspace-local|호출 ID|\$md-content|SKILL\.md|\.agents\/skills|read-only|system/u
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat starts a fresh Core session when the reusable session was deleted", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const {

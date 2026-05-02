@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDraft } from "@/domains/template/types";
+import type { MdTemplateInputArtifact } from "@/domains/template/types";
 import { SKILL_KIND_THEME } from "../lib/skill-kind-theme";
 import { SkillTemplateCard } from "../components/skill-template-card";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
@@ -13,6 +14,7 @@ import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { SkillWizard, type SkillWizardAnswers } from "../components/skill-wizard";
+import { agentEngineClient } from "@/shared/lib/api-client";
 import {
   LANGUAGE_OPTIONS,
   SKILL_TEMPLATES,
@@ -44,6 +46,7 @@ export function SkillNewPage() {
   const [chosen, setChosen] = useState<SkillTemplate | null>(
     initialKind ? SKILL_TEMPLATES[initialKind] : null,
   );
+  const templateRunIdRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingDraft, setPendingDraft] = useState<MdTemplateDraft | null>(null);
 
@@ -78,8 +81,32 @@ export function SkillNewPage() {
 
   function handleSubmit(answers: SkillWizardAnswers) {
     if (!chosen) return;
-    const draft = buildDraftFromAnswers(chosen, answers);
+    const draft = buildDraftFromAnswers(chosen, answers, {
+      sourceRunId: templateRunIdRef.current,
+    });
     setPendingDraft(draft);
+  }
+
+  async function handleUploadFile(input: {
+    fieldId: string;
+    file: File;
+  }): Promise<MdTemplateInputArtifact> {
+    if (!chosen) {
+      throw new Error("스킬 종류를 먼저 선택해주세요.");
+    }
+
+    if (!templateRunIdRef.current) {
+      const run = await agentEngineClient.createSkillTemplateRun({
+        templateKind: chosen.kind,
+      });
+      templateRunIdRef.current = run.id;
+    }
+
+    return agentEngineClient.uploadSkillTemplateRunFile({
+      runId: templateRunIdRef.current,
+      fieldId: input.fieldId,
+      file: input.file,
+    });
   }
 
   async function persistDraft(finalDraft: MdTemplateDraft) {
@@ -148,6 +175,7 @@ export function SkillNewPage() {
           template={chosen}
           onCancel={() => setChosen(null)}
           onSubmit={handleSubmit}
+          onUploadFile={handleUploadFile}
           finishLabel="검토하기"
         />
       )}
@@ -257,6 +285,20 @@ function lookupOptionLabel(template: SkillTemplate, fieldId: string, optionId: s
   return optionId;
 }
 
+function isInputArtifact(value: unknown): value is MdTemplateInputArtifact {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as MdTemplateInputArtifact).fileName === "string" &&
+    typeof (value as MdTemplateInputArtifact).runtimePath === "string"
+  );
+}
+
+function artifactLabel(value: MdTemplateInputArtifact & { role?: string }): string {
+  return value.role ? `${value.fileName} (${value.role})` : value.fileName;
+}
+
 function describeAnswer(template: SkillTemplate, fieldId: string, value: unknown): string {
   if (value == null) return "—";
   if (typeof value === "string") {
@@ -274,9 +316,12 @@ function describeAnswer(template: SkillTemplate, fieldId: string, value: unknown
         )
         .join(", ");
     }
-    return (value as { fileName: string; role?: string }[])
-      .map((entry) => (entry.role ? `${entry.fileName} (${entry.role})` : entry.fileName))
+    return (value as Array<MdTemplateInputArtifact & { role?: string }>)
+      .map(artifactLabel)
       .join(", ");
+  }
+  if (isInputArtifact(value)) {
+    return value.fileName;
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
@@ -368,20 +413,52 @@ function pickRequiredInputs(template: SkillTemplate, answers: SkillWizardAnswers
     for (const field of step.fields) {
       const raw = answers[field.id];
       if (raw == null) continue;
-      if (field.kind === "file-upload" && typeof raw === "string") {
-        inputs.push(`${field.label}: ${raw}`);
+      if (field.kind === "file-upload") {
+        const label = isInputArtifact(raw)
+          ? raw.fileName
+          : typeof raw === "string"
+            ? raw
+            : "";
+        if (label) {
+          inputs.push(`${field.label}: ${label}`);
+        }
       }
       if (field.kind === "file-with-role" && Array.isArray(raw)) {
-        for (const entry of raw as { fileName: string; role?: string }[]) {
+        for (const entry of raw as Array<MdTemplateInputArtifact & { role?: string }>) {
           inputs.push(entry.role ? `${entry.role}: ${entry.fileName}` : entry.fileName);
         }
       }
-      if (field.kind === "url-or-file" && typeof raw === "string" && raw.length > 0) {
-        inputs.push(`${field.label}: ${raw}`);
+      if (field.kind === "url-or-file") {
+        const label = isInputArtifact(raw)
+          ? raw.fileName
+          : typeof raw === "string"
+            ? raw
+            : "";
+        if (label) {
+          inputs.push(`${field.label}: ${label}`);
+        }
       }
     }
   }
   return inputs;
+}
+
+function collectInputArtifacts(answers: SkillWizardAnswers): MdTemplateInputArtifact[] {
+  const artifacts: MdTemplateInputArtifact[] = [];
+  for (const value of Object.values(answers)) {
+    if (isInputArtifact(value)) {
+      artifacts.push(value);
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (isInputArtifact(entry)) {
+          artifacts.push(entry);
+        }
+      }
+    }
+  }
+  return artifacts;
 }
 
 function pickInstructions(template: SkillTemplate, answers: SkillWizardAnswers): string {
@@ -409,6 +486,9 @@ function pickInstructions(template: SkillTemplate, answers: SkillWizardAnswers):
 function buildDraftFromAnswers(
   template: SkillTemplate,
   answers: SkillWizardAnswers,
+  options: {
+    sourceRunId?: string | null;
+  } = {},
 ): MdTemplateDraft {
   const title = pickTitle(template, answers);
   const triggerLabel = pickTriggerLabel(template);
@@ -416,6 +496,7 @@ function buildDraftFromAnswers(
   const outputFormatLabel = pickOutputFormatLabel(template, answers);
   const requiredInputs = pickRequiredInputs(template, answers);
   const defaultInstructions = pickInstructions(template, answers);
+  const inputArtifacts = collectInputArtifacts(answers);
 
   return {
     category: template.fallbackCategory,
@@ -423,6 +504,9 @@ function buildDraftFromAnswers(
     description,
     triggerLabel,
     requiredInputs,
+    inputFiles: inputArtifacts.map((artifact) => artifact.fileName),
+    inputArtifacts,
+    sourceRunId: options.sourceRunId ?? inputArtifacts[0]?.runId ?? null,
     outputFormatLabel,
     defaultInstructions,
   };

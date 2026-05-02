@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AgentRecord } from "./agent-types.js";
@@ -15,6 +15,11 @@ export interface AgentLocalSkillRecord {
   id: string;
   workspacePath: string;
   skillPath: string;
+  displayName: string;
+  description: string | null;
+  invocation: string;
+  runtimePath: string | null;
+  runtimeSkillPath: string | null;
 }
 
 export interface AgentLocalSkillDeleteResult {
@@ -98,6 +103,20 @@ function assertInsideWorkspace(workspaceRoot: string, targetPath: string): void 
   }
 }
 
+function assertInsideRuntimeHome(runtimeHome: string, targetPath: string): void {
+  const resolvedRuntimeHome = path.resolve(runtimeHome);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedRuntimeHome, resolvedTarget);
+
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw badRequest("Runtime skill path must stay inside the agent runtime home.");
+  }
+}
+
 function resolveSkillFilePath(skillDir: string, relativeFilePath: string): string {
   const normalized = relativeFilePath.trim();
   if (!normalized) {
@@ -115,11 +134,71 @@ function resolveSkillFilePath(skillDir: string, relativeFilePath: string): strin
   return path.join(skillDir, normalized);
 }
 
-function toRecord(agent: AgentRecord, skill: { name: string; skillPath: string }): AgentLocalSkillRecord {
+function resolveNativeCodexSkillDir(agent: AgentRecord, skillId: string): string {
+  return path.join(agent.runtimeHome, ".codex", "skills", skillId);
+}
+
+function resolveLegacyRuntimeSkillDir(agent: AgentRecord, skillId: string): string {
+  return path.join(agent.runtimeHome, "skills", skillId);
+}
+
+function parseSkillMetadata(content: string): {
+  displayName: string | null;
+  description: string | null;
+} {
+  const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/u);
+  const metadata: Record<string, string> = {};
+  if (frontmatterMatch) {
+    for (const line of frontmatterMatch[1]!.split(/\r?\n/u)) {
+      const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/u);
+      if (!match) {
+        continue;
+      }
+      const value = match[2]!.trim();
+      metadata[match[1]!] = value.replace(/^"(.*)"$/u, "$1").replace(/\\"/gu, '"');
+    }
+  }
+
+  const titleMatch = content.match(/^#\s+(.+)$/mu);
+
+  return {
+    displayName: titleMatch?.[1]?.trim() || metadata.name || null,
+    description: metadata.description || null,
+  };
+}
+
+async function readSkillMetadata(skillPath: string): Promise<{
+  displayName: string | null;
+  description: string | null;
+}> {
+  try {
+    return parseSkillMetadata(await readFile(skillPath, "utf8"));
+  } catch {
+    return {
+      displayName: null,
+      description: null,
+    };
+  }
+}
+
+async function toRecord(
+  agent: AgentRecord,
+  skill: { name: string; skillPath: string }
+): Promise<AgentLocalSkillRecord> {
+  const metadata = await readSkillMetadata(skill.skillPath);
+  const runtimeSkillDir = resolveNativeCodexSkillDir(agent, skill.name);
+  const runtimeSkillPath = path.join(runtimeSkillDir, "SKILL.md");
+  const hasRuntimeSkill = await exists(runtimeSkillPath);
+
   return {
     id: skill.name,
     workspacePath: path.relative(agent.workspaceRoot, skill.skillPath),
     skillPath: skill.skillPath,
+    displayName: metadata.displayName ?? skill.name,
+    description: metadata.description,
+    invocation: `$${skill.name}`,
+    runtimePath: hasRuntimeSkill ? path.relative(agent.runtimeHome, runtimeSkillDir) : null,
+    runtimeSkillPath: hasRuntimeSkill ? runtimeSkillPath : null,
   };
 }
 
@@ -127,7 +206,7 @@ export class AgentLocalSkillService {
   async listAgentLocalSkills(agent: AgentRecord): Promise<AgentLocalSkillRecord[]> {
     await ensureWorkspaceSkillBridge(agent.workspaceRoot);
     const skills = await listWorkspaceLocalSkills(agent.workspaceRoot);
-    return skills.map((skill) => toRecord(agent, skill));
+    return Promise.all(skills.map((skill) => toRecord(agent, skill)));
   }
 
   async deleteAgentLocalSkill(
@@ -144,12 +223,16 @@ export class AgentLocalSkillService {
     const scaffoldPaths = resolveWorkspaceScaffoldPaths(agent.workspaceRoot);
     const canonicalDir = path.join(scaffoldPaths.skillsDir, id);
     const legacyDir = path.join(scaffoldPaths.legacySkillsDir, id);
+    const runtimeDir = resolveNativeCodexSkillDir(agent, id);
+    const legacyRuntimeDir = resolveLegacyRuntimeSkillDir(agent, id);
     assertInsideWorkspace(agent.workspaceRoot, canonicalDir);
     assertInsideWorkspace(agent.workspaceRoot, legacyDir);
+    assertInsideRuntimeHome(agent.runtimeHome, runtimeDir);
+    assertInsideRuntimeHome(agent.runtimeHome, legacyRuntimeDir);
 
     await ensureWorkspaceSkillBridge(agent.workspaceRoot);
 
-    const candidateDirs = [...new Set([canonicalDir, legacyDir])];
+    const candidateDirs = [...new Set([canonicalDir, legacyDir, runtimeDir, legacyRuntimeDir])];
     const existingDirs: string[] = [];
     for (const candidateDir of candidateDirs) {
       if (await exists(candidateDir)) {
@@ -173,8 +256,19 @@ export class AgentLocalSkillService {
     return {
       id,
       deleted: true,
-      deletedPaths: existingDirs.map((entry) => path.relative(agent.workspaceRoot, entry)),
-      skills: bridge.skills.map((skill) => toRecord(agent, skill)),
+      deletedPaths: existingDirs.map((entry) => {
+        const relativeWorkspacePath = path.relative(agent.workspaceRoot, entry);
+        if (
+          relativeWorkspacePath &&
+          !relativeWorkspacePath.startsWith("..") &&
+          !path.isAbsolute(relativeWorkspacePath)
+        ) {
+          return relativeWorkspacePath;
+        }
+
+        return path.relative(agent.runtimeHome, entry);
+      }),
+      skills: await Promise.all(bridge.skills.map((skill) => toRecord(agent, skill))),
     };
   }
 
@@ -200,8 +294,12 @@ export class AgentLocalSkillService {
     const scaffoldPaths = resolveWorkspaceScaffoldPaths(agent.workspaceRoot);
     const skillDir = path.join(scaffoldPaths.skillsDir, id);
     const legacySkillDir = path.join(scaffoldPaths.legacySkillsDir, id);
+    const runtimeSkillDir = resolveNativeCodexSkillDir(agent, id);
+    const legacyRuntimeSkillDir = resolveLegacyRuntimeSkillDir(agent, id);
     assertInsideWorkspace(agent.workspaceRoot, skillDir);
     assertInsideWorkspace(agent.workspaceRoot, legacySkillDir);
+    assertInsideRuntimeHome(agent.runtimeHome, runtimeSkillDir);
+    assertInsideRuntimeHome(agent.runtimeHome, legacyRuntimeSkillDir);
     await ensureWorkspaceSkillBridge(agent.workspaceRoot);
 
     if (options.replace && await exists(skillDir)) {
@@ -212,6 +310,18 @@ export class AgentLocalSkillService {
     }
     if (options.replace && await exists(legacySkillDir)) {
       await rm(legacySkillDir, {
+        recursive: true,
+        force: false,
+      });
+    }
+    if (options.replace && await exists(runtimeSkillDir)) {
+      await rm(runtimeSkillDir, {
+        recursive: true,
+        force: false,
+      });
+    }
+    if (options.replace && await exists(legacyRuntimeSkillDir)) {
+      await rm(legacyRuntimeSkillDir, {
         recursive: true,
         force: false,
       });
@@ -254,6 +364,23 @@ export class AgentLocalSkillService {
         force: false,
       });
     }
+    if (await exists(legacyRuntimeSkillDir)) {
+      await rm(legacyRuntimeSkillDir, {
+        recursive: true,
+        force: false,
+      });
+    }
+
+    await rm(runtimeSkillDir, {
+      recursive: true,
+      force: true,
+    });
+    await mkdir(path.dirname(runtimeSkillDir), { recursive: true });
+    await cp(skillDir, runtimeSkillDir, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
 
     const bridge = await ensureWorkspaceSkillBridge(agent.workspaceRoot);
     const skill = bridge.skills.find((entry) => entry.name === id);
@@ -263,8 +390,8 @@ export class AgentLocalSkillService {
 
     return {
       id,
-      skill: toRecord(agent, skill),
-      skills: bridge.skills.map((entry) => toRecord(agent, entry)),
+      skill: await toRecord(agent, skill),
+      skills: await Promise.all(bridge.skills.map((entry) => toRecord(agent, entry))),
     };
   }
 }

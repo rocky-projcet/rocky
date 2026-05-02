@@ -1519,11 +1519,31 @@ test("buildRuntimePrompt carries sandbox ground truth and preserves the user req
   assert.match(runtimePrompt, /sandbox=workspace-write/);
   assert.match(
     runtimePrompt,
-    /Available skill scopes in this session are limited to workspace-local skills under `.agents\/skills\/` and the read-only system skills `openai-docs`, `skill-creator`, and `skill-installer`/
+    /User-facing agent skills are the agent's installed local skills only/
+  );
+  assert.match(
+    runtimePrompt,
+    /Read-only system skills may exist for platform support, but they are internal and must not be listed/
+  );
+  assert.match(
+    runtimePrompt,
+    /When asked to list available, installed, or equipped skills, report only the display names/
+  );
+  assert.match(
+    runtimePrompt,
+    /Do not expose internal skill identifiers, invocation strings, file paths/
   );
   assert.match(
     runtimePrompt,
     /In writable managed sessions, `.agents\/skills\/` is the allowed authoring directory for agent-local skills/
+  );
+  assert.match(
+    runtimePrompt,
+    /inspect the matching skill directory under `.agents\/skills\/`, read its `SKILL\.md`/
+  );
+  assert.match(
+    runtimePrompt,
+    /Generic file searches can skip hidden skill directories/
   );
   assert.match(
     runtimePrompt,
@@ -1614,6 +1634,14 @@ test("buildRuntimePrompt keeps read-only sessions inspection-first and evidence-
   assert.match(runtimePrompt, /<required_command_execution>/);
   assert.match(runtimePrompt, /mode=suggested/);
   assert.match(runtimePrompt, /suggested_command=ls -la/);
+  assert.match(
+    runtimePrompt,
+    /answer in the user-facing format requested instead of dumping raw directory metadata/
+  );
+  assert.doesNotMatch(
+    runtimePrompt,
+    /return the real stdout in a fenced text block before any extra commentary/
+  );
   assert.match(
     runtimePrompt,
     /Do not create, modify, shadow, or copy the read-only system skills `openai-docs`, `skill-creator`, or `skill-installer`/

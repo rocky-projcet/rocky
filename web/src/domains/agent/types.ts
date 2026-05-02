@@ -1,5 +1,7 @@
 export type {
   AgentCreateInput,
+  AgentLocalSkillFileInput,
+  AgentLocalSkillRecord,
   AgentRecord,
   AgentTaskCreateInput,
   AgentTaskRecord,

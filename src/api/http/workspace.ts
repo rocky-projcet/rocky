@@ -26,9 +26,11 @@ import {
   isPreviewAllowed,
 } from "../../runtime/runtime-artifact-metadata.js";
 import {
+  openFolder,
   openPowerPointFile,
   type NativeFileOpener,
   type NativeFileOpenRecord,
+  type NativeFolderOpener,
 } from "./native-open.js";
 import { contentDispositionHeader } from "./content-disposition.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
@@ -171,8 +173,10 @@ function isEnvLikeWorkspaceFile(filePath: string): boolean {
 }
 
 function isMarkdownPreview(filePath: string, contentType: string): boolean {
+  const extension = extensionForWorkspaceFile(filePath);
   return (
-    extensionForWorkspaceFile(filePath) === ".md" ||
+    extension === ".md" ||
+    extension === ".markdown" ||
     baseContentType(contentType) === "text/markdown"
   );
 }
@@ -347,6 +351,15 @@ export function workspaceFilePreviewPath(agentId: string, searchPath: string): s
 
 export function workspaceFileNativeOpenPath(agentId: string, searchPath: string): string {
   return `/agents/${encodeURIComponent(agentId)}/workspace/file/open-native?${workspaceQuery(searchPath)}`;
+}
+
+export function workspaceFolderNativeOpenPath(agentId: string, searchPath = ""): string {
+  const pathname = `/agents/${encodeURIComponent(agentId)}/workspace/open-native`;
+  if (!searchPath) {
+    return pathname;
+  }
+
+  return `${pathname}?${workspaceQuery(searchPath)}`;
 }
 
 async function readTextPreview(filePath: string): Promise<{
@@ -558,6 +571,79 @@ export async function openWorkspaceFileInPowerPoint(
   }
 
   return nativeFileOpener(absolutePath);
+}
+
+async function resolveWorkspaceNativeFolderTarget(
+  agent: AgentRecord,
+  requestedPath?: string | null
+): Promise<{
+  absolutePath: string;
+  relativePath: string;
+}> {
+  const resolved = ensureWorkspacePath(agent, requestedPath);
+
+  try {
+    const metadata = await stat(resolved.absolutePath);
+    if (metadata.isDirectory()) {
+      return resolved;
+    }
+
+    if (metadata.isFile()) {
+      const absolutePath = path.dirname(resolved.absolutePath);
+      return {
+        absolutePath,
+        relativePath: toWorkspaceRelativePath(agent.workspaceRoot, absolutePath),
+      };
+    }
+
+    throw badRequest(`Workspace path cannot be opened as a folder: ${resolved.relativePath || "."}`);
+  } catch (error) {
+    const filesystemError = error as NodeJS.ErrnoException;
+    if (filesystemError?.code !== "ENOENT") {
+      throw error;
+    }
+
+    if (!resolved.relativePath) {
+      throw notFound(`Unknown workspace path: ${requestedPath || "."}`);
+    }
+
+    const workspaceRoot = path.resolve(agent.workspaceRoot);
+    const workspacePrefix = `${workspaceRoot}${path.sep}`;
+    const parentPath = path.dirname(resolved.absolutePath);
+    if (
+      parentPath === resolved.absolutePath ||
+      (parentPath !== workspaceRoot && !parentPath.startsWith(workspacePrefix))
+    ) {
+      throw notFound(`Unknown workspace path: ${resolved.relativePath}`);
+    }
+
+    try {
+      const parentMetadata = await stat(parentPath);
+      if (!parentMetadata.isDirectory()) {
+        throw badRequest(`Workspace path parent is not a directory: ${resolved.relativePath}`);
+      }
+    } catch (parentError) {
+      const parentFilesystemError = parentError as NodeJS.ErrnoException;
+      if (parentFilesystemError?.code === "ENOENT") {
+        throw notFound(`Unknown workspace path: ${resolved.relativePath}`);
+      }
+      throw parentError;
+    }
+
+    return {
+      absolutePath: parentPath,
+      relativePath: toWorkspaceRelativePath(agent.workspaceRoot, parentPath),
+    };
+  }
+}
+
+export async function openWorkspaceFolder(
+  agent: AgentRecord,
+  requestedPath?: string | null,
+  nativeFolderOpener: NativeFolderOpener = openFolder
+): Promise<NativeFileOpenRecord> {
+  const target = await resolveWorkspaceNativeFolderTarget(agent, requestedPath);
+  return nativeFolderOpener(target.absolutePath);
 }
 
 export async function sendWorkspaceFilePreview(

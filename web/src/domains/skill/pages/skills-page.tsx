@@ -64,8 +64,12 @@ function NewSkillCard() {
 function SkillSummaryCard({ template }: { template: MdTemplateDefinition }) {
   const theme = skillKindTheme(template);
   const Icon = theme.Icon;
-  const fileCount = template.requiredInputs.length;
-  const firstFile = template.requiredInputs[0];
+  const attachedFiles = template.inputArtifacts ?? [];
+  const hasAttachedFiles = attachedFiles.length > 0;
+  const fileCount = hasAttachedFiles ? attachedFiles.length : template.requiredInputs.length;
+  const firstFile = hasAttachedFiles
+    ? attachedFiles[0]?.fileName
+    : template.requiredInputs[0];
   const outputFormat = template.outputFormatLabel || "자유 형식";
 
   return (
@@ -105,8 +109,17 @@ function SkillSummaryCard({ template }: { template: MdTemplateDefinition }) {
         {fileCount > 0 ? (
           <div className="flex items-center gap-1.5">
             <Paperclip className="size-3.5 text-muted-foreground" />
-            <dt className="text-[10px] uppercase tracking-wide">파일</dt>
-            <dd className="ml-auto truncate text-foreground" title={template.requiredInputs.join(", ")}>
+            <dt className="text-[10px] uppercase tracking-wide">
+              {hasAttachedFiles ? "첨부" : "입력"}
+            </dt>
+            <dd
+              className="ml-auto truncate text-foreground"
+              title={
+                hasAttachedFiles
+                  ? attachedFiles.map((file) => file.fileName).join(", ")
+                  : template.requiredInputs.join(", ")
+              }
+            >
               {fileCount === 1 ? firstFile : `${firstFile} 외 ${fileCount - 1}개`}
             </dd>
           </div>

@@ -1,22 +1,21 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Download, RefreshCw } from "lucide-react";
+import { Download, FolderOpen, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
 import { Button } from "@/shared/ui/button";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type { AgentWorkspaceFilePreviewRecord } from "@/shared/lib/agent-engine-client";
+import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
+import { XlsxWorkbookPreview } from "@/shared/components/xlsx-workbook-preview";
 
 const PPT_CONTENT_TYPE = "application/vnd.ms-powerpoint";
 const PPTX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-const TEXT_WORKSPACE_PREVIEW_KINDS = new Set([
-  "text",
-  "code",
-  "markdown",
-  "html",
-]);
-
+const XLSX_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 function baseContentType(value: string): string {
   return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -33,6 +32,13 @@ function isPowerPointFile(name: string, contentType: string): boolean {
   );
 }
 
+function isXlsxFile(name: string, contentType: string): boolean {
+  const normalizedType = baseContentType(contentType);
+  const normalizedName = name.toLowerCase();
+
+  return normalizedType === XLSX_CONTENT_TYPE || normalizedName.endsWith(".xlsx");
+}
+
 function WorkspaceFilePreviewBody({
   record,
 }: {
@@ -42,6 +48,10 @@ function WorkspaceFilePreviewBody({
     ? agentEngineClient.resolveApiPath(record.inlinePreviewUrl)
     : null;
   const downloadHref = agentEngineClient.resolveApiPath(record.downloadUrl);
+
+  if (isXlsxFile(record.name, record.contentType)) {
+    return <XlsxWorkbookPreview sourceHref={downloadHref} />;
+  }
 
   if (isPowerPointFile(record.name, record.contentType)) {
     return (
@@ -57,11 +67,32 @@ function WorkspaceFilePreviewBody({
   }
 
   if (
-    TEXT_WORKSPACE_PREVIEW_KINDS.has(record.previewKind) &&
+    record.previewKind === "html" &&
     typeof record.text === "string"
   ) {
     return (
-      <pre className="min-h-full whitespace-pre-wrap break-words p-6 font-mono text-sm leading-6 text-foreground">
+      <iframe
+        title={`${record.name} HTML 미리보기`}
+        srcDoc={record.text}
+        sandbox=""
+        className="h-full w-full border-0 bg-white"
+      />
+    );
+  }
+
+  if (
+    record.previewKind === "markdown" &&
+    typeof record.text === "string"
+  ) {
+    return <MarkdownDocumentPreview markdown={record.text} />;
+  }
+
+  if (
+    (record.previewKind === "text" || record.previewKind === "code") &&
+    typeof record.text === "string"
+  ) {
+    return (
+      <pre className="custom-scrollbar h-full whitespace-pre-wrap break-words overflow-auto p-6 font-mono text-sm leading-6 text-foreground">
         {record.text || "빈 파일입니다."}
       </pre>
     );
@@ -118,6 +149,7 @@ export function WorkspaceFilePreviewPage() {
   const [searchParams] = useSearchParams();
   const agentId = searchParams.get("agentId")?.trim() ?? "";
   const searchPath = searchParams.get("path")?.trim() ?? "";
+  const [folderOpenPending, setFolderOpenPending] = useState(false);
   const previewQuery = useQuery({
     queryKey: ["workspace-file-preview-page", agentId, searchPath],
     queryFn: () => agentEngineClient.getAgentWorkspaceFilePreview(agentId, searchPath),
@@ -129,6 +161,27 @@ export function WorkspaceFilePreviewPage() {
     : agentId && searchPath
       ? agentEngineClient.agentWorkspaceFileDownloadUrl(agentId, searchPath)
       : null;
+
+  function openActualFolder() {
+    if (!agentId || !searchPath || folderOpenPending) {
+      return;
+    }
+
+    setFolderOpenPending(true);
+    agentEngineClient
+      .openNativeFile(
+        agentEngineClient.agentWorkspaceFolderNativeOpenPath(agentId, searchPath)
+      )
+      .then(() => {
+        toast.success("파일이 있는 실제 폴더를 열었습니다.");
+      })
+      .catch((error: unknown) => {
+        toast.error("실제 폴더를 열지 못했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      })
+      .finally(() => setFolderOpenPending(false));
+  }
 
   return (
     <div className="flex h-svh min-h-0 flex-col bg-background">
@@ -170,6 +223,17 @@ export function WorkspaceFilePreviewPage() {
               <Download className="size-4" />
             </Button>
           ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="실제 폴더 열기"
+            title="실제 폴더 열기"
+            disabled={!agentId || !searchPath || folderOpenPending}
+            onClick={openActualFolder}
+          >
+            <FolderOpen className="size-4" />
+          </Button>
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-hidden">

@@ -71,10 +71,10 @@ function categoryTone(category: MdTemplateCategory): string {
 }
 
 function skillStatusLabel(status: MdTemplateSkillSyncStatus): string {
-  if (status === "synced") return "실행 준비됨";
+  if (status === "synced") return "레거시 동기화됨";
   if (status === "syncing") return "저장 중";
   if (status === "failed") return "확인 필요";
-  return "로컬 저장";
+  return "장착 대기";
 }
 
 function skillStatusTone(status: MdTemplateSkillSyncStatus): string {
@@ -613,7 +613,7 @@ export function TemplateBuilderPage() {
                   ) : (
                     <Save className="size-4" />
                   )}
-                  저장하고 실행 준비
+                  스킬 저장
                 </Button>
               ) : null}
             </div>
@@ -629,10 +629,10 @@ export function TemplateBuilderPage() {
                 1. 이 화면에서 만든 초안을 Rocky가 실행할 업무 기준으로 저장합니다.
               </li>
               <li className="rounded-lg bg-background px-3 py-2">
-                2. 홈에서 저장한 스킬 카드를 누릅니다.
+                2. 에이전트 화면에서 저장한 스킬을 장착합니다.
               </li>
               <li className="rounded-lg bg-background px-3 py-2">
-                3. Rocky가 Skill 기준으로 파일, 누락값, 결과물 조건을 확인합니다.
+                3. 장착 시 해당 에이전트 workspace와 runtime home에 Codex Skill 파일이 생성됩니다.
               </li>
             </ol>
           </div>

@@ -4,7 +4,6 @@ import { Search } from "lucide-react";
 
 import { Input } from "@/shared/ui/input";
 import { AccountPopover } from "@/domains/codex/components/account-popover";
-import { useProviderAccountsQuery } from "@/domains/codex/hooks";
 import { cn } from "@/shared/lib/utils";
 import { HeaderBreadcrumb, isNestedRoute } from "./header-breadcrumb";
 
@@ -44,11 +43,7 @@ function HeaderSearch() {
 }
 
 export function SiteHeader({ className }: { className?: string }) {
-  const accountQuery = useProviderAccountsQuery();
   const location = useLocation();
-  const isAuthenticated =
-    accountQuery.data?.providers.some((provider) => provider.status === "authenticated") ??
-    false;
   const showBreadcrumb = isNestedRoute(location.pathname);
 
   return (
@@ -60,7 +55,7 @@ export function SiteHeader({ className }: { className?: string }) {
     >
       {showBreadcrumb ? <HeaderBreadcrumb /> : <HeaderSearch />}
       <div className="ml-auto flex items-center gap-2">
-        {isAuthenticated ? <AccountPopover /> : null}
+        <AccountPopover />
       </div>
     </header>
   );

@@ -5,6 +5,8 @@ import { toast } from "sonner";
 
 import { agentEngineClient } from "@/shared/lib/api-client";
 import { useMdTemplates } from "@/domains/template/hooks";
+import { ensureTemplateSkillDefinition } from "@/domains/template/lib/md-template-definitions";
+import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime-template-files";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import type { MdTemplateDefinition } from "@/domains/template/types";
 import { useCreateAgentMutation } from "../hooks";
@@ -80,19 +82,39 @@ export function AgentNewPage() {
         }
       }
 
-      if (selectedSkillIds.length > 0) {
-        const key = "rocky.agent-skills.v1";
+      let attachedSkillCount = 0;
+      const selectedSkills = userTemplates.filter((skill) =>
+        selectedSkillIds.includes(skill.id),
+      );
+      if (selectedSkills.length > 0) {
         try {
-          const raw = window.localStorage.getItem(key);
-          const map = raw ? JSON.parse(raw) : {};
-          map[created.id] = selectedSkillIds;
-          window.localStorage.setItem(key, JSON.stringify(map));
-        } catch {
-          /* ignore storage errors */
+          await Promise.all(
+            selectedSkills.map(async (skill) => {
+              const normalized = ensureTemplateSkillDefinition(skill);
+              return agentEngineClient.upsertAgentLocalSkill(
+                created.id,
+                normalized.skill.id,
+                {
+                  replace: true,
+                  files: await resolveTemplateSkillInstallFiles(normalized),
+                },
+              );
+            }),
+          );
+          attachedSkillCount = selectedSkills.length;
+        } catch (error) {
+          toast.warning("에이전트는 만들었지만 일부 스킬을 장착하지 못했습니다.", {
+            description: error instanceof Error ? error.message : undefined,
+          });
         }
       }
 
-      toast.success("에이전트를 만들었습니다.", { description: created.name });
+      toast.success("에이전트를 만들었습니다.", {
+        description:
+          attachedSkillCount > 0
+            ? `${created.name}에 스킬 ${attachedSkillCount}개를 장착했습니다.`
+            : created.name,
+      });
       navigate(`/agents/${encodeURIComponent(created.id)}`, { replace: true });
     } catch (error) {
       toast.error("에이전트를 만들지 못했습니다.", {

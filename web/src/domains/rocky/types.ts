@@ -17,6 +17,7 @@ export type {
   RockyOrchestrationStatus,
   RockyRoutingIntent,
   RockySkillCandidateRecord,
+  RockyUsedSkillRecord,
   RockyTemplateCategory,
   RockyTemplateDraft,
   RockyTemplateInterviewAgentRecord,

@@ -11,7 +11,7 @@ import type {
   RockySkillCandidateRecord,
 } from "./rocky-chat-types.js";
 
-export type RockySkillMode = "core";
+export type RockySkillMode = "core" | "agent";
 
 export interface RockySkillAgentDefinition {
   id: string;

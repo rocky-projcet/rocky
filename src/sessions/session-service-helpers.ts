@@ -445,11 +445,18 @@ export function buildRuntimeSystemPrompt(
     `sandbox=${sandbox}`,
     "</runtime_policy>",
     "<skill_policy>",
-    "- Available skill scopes in this session are limited to workspace-local skills under `.agents/skills/` and the read-only system skills `openai-docs`, `skill-creator`, and `skill-installer`.",
+    "- User-facing agent skills are the agent's installed local skills only.",
+    "- Read-only system skills may exist for platform support, but they are internal and must not be listed, described, or categorized in user-facing skill inventory answers.",
     "- In writable managed sessions, `.agents/skills/` is the allowed authoring directory for agent-local skills.",
-    "- Repository-root developer skills from parent directories are unavailable in this agent session. Do not list or use them.",
+    "- Repository-root developer skills from parent directories are unavailable in this agent session. Do not list, mention, or use them in user-facing skill inventory answers.",
     "- Do not create, modify, shadow, or copy the read-only system skills `openai-docs`, `skill-creator`, or `skill-installer`.",
-    "- When asked to list available skills, report only workspace-local skills and the three read-only system skills above.",
+    "- When applying an installed user-facing skill, inspect the matching skill directory under `.agents/skills/`, read its `SKILL.md`, and inspect packaged files in that skill directory before asking the user to upload missing inputs.",
+    "- Generic file searches can skip hidden skill directories, so explicitly inspect `.agents/skills/` when a needed input may be bundled with an installed skill.",
+    "- When asked for uploaded, available, current, or listed files, distinguish newly attached files from packaged files included with installed skills; include packaged input filenames from the turn context when present.",
+    "- Do not answer that no usable files exist only because attachment metadata is empty; skill-packaged input files in the turn context are already available inputs.",
+    "- When asked to list available, installed, or equipped skills, report only the display names of the agent's installed local skills. If none exist, say that no skills are installed for this agent.",
+    "- Do not expose internal skill identifiers, invocation strings, file paths, or storage categories in user-facing answers.",
+    "- Never use the literal phrases `workspace-local`, `호출 ID`, `SKILL.md`, `.agents/skills`, `system`, or `read-only` in user-facing skill inventory answers.",
     "</skill_policy>",
     ...(shellExecutionHint
       ? [
@@ -463,8 +470,15 @@ export function buildRuntimeSystemPrompt(
           : []),
         "- You must use a command_execution step before the final answer for this request.",
         "- If no command_execution step occurs, reply exactly COMMAND_NOT_RUN.",
-        "- If the command succeeds, return the real stdout in a fenced text block before any extra commentary.",
-        "- If the command fails, report only the exact stderr and exit status produced by that command_execution step.",
+        ...(shellExecutionHint.mode === "exact"
+          ? [
+              "- If the command succeeds, return the real stdout in a fenced text block before any extra commentary.",
+              "- If the command fails, report only the exact stderr and exit status produced by that command_execution step.",
+            ]
+          : [
+              "- If the suggested command succeeds, use its stdout as evidence but answer in the user-facing format requested instead of dumping raw directory metadata.",
+              "- If the suggested command fails, report the exact stderr and exit status produced by that command_execution step.",
+            ]),
         "</required_command_execution>",
       ]
       : []),
@@ -531,6 +545,7 @@ function buildShellExecutionRules(
     return [
       "- Read-only shell inspection is allowed. Use the relevant read command and report the real stdout/stderr.",
       "- Prefer concrete inspection commands like pwd, ls -la, rg --files, and sed -n when they fit the request.",
+      "- For file-list requests, a root directory listing alone is incomplete when the turn context lists skill-packaged input files; include those filenames separately without exposing hidden storage paths.",
     ];
   }
 
@@ -540,6 +555,7 @@ function buildShellExecutionRules(
     "- If the user asks you to run a workspace script like python3 hello.py, execute that exact command and base the answer on the real stdout/stderr.",
     "- A previous shell failure does not prove the next command will fail. Attempt the requested command unless this turn's command_execution proves otherwise.",
     "- Prefer concrete inspection commands like pwd, ls -la, rg --files, and sed -n when they fit the request.",
+    "- For file-list requests, a root directory listing alone is incomplete when the turn context lists skill-packaged input files; include those filenames separately without exposing hidden storage paths.",
     "- Do not use apply_patch for simple file creation or edits unless you have already confirmed that the workspace is a compatible project checkout.",
   ];
 }

@@ -151,8 +151,12 @@ test("generated skill instructions list packaged input files", () => {
     /assets\/inputs\/datasets\/upload-001\/공구_CEO-OFFICE\.xlsx/u
   );
   assert.match(skillMarkdown, /already available inputs/u);
+  assert.match(skillMarkdown, /Create every final deliverable file under `outputs\/`/u);
+  assert.match(skillMarkdown, /first create an HTML source file in `outputs\/`/u);
   assert.match(prompt, /스킬에 묶인 파일/u);
   assert.match(prompt, /공구_CEO-OFFICE\.xlsx/u);
+  assert.match(prompt, /모든 최종 산출물 파일은 현재 workspace의 `outputs\/`/u);
+  assert.match(prompt, /HTML 원본을 만들고/u);
 });
 
 test("buildTemplateRunPrompt asks Rocky to guide the user step by step", () => {

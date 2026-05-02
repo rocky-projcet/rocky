@@ -241,14 +241,14 @@ export function useMdTemplates() {
       const now = new Date().toISOString();
       const nextTemplates = userTemplates.map((template) =>
         template.id === templateId
-          ? { ...template, ...patch, updatedAt: now }
+          ? ensureTemplateSkillDefinition({ ...template, ...patch, updatedAt: now })
           : template,
       );
       writeUserTemplates(nextTemplates);
       setUserTemplates(nextTemplates);
       const updated = nextTemplates.find((entry) => entry.id === templateId);
       if (updated) {
-        persistTemplateToRuntimeInBackground(ensureTemplateSkillDefinition(updated));
+        persistTemplateToRuntimeInBackground(updated);
       }
     },
     [userTemplates],

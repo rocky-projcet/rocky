@@ -52,10 +52,12 @@ test("skill template routes persist saved skills under the runtime state root", 
 
     const skillRoot = path.join(stateRoot, "skills", "template.data");
     await access(path.join(skillRoot, "skill.json"));
-    assert.match(
-      await readFile(path.join(skillRoot, "files", "SKILL.md"), "utf8"),
-      /Sales Analysis/u
+    const skillMarkdown = await readFile(
+      path.join(skillRoot, "files", "SKILL.md"),
+      "utf8"
     );
+    assert.match(skillMarkdown, /Sales Analysis/u);
+    assert.match(skillMarkdown, /Create every final deliverable file under `outputs\/`/u);
     assert.match(
       await readFile(path.join(skillRoot, "files", "agents", "openai.yaml"), "utf8"),
       /md-sales-analysis-123/u

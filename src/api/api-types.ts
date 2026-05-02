@@ -201,6 +201,15 @@ export interface AgentWorkspaceDirectoryRecord {
   entries: AgentWorkspaceEntryRecord[];
 }
 
+export interface AgentWorkspaceSearchRecord {
+  agentId: string;
+  workspaceRoot: string;
+  path: string;
+  query: string;
+  matches: AgentWorkspaceEntryRecord[];
+  truncated: boolean;
+}
+
 export interface AgentWorkspaceFilePreviewRecord {
   agentId: string;
   workspaceRoot: string;
@@ -215,6 +224,14 @@ export interface AgentWorkspaceFilePreviewRecord {
   truncated: boolean;
   downloadUrl: string;
   inlinePreviewUrl: string | null;
+}
+
+export interface AgentWorkspaceDeleteResult {
+  agentId: string;
+  path: string;
+  name: string;
+  kind: AgentWorkspaceEntryKind;
+  deleted: true;
 }
 
 export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {

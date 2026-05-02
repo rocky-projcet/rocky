@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 
 import { AgentManager } from "../../src/agents/agent-manager.js";
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
@@ -1829,6 +1829,8 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
 
   const notesDir = path.join(agent.workspaceRoot, "notes");
   const notePath = path.join(notesDir, "summary.md");
+  const rootFinderMetadataPath = path.join(agent.workspaceRoot, ".DS_Store");
+  const nestedFinderMetadataPath = path.join(notesDir, ".DS_Store");
   const envTemplatePath = path.join(agent.workspaceRoot, ".env.template");
   const htmlPath = path.join(agent.workspaceRoot, "report.html");
   const imagePath = path.join(agent.workspaceRoot, "diagram.png");
@@ -1846,6 +1848,8 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
   await mkdir(notesDir, { recursive: true });
   await mkdir(path.dirname(koreanPptxPath), { recursive: true });
   await writeFile(notePath, "# Summary\nline two\n", "utf8");
+  await writeFile(rootFinderMetadataPath, "finder metadata", "utf8");
+  await writeFile(nestedFinderMetadataPath, "nested finder metadata", "utf8");
   await writeFile(envTemplatePath, "OPENAI_API_KEY=\nMODEL=gpt-5.4\n", "utf8");
   await writeFile(htmlPath, "<!doctype html><title>Report</title><h1>Workspace</h1>", "utf8");
   await writeFile(imagePath, Buffer.from("fake-png-binary"), "utf8");
@@ -1911,6 +1915,7 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
     assert.equal(workspace.path, "");
     assert.equal(workspace.parentPath, null);
     assert.equal(workspace.workspaceRoot, agent.workspaceRoot);
+    assert.equal(workspace.entries.some((entry) => entry.name === ".DS_Store"), false);
     assert.ok(workspace.entries.some((entry) => entry.kind === "directory" && entry.name === "notes"));
     assert.ok(
       workspace.entries.some(
@@ -2252,6 +2257,77 @@ test("Agent engine server exposes agent workspace browsing and file preview APIs
       Buffer.from(await rangedVideoPreviewResponse.arrayBuffer()).toString("utf8"),
       "fake"
     );
+
+    const searchResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/search?query=summary`
+    );
+    assert.equal(searchResponse.status, 200);
+    const searchResult = (await searchResponse.json()) as {
+      matches: Array<{ kind: string; path: string }>;
+      truncated: boolean;
+    };
+    assert.equal(searchResult.truncated, false);
+    assert.deepEqual(searchResult.matches.map((entry) => ({
+      kind: entry.kind,
+      path: entry.path,
+    })), [
+      {
+        kind: "file",
+        path: "notes/summary.md",
+      },
+    ]);
+
+    const finderMetadataSearchResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace/search?query=DS_Store`
+    );
+    assert.equal(finderMetadataSearchResponse.status, 200);
+    const finderMetadataSearchResult = (await finderMetadataSearchResponse.json()) as {
+      matches: Array<{ name: string; path: string }>;
+    };
+    assert.deepEqual(finderMetadataSearchResult.matches, []);
+
+    const deleteFileResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace?path=${encodeURIComponent("notes/summary.md")}`,
+      {
+        method: "DELETE",
+      }
+    );
+    assert.equal(deleteFileResponse.status, 200);
+    assert.deepEqual(await deleteFileResponse.json(), {
+      agentId: agent.id,
+      path: "notes/summary.md",
+      name: "summary.md",
+      kind: "file",
+      deleted: true,
+    });
+    await assert.rejects(access(notePath));
+
+    const deleteFolderResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace?path=notes`,
+      {
+        method: "DELETE",
+      }
+    );
+    assert.equal(deleteFolderResponse.status, 200);
+    assert.deepEqual(await deleteFolderResponse.json(), {
+      agentId: agent.id,
+      path: "notes",
+      name: "notes",
+      kind: "directory",
+      deleted: true,
+    });
+    await assert.rejects(access(notesDir));
+
+    const deleteRootResponse = await fetch(
+      `${baseUrl}/agents/${agent.id}/workspace?path=.`,
+      {
+        method: "DELETE",
+      }
+    );
+    assert.equal(deleteRootResponse.status, 400);
+    assert.deepEqual(await deleteRootResponse.json(), {
+      error: "Workspace root cannot be deleted.",
+    });
 
     const escapedPathResponse = await fetch(
       `${baseUrl}/agents/${agent.id}/workspace?path=..%2F..`

@@ -1099,6 +1099,158 @@ test("rocky chat reports used agent skills without exposing internal ids", async
   }
 });
 
+test("rocky chat refreshes used skill names from renamed saved templates", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, server } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "sales-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "sales-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "sales-agent",
+      name: "매출 분석 에이전트",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const skillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-sales-123"
+  );
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-sales-123",
+      'description: "매출 분석 업무를 처리합니다."',
+      "---",
+      "",
+      "# 매출 분석",
+      "",
+    ].join("\n")
+  );
+
+  try {
+    const createdResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "지난달 매출 분석해줘",
+        agentId: "sales-agent",
+        skillId: "md-sales-123",
+      },
+    });
+    assert.equal(createdResponse.statusCode, 201);
+    const created = createdResponse.json<RockyChatRecord>();
+    assert.deepEqual(created.messages[1]?.usedSkills, [
+      {
+        id: "md-sales-123",
+        displayName: "매출 분석",
+      },
+    ]);
+
+    const renamedTemplate = {
+      id: "template.sales",
+      source: "user",
+      category: "data",
+      title: "매출 분석짱",
+      description: "매출 데이터를 분석해 보고서를 만듭니다.",
+      triggerLabel: "데이터 분석",
+      requiredInputs: ["매출 데이터"],
+      outputFormatLabel: "PDF 보고서",
+      defaultInstructions: "매출 지표와 추천 액션을 분리합니다.",
+      skill: {
+        id: "md-sales-123",
+        displayName: "매출 분석짱",
+        description: "Use when the user wants Rocky to run sales analysis.",
+        invocation: "$md-sales-123",
+        skillMarkdown: [
+          "---",
+          "name: md-sales-123",
+          'description: "Use when the user wants Rocky to run sales analysis."',
+          "---",
+          "",
+          "# 매출 분석짱",
+          "",
+          "## Output",
+          "- Preferred output: PDF 보고서",
+          "",
+          "## Quality Rules",
+          "매출 지표와 추천 액션을 분리합니다.",
+          "",
+        ].join("\n"),
+        openAiYaml: [
+          "interface:",
+          '  display_name: "매출 분석짱"',
+          '  short_description: "매출 데이터를 분석해 보고서를 만듭니다."',
+          '  default_prompt: "Use $md-sales-123 to run the sales analysis workflow."',
+          "",
+        ].join("\n"),
+        syncStatus: "local",
+        workspacePath: null,
+      },
+      sortOrder: 1,
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:01:00.000Z",
+    };
+    const renameResponse = await server.inject({
+      method: "PUT",
+      url: "/skills/template.sales",
+      payload: renamedTemplate,
+    });
+    assert.equal(renameResponse.statusCode, 200);
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+    assert.deepEqual(refreshed.messages[1]?.usedSkills, [
+      {
+        id: "md-sales-123",
+        displayName: "매출 분석짱",
+      },
+    ]);
+
+    const nextResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "이번달도 같은 방식으로 분석해줘",
+        agentId: "sales-agent",
+        skillId: "md-sales-123",
+      },
+    });
+    assert.equal(nextResponse.statusCode, 201);
+    const next = nextResponse.json<RockyChatRecord>();
+    assert.deepEqual(next.messages[1]?.usedSkills, [
+      {
+        id: "md-sales-123",
+        displayName: "매출 분석짱",
+      },
+    ]);
+    assert.match(
+      await readFile(path.join(skillRoot, "SKILL.md"), "utf8"),
+      /# 매출 분석짱/u
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat routes agent skill inventory questions through the selected agent", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const {

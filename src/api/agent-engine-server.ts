@@ -98,6 +98,7 @@ export function createAgentEngineServer(
       stateRoot: options.stateRoot,
       agentService,
       sessionService,
+      skillTemplateStore: options.skillTemplateStore,
       now: options.now,
       idGenerator: options.idGenerator,
     });

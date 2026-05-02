@@ -10,15 +10,20 @@ export async function resolveTemplateSkillInstallFiles(
   template: MdTemplateDefinition
 ): Promise<AgentLocalSkillFileInput[]> {
   const normalized = ensureTemplateSkillDefinition(template);
+  const generatedFiles = buildTemplateSkillFiles(normalized);
+  const generatedPaths = new Set(generatedFiles.map((file) => file.path));
 
   try {
     const files = await agentEngineClient.getSkillTemplateFiles(normalized.id);
     if (files.length > 0) {
-      return files;
+      return [
+        ...generatedFiles,
+        ...files.filter((file) => !generatedPaths.has(file.path)),
+      ];
     }
   } catch {
     // Local-only templates can still be installed from their generated files.
   }
 
-  return buildTemplateSkillFiles(normalized);
+  return generatedFiles;
 }

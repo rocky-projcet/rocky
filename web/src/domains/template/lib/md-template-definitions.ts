@@ -539,6 +539,43 @@ function formatPackagedInputArtifacts(
   ];
 }
 
+function requiresPdfOutput(value: string): boolean {
+  return value.toLowerCase().includes("pdf");
+}
+
+function formatOutputDirectoryRules(outputFormatLabel: string): string[] {
+  const rules = [
+    "## Output Directory Rules",
+    "- Create every final deliverable file under `outputs/` in the current workspace. Do not place final deliverables in the workspace root or other folders.",
+    "- Create `outputs/` before writing files, and verify the expected files exist there before the final response.",
+    "- In the final response, list each deliverable with its `outputs/...` path.",
+  ];
+
+  if (requiresPdfOutput(outputFormatLabel)) {
+    rules.push(
+      "- For PDF deliverables, first create an HTML source file in `outputs/`, then generate the PDF from that HTML source. Keep both files in `outputs/`."
+    );
+  }
+
+  return rules;
+}
+
+function formatRunPromptOutputRules(outputFormatLabel: string): string[] {
+  const rules = [
+    "산출물 저장 규칙:",
+    "- 모든 최종 산출물 파일은 현재 workspace의 `outputs/` 폴더에 생성합니다.",
+    "- 최종 답변에는 생성한 파일별 `outputs/...` 경로를 적습니다.",
+  ];
+
+  if (requiresPdfOutput(outputFormatLabel)) {
+    rules.push(
+      "- PDF 산출물은 먼저 `outputs/...html` HTML 원본을 만들고, 그 HTML에서 `outputs/...pdf`를 생성합니다."
+    );
+  }
+
+  return rules;
+}
+
 export function buildOpenAiSkillDefinition(input: {
   skillId: string;
   draft: MdTemplateDraft;
@@ -578,6 +615,8 @@ export function buildOpenAiSkillDefinition(input: {
     `- Preferred output: ${normalized.outputFormatLabel}`,
     "- When creating file-ready content, provide clear file names and table/slide/document structure.",
     "- If an actual export file cannot be created in the current environment, explain the blocker and provide the closest usable structured output.",
+    "",
+    ...formatOutputDirectoryRules(normalized.outputFormatLabel),
     "",
     "## Quality Rules",
     normalized.defaultInstructions,
@@ -803,6 +842,8 @@ export function buildTemplateRunPrompt(
     "",
     "템플릿 output 파일:",
     outputFiles,
+    "",
+    ...formatRunPromptOutputRules(normalized.outputFormatLabel),
     "",
     "진행 방식:",
     "1. 사용자가 이미 올린 파일과 메시지를 먼저 확인합니다.",

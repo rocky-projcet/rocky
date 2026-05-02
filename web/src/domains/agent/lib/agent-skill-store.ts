@@ -1,96 +1,50 @@
-import { useCallback, useEffect, useState } from "react";
+import { useMemo } from "react";
 
-const STORAGE_KEY = "rocky.agent-skills.v1";
-
-type AgentSkillMap = Record<string, string[]>;
-
-function isBrowserStorageAvailable(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
-}
-
-function readMap(): AgentSkillMap {
-  if (!isBrowserStorageAvailable()) return {};
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    const next: AgentSkillMap = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
-        next[key] = value;
-      }
-    }
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function writeMap(map: AgentSkillMap): void {
-  if (!isBrowserStorageAvailable()) return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-}
+import {
+  useAgentLocalSkillsQuery,
+  useDeleteAgentLocalSkillMutation,
+  useUpsertAgentLocalSkillMutation,
+} from "../hooks";
+import {
+  ensureTemplateSkillDefinition,
+} from "@/domains/template/lib/md-template-definitions";
+import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime-template-files";
+import type { MdTemplateDefinition } from "@/domains/template/types";
 
 export function useAgentSkills(agentId: string | undefined) {
-  const [map, setMap] = useState<AgentSkillMap>(readMap);
-
-  useEffect(() => {
-    function handleStorage(event: StorageEvent) {
-      if (event.key === STORAGE_KEY) {
-        setMap(readMap());
-      }
-    }
-
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
-
-  const skillIds = agentId ? map[agentId] ?? [] : [];
-
-  const setSkills = useCallback(
-    (nextSkillIds: string[]) => {
-      if (!agentId) return;
-      setMap((current) => {
-        const next = { ...current, [agentId]: nextSkillIds };
-        writeMap(next);
-        return next;
-      });
-    },
-    [agentId],
+  const skillsQuery = useAgentLocalSkillsQuery(agentId);
+  const upsertSkillMutation = useUpsertAgentLocalSkillMutation(agentId);
+  const deleteSkillMutation = useDeleteAgentLocalSkillMutation(agentId);
+  const skillRecords = skillsQuery.data ?? [];
+  const skillIds = useMemo(
+    () => skillRecords.map((skill) => skill.id),
+    [skillRecords],
   );
 
-  const attachSkill = useCallback(
-    (skillId: string) => {
-      if (!agentId) return;
-      setMap((current) => {
-        const existing = current[agentId] ?? [];
-        if (existing.includes(skillId)) return current;
-        const next = { ...current, [agentId]: [...existing, skillId] };
-        writeMap(next);
-        return next;
-      });
-    },
-    [agentId],
-  );
+  async function attachSkill(template: MdTemplateDefinition) {
+    const normalized = ensureTemplateSkillDefinition(template);
+    await upsertSkillMutation.mutateAsync({
+      skillId: normalized.skill.id,
+      replace: true,
+      files: await resolveTemplateSkillInstallFiles(normalized),
+    });
+  }
 
-  const detachSkill = useCallback(
-    (skillId: string) => {
-      if (!agentId) return;
-      setMap((current) => {
-        const existing = current[agentId] ?? [];
-        if (!existing.includes(skillId)) return current;
-        const next = { ...current, [agentId]: existing.filter((id) => id !== skillId) };
-        writeMap(next);
-        return next;
-      });
-    },
-    [agentId],
-  );
+  async function detachSkill(skillId: string) {
+    await deleteSkillMutation.mutateAsync(skillId);
+  }
 
-  return { skillIds, setSkills, attachSkill, detachSkill };
+  return {
+    attachSkill,
+    detachSkill,
+    isLoading: skillsQuery.isLoading,
+    isMutating: upsertSkillMutation.isPending || deleteSkillMutation.isPending,
+    skillIds,
+    skillRecords,
+  };
 }
 
-export function readAgentSkillIds(agentId: string): string[] {
-  return readMap()[agentId] ?? [];
+export function useAgentSkillCount(agentId: string | undefined): number {
+  const skillsQuery = useAgentLocalSkillsQuery(agentId);
+  return skillsQuery.data?.length ?? 0;
 }

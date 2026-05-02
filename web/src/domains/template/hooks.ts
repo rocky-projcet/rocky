@@ -1,15 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  buildTemplateSkillFiles,
   createUserTemplateRecord,
   ensureTemplateSkillDefinition,
-  markTemplateSkillSyncFailed,
-  markTemplateSkillSynced,
-  markTemplateSkillSyncing,
 } from "@/domains/template/lib/md-template-definitions";
 import type { MdTemplateDefinition, MdTemplateDraft } from "@/domains/template/types";
-import { ROCKY_CORE_AGENT_SPEC } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { agentEngineClient } from "@/shared/lib/api-client";
 
 const STORAGE_KEY = "rocky.md-templates.v1";
@@ -84,12 +79,26 @@ function writeUserTemplates(templates: MdTemplateDefinition[]): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
+function sortTemplates(templates: MdTemplateDefinition[]): MdTemplateDefinition[] {
+  return [...templates].sort((left, right) =>
+    (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "")
+  );
+}
 
-  return "스킬 파일을 동기화하지 못했습니다.";
+async function persistTemplateToRuntime(template: MdTemplateDefinition): Promise<void> {
+  await agentEngineClient.upsertSkillTemplate(template);
+}
+
+function persistTemplateToRuntimeInBackground(template: MdTemplateDefinition): void {
+  void persistTemplateToRuntime(template).catch(() => {
+    // Keep local state usable even if the backend is temporarily unavailable.
+  });
+}
+
+function deleteTemplateFromRuntimeInBackground(templateId: string): void {
+  void agentEngineClient.deleteSkillTemplate(templateId).catch(() => {
+    // Local deletion remains authoritative for this browser until the next sync.
+  });
 }
 
 export function useMdTemplates() {
@@ -97,6 +106,40 @@ export function useMdTemplates() {
     useState<MdTemplateDefinition[]>(readUserTemplates);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadRuntimeTemplates(): Promise<void> {
+      const localTemplates = readUserTemplates();
+      try {
+        const runtimeTemplates = (await agentEngineClient.listSkillTemplates())
+          .filter(isUserTemplate)
+          .map(ensureTemplateSkillDefinition);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (runtimeTemplates.length > 0) {
+          const sorted = sortTemplates(runtimeTemplates);
+          writeUserTemplates(sorted);
+          setUserTemplates(sorted);
+          return;
+        }
+
+        if (localTemplates.length > 0) {
+          await Promise.all(
+            localTemplates.map((template) =>
+              agentEngineClient.upsertSkillTemplate(ensureTemplateSkillDefinition(template))
+            )
+          );
+        }
+      } catch {
+        // Fall back to localStorage when the backend is unavailable during dev.
+      }
+    }
+
+    void loadRuntimeTemplates();
+
     const handleStorage = (event: StorageEvent) => {
       if (event.key === STORAGE_KEY) {
         setUserTemplates(readUserTemplates());
@@ -104,7 +147,10 @@ export function useMdTemplates() {
     };
 
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", handleStorage);
+    };
   }, []);
 
   const allTemplates = useMemo(() => userTemplates, [userTemplates]);
@@ -116,25 +162,6 @@ export function useMdTemplates() {
     () => userTemplates.filter((entry) => entry.archived === true),
     [userTemplates],
   );
-
-  const replaceTemplate = useCallback((template: MdTemplateDefinition) => {
-    setUserTemplates((current) => {
-      let replaced = false;
-      const nextTemplates = current.map((entry) => {
-        if (entry.id !== template.id) {
-          return entry;
-        }
-
-        replaced = true;
-        return template;
-      });
-      if (!replaced) {
-        nextTemplates.unshift(template);
-      }
-      writeUserTemplates(nextTemplates);
-      return nextTemplates;
-    });
-  }, []);
 
   const saveTemplate = useCallback(
     async (draft: MdTemplateDraft, editingTemplateId: string | null = null) => {
@@ -149,44 +176,19 @@ export function useMdTemplates() {
         id: generateTemplateId(),
         now,
       });
-      const nextTemplates = existing
+      const saved = await agentEngineClient.upsertSkillTemplate(nextTemplate);
+      const normalizedSaved = ensureTemplateSkillDefinition(saved);
+      const savedTemplates = existing
         ? userTemplates.map((template) =>
-            template.id === existing.id ? nextTemplate : template
+            template.id === existing.id ? normalizedSaved : template
           )
-        : [nextTemplate, ...userTemplates];
+        : [normalizedSaved, ...userTemplates];
 
-      writeUserTemplates(nextTemplates);
-      setUserTemplates(nextTemplates);
-
-      const syncingTemplate = markTemplateSkillSyncing(nextTemplate);
-      replaceTemplate(syncingTemplate);
-
-      try {
-        const result = await agentEngineClient.upsertAgentLocalSkill(
-          ROCKY_CORE_AGENT_SPEC.id,
-          syncingTemplate.skill.id,
-          {
-            replace: true,
-            files: buildTemplateSkillFiles(syncingTemplate),
-          }
-        );
-        const syncedTemplate = markTemplateSkillSynced({
-          template: syncingTemplate,
-          workspacePath: result.skill.workspacePath,
-          now: new Date().toISOString(),
-        });
-        replaceTemplate(syncedTemplate);
-        return syncedTemplate;
-      } catch (error) {
-        const failedTemplate = markTemplateSkillSyncFailed({
-          template: syncingTemplate,
-          message: errorMessage(error),
-        });
-        replaceTemplate(failedTemplate);
-        return failedTemplate;
-      }
+      writeUserTemplates(savedTemplates);
+      setUserTemplates(savedTemplates);
+      return normalizedSaved;
     },
-    [replaceTemplate, userTemplates]
+    [userTemplates]
   );
 
   const deleteTemplate = useCallback(
@@ -194,6 +196,7 @@ export function useMdTemplates() {
       const nextTemplates = userTemplates.filter((template) => template.id !== templateId);
       writeUserTemplates(nextTemplates);
       setUserTemplates(nextTemplates);
+      deleteTemplateFromRuntimeInBackground(templateId);
     },
     [userTemplates]
   );
@@ -206,6 +209,10 @@ export function useMdTemplates() {
       );
       writeUserTemplates(next);
       setUserTemplates(next);
+      const archived = next.find((entry) => entry.id === templateId);
+      if (archived) {
+        persistTemplateToRuntimeInBackground(archived);
+      }
     },
     [userTemplates],
   );
@@ -218,6 +225,10 @@ export function useMdTemplates() {
       );
       writeUserTemplates(next);
       setUserTemplates(next);
+      const restored = next.find((entry) => entry.id === templateId);
+      if (restored) {
+        persistTemplateToRuntimeInBackground(restored);
+      }
     },
     [userTemplates],
   );
@@ -235,6 +246,10 @@ export function useMdTemplates() {
       );
       writeUserTemplates(nextTemplates);
       setUserTemplates(nextTemplates);
+      const updated = nextTemplates.find((entry) => entry.id === templateId);
+      if (updated) {
+        persistTemplateToRuntimeInBackground(ensureTemplateSkillDefinition(updated));
+      }
     },
     [userTemplates],
   );

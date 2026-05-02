@@ -5,6 +5,7 @@ import {
   cp,
   mkdir,
   readdir,
+  readFile,
   writeFile,
 } from "node:fs/promises";
 
@@ -59,6 +60,9 @@ const RESERVED_SYSTEM_SKILL_NAMES = new Set([
 
 export interface WorkspaceLocalSkillRecord {
   name: string;
+  displayName: string;
+  description: string | null;
+  invocation: string;
   skillPath: string;
   relativeSkillPath: string;
 }
@@ -157,6 +161,45 @@ export function isReservedSystemSkillName(name: string): boolean {
   );
 }
 
+function parseSkillMetadata(content: string): {
+  displayName: string | null;
+  description: string | null;
+} {
+  const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/u);
+  const metadata: Record<string, string> = {};
+  if (frontmatterMatch) {
+    for (const line of frontmatterMatch[1]!.split(/\r?\n/u)) {
+      const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/u);
+      if (!match) {
+        continue;
+      }
+      const value = match[2]!.trim();
+      metadata[match[1]!] = value.replace(/^"(.*)"$/u, "$1").replace(/\\"/gu, '"');
+    }
+  }
+
+  const titleMatch = content.match(/^#\s+(.+)$/mu);
+
+  return {
+    displayName: titleMatch?.[1]?.trim() || metadata.name || null,
+    description: metadata.description || null,
+  };
+}
+
+async function readSkillMetadata(skillPath: string): Promise<{
+  displayName: string | null;
+  description: string | null;
+}> {
+  try {
+    return parseSkillMetadata(await readFile(skillPath, "utf8"));
+  } catch {
+    return {
+      displayName: null,
+      description: null,
+    };
+  }
+}
+
 async function listSkillsFromDir(
   workspaceRoot: string,
   skillsDir: string
@@ -181,9 +224,13 @@ async function listSkillsFromDir(
     if (!(await exists(skillPath))) {
       continue;
     }
+    const metadata = await readSkillMetadata(skillPath);
 
     records.push({
       name: entry.name,
+      displayName: metadata.displayName ?? entry.name,
+      description: metadata.description,
+      invocation: `$${entry.name}`,
       skillPath,
       relativeSkillPath: path.relative(workspaceRoot, skillPath),
     });
@@ -264,37 +311,33 @@ export function buildWorkspaceAgentsOverlay(
   const workspaceSkillLines = skills.length
     ? skills.map(
         (skill) =>
-          `- ${skill.name}: Agent-local workspace skill. (file: ${skill.skillPath})`
+          `- ${skill.displayName}: ${skill.description ?? "Agent-local skill."}`
       )
-    : ["- 아직 등록된 workspace-local skill이 없습니다."];
-  const systemSkillLines = READ_ONLY_SYSTEM_SKILLS.map(
-    (skill) => `- ${skill.name}: ${skill.description}`
-  );
-
+    : ["- 아직 등록된 스킬이 없습니다."];
   return [
     "# Workspace-local AGENTS overlay",
     "",
     "<INSTRUCTIONS>",
     "## Skills",
-    "이 세션에서는 workspace-local skill과 허용된 read-only system skill만 사용할 수 있습니다.",
+    "이 에이전트의 사용자-facing skill 목록은 아래 스킬만입니다.",
     "",
-    "### Available skills in this session",
-    "**Workspace-local**",
+    "### User-facing agent skills",
     ...workspaceSkillLines,
-    "",
-    "**System (read-only)**",
-    ...systemSkillLines,
-    "",
-    "### Unavailable skills",
-    "- Repository-root developer skills are unavailable in agent sessions. Do not list or use them.",
     "",
     "### How to use skills",
     "- Use workspace-local skills from this workspace first.",
-    "- Only the listed system skills may be read and used. Do not create, modify, shadow, or copy them.",
-    "- Repository-root developer skills from parent directories are development-only and unavailable in this agent session.",
+    "- When applying one of the skills above, inspect its directory under `.agents/skills`, read its `SKILL.md`, and inspect packaged files there before asking the user to upload missing inputs.",
+    "- Generic file searches may skip hidden skill directories; bundled skill files are still available inside the matching skill directory.",
+    "- When asked for uploaded, available, current, or listed files, distinguish newly attached files from packaged files included with installed skills.",
+    "- If the turn context lists packaged input files, include those filenames in file-list answers without exposing hidden storage paths.",
     `- Create or edit agent-local skills under \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}\` in this workspace.`,
-    "- When asked to list available skills, report only the workspace-local skills and the listed read-only system skills.",
-    "- Do not create or modify reserved system skill namespaces such as `.system`, `system`, `system-*`, `openai-docs`, `skill-creator`, or `skill-installer` from this session.",
+    "- When asked to list available, installed, or equipped skills, report only the skill display names above.",
+    "- If there are no skills above, say that no skills are installed for this agent.",
+    "- Do not expose internal skill identifiers, invocation strings, file paths, or storage categories in user-facing answers.",
+    "- Never use the literal phrases `workspace-local`, `호출 ID`, `SKILL.md`, `.agents/skills`, `system`, or `read-only` in user-facing skill inventory answers.",
+    "- Read-only system skills are internal platform support, not user-facing agent skills. Do not list, describe, or categorize them in user-facing skill inventory answers.",
+    "- Repository-root developer skills from parent directories are development-only and unavailable in this agent session. Do not list or use them.",
+    "- Do not create or modify reserved system skill namespaces from this session.",
     "- Keep agent-local skills inside this workspace and do not copy them into the server repository root developer skill set.",
     `- This overlay is generated from the current workspace root: \`${workspaceRoot}\`.`,
     "</INSTRUCTIONS>",

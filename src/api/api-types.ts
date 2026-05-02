@@ -24,6 +24,7 @@ import type {
   AgentTaskUpdateInput,
 } from "../tasks/task-types.js";
 import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
+import type { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type {
   RuntimeKind,
   RuntimeEvent,
@@ -228,6 +229,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   runtimeRegistry?: RuntimeRegistryLike;
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
+  skillTemplateStore?: SkillTemplateStore;
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
 }

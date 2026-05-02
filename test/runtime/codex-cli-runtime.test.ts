@@ -448,16 +448,9 @@ test("prepareCodexRuntimeEnvironment refreshes workspace-local AGENTS overlay an
   await access(path.join(workspaceRoot, ".agents", "skills"));
   const overlay = await readFile(path.join(workspaceRoot, "AGENTS.md"), "utf8");
   assert.match(overlay, /Workspace-local AGENTS overlay/);
-  assert.match(overlay, /impala-helper/);
-  assert.match(
-    overlay,
-    new RegExp(
-      path.join(workspaceRoot, ".agents", "skills", "impala-helper", "SKILL.md").replaceAll(
-        "\\",
-        "\\\\"
-      )
-    )
-  );
+  assert.match(overlay, /Impala Helper/);
+  assert.doesNotMatch(overlay, /\$impala-helper/u);
+  assert.doesNotMatch(overlay, /impala-helper\/SKILL\.md/u);
 });
 
 test("prepareCodexRuntimeEnvironment can share HOME while isolating XDG", async () => {

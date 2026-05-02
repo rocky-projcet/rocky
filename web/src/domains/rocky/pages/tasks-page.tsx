@@ -205,7 +205,12 @@ export function TasksPage() {
             <p className="mt-1 text-xs text-muted-foreground">
               내 에이전트 화면에서 작업을 시작하면 이곳에 쌓입니다.
             </p>
-            <Button className="mt-4" size="sm" render={<Link to="/agents" />}>
+            <Button
+              className="mt-4"
+              size="sm"
+              nativeButton={false}
+              render={<Link to="/agents" />}
+            >
               내 에이전트로 가기
             </Button>
           </div>
@@ -433,10 +438,10 @@ function TaskCard({
           </div>
 
           <Button
-            type="button"
             variant="outline"
             size="sm"
             className="shrink-0"
+            nativeButton={false}
             onClick={(event) => event.stopPropagation()}
             render={<Link to={taskHref} />}
           >

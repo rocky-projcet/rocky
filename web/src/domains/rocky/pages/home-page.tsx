@@ -19,6 +19,8 @@ import {
   FileText,
   LayoutTemplate,
   Paperclip,
+  PanelRightClose,
+  PanelRightOpen,
   PenLine,
   Presentation,
   Plus,
@@ -60,9 +62,16 @@ import {
 } from "@/shared/ui/dialog";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
 import { agentEngineClient } from "@/shared/lib/api-client";
-import type { AgentWorkspaceFilePreviewRecord } from "@/shared/lib/agent-engine-client";
+import type {
+  AgentWorkspaceEntryRecord,
+  AgentWorkspaceFilePreviewRecord,
+} from "@/shared/lib/agent-engine-client";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
+import {
+  parseXlsxPreview,
+  type XlsxPreviewSheet,
+} from "@/shared/lib/xlsx-preview";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
 import { useAgentQuery } from "@/domains/agent/hooks";
@@ -88,11 +97,20 @@ type RockyPreviewPanelSource = {
   contentType: string;
   detail: string;
   downloadHref: string;
-  kind: "html" | "powerpoint" | "pdf" | "image" | "markdown" | "text";
+  kind:
+    | "html"
+    | "powerpoint"
+    | "pdf"
+    | "image"
+    | "markdown"
+    | "text"
+    | "spreadsheet";
   name: string;
   nativeOpenPath: string | null;
   previewHref?: string | null;
 };
+
+type PreviewMode = "viewer" | "original";
 
 type TemplatePanelFileRole = "input" | "output";
 
@@ -129,6 +147,14 @@ const TEXT_WORKSPACE_PREVIEW_KINDS = new Set([
   "markdown",
   "html",
 ]);
+const IGNORED_PANEL_INPUT_FILE_NAMES = new Set([".DS_Store"]);
+const SAFE_WORKSPACE_SKILL_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+type SkillInputSource = {
+  agentId: string;
+  skillId: string;
+  skillDisplayName: string;
+};
 
 function formatFileSize(size: number): string {
   if (size < 1024) {
@@ -220,6 +246,17 @@ function isPowerPointFile(name: string, contentType: string): boolean {
     normalizedType === PPTX_CONTENT_TYPE ||
     normalizedName.endsWith(".ppt") ||
     normalizedName.endsWith(".pptx")
+  );
+}
+
+function isXlsxFile(name: string, contentType: string): boolean {
+  const normalizedType = baseContentType(contentType);
+  const normalizedName = name.toLowerCase();
+
+  return (
+    normalizedType ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    normalizedName.endsWith(".xlsx")
   );
 }
 
@@ -321,6 +358,18 @@ function buildArtifactPreviewPanelSource(
     };
   }
 
+  if (isXlsxFile(artifact.name, artifact.contentType)) {
+    return {
+      contentType: artifact.contentType,
+      detail,
+      downloadHref,
+      kind: "spreadsheet",
+      name: artifact.name,
+      nativeOpenPath: null,
+      previewHref: null,
+    };
+  }
+
   if (isPlainTextArtifact(artifact)) {
     return {
       contentType: artifact.contentType,
@@ -416,6 +465,52 @@ function templateFileKey(value: string): string {
   return normalizeTemplateFilePath(value).toLowerCase();
 }
 
+function panelFileDisplayDetail(file: TemplatePanelFile): string {
+  if (file.role === "input" && file.detail.startsWith("스킬: ")) {
+    return `스킬 포함 입력 · ${file.detail.slice("스킬: ".length)}`;
+  }
+
+  return file.detail;
+}
+
+function isUserOutputArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
+  const workspacePath = artifact.workspaceRelativePath
+    ? normalizeTemplateFilePath(artifact.workspaceRelativePath)
+    : "";
+
+  if (artifact.role === "output") {
+    return true;
+  }
+
+  if (workspacePath.startsWith("outputs/")) {
+    return true;
+  }
+
+  return (
+    !artifact.role.startsWith("workspace-") &&
+    artifact.role !== "output-last-message"
+  );
+}
+
+function mergePanelInputFiles(
+  context: TemplateFilePanelContext,
+  inputFiles: TemplatePanelFile[]
+): TemplateFilePanelContext {
+  if (inputFiles.length === 0) {
+    return context;
+  }
+
+  const inputMap = new Map(context.inputFiles.map((file) => [file.key, file]));
+  for (const file of inputFiles) {
+    inputMap.set(file.key, file);
+  }
+
+  return {
+    ...context,
+    inputFiles: [...inputMap.values()].sort(sortTemplateFilesByFreshness),
+  };
+}
+
 function latestCreatedAt(left: string, right: string): string {
   const leftTime = new Date(left).getTime();
   const rightTime = new Date(right).getTime();
@@ -431,6 +526,162 @@ function workspacePreviewPageHref(agentId: string, workspacePath: string): strin
   params.set("agentId", agentId);
   params.set("path", workspacePath);
   return `/workspace-preview?${params.toString()}`;
+}
+
+function buildWorkspacePreviewPanelSource(
+  input: {
+    agentId: string;
+    preview: AgentWorkspaceFilePreviewRecord;
+    workspacePath: string;
+  }
+): RockyPreviewPanelSource | null {
+  const { agentId, preview, workspacePath } = input;
+  const inlinePreviewHref = preview.inlinePreviewUrl
+    ? agentEngineClient.resolveApiPath(preview.inlinePreviewUrl)
+    : null;
+  const downloadHref = agentEngineClient.resolveApiPath(preview.downloadUrl);
+  const detail = `${preview.path} · ${preview.contentType}`;
+  const base = {
+    contentType: preview.contentType,
+    detail,
+    downloadHref,
+    name: preview.name,
+    previewHref: inlinePreviewHref,
+  };
+
+  if (preview.previewKind === "html") {
+    return {
+      ...base,
+      kind: "html",
+      nativeOpenPath: null,
+    };
+  }
+
+  if (isPowerPointFile(preview.name, preview.contentType)) {
+    return {
+      ...base,
+      kind: "powerpoint",
+      nativeOpenPath: agentEngineClient.agentWorkspaceFileNativeOpenPath(
+        agentId,
+        workspacePath
+      ),
+    };
+  }
+
+  if (isXlsxFile(preview.name, preview.contentType)) {
+    return {
+      ...base,
+      kind: "spreadsheet",
+      nativeOpenPath: null,
+      previewHref: null,
+    };
+  }
+
+  if (
+    baseContentType(preview.contentType) === "application/pdf" ||
+    preview.name.toLowerCase().endsWith(".pdf")
+  ) {
+    return {
+      ...base,
+      kind: "pdf",
+      nativeOpenPath: null,
+    };
+  }
+
+  if (preview.previewKind === "image") {
+    return {
+      ...base,
+      kind: "image",
+      nativeOpenPath: null,
+    };
+  }
+
+  if (preview.previewKind === "markdown") {
+    return {
+      ...base,
+      kind: "markdown",
+      nativeOpenPath: null,
+    };
+  }
+
+  if (preview.previewKind === "text" || preview.previewKind === "code") {
+    return {
+      ...base,
+      kind: "text",
+      nativeOpenPath: null,
+    };
+  }
+
+  return null;
+}
+
+async function listSkillInputDirectoryFiles(input: {
+  agentId: string;
+  searchPath: string;
+  skillDisplayName: string;
+}): Promise<TemplatePanelFile[]> {
+  let directory;
+  try {
+    directory = await agentEngineClient.listAgentWorkspace(
+      input.agentId,
+      input.searchPath
+    );
+  } catch {
+    return [];
+  }
+
+  const files: TemplatePanelFile[] = [];
+  const children = await Promise.all(
+    directory.entries.map(async (entry: AgentWorkspaceEntryRecord) => {
+      if (entry.kind === "directory") {
+        return listSkillInputDirectoryFiles({
+          ...input,
+          searchPath: entry.path,
+        });
+      }
+
+      if (IGNORED_PANEL_INPUT_FILE_NAMES.has(entry.name)) {
+        return [];
+      }
+
+      return [
+        {
+          key: `input:skill:${input.agentId}:${entry.path}`,
+          role: "input" as const,
+          name: entry.name,
+          detail: `스킬: ${input.skillDisplayName}`,
+          contentType: entry.contentType,
+          size: entry.size,
+          agentId: input.agentId,
+          workspacePath: entry.path,
+          artifact: null,
+          createdAt: entry.updatedAt,
+          expected: false,
+        },
+      ];
+    })
+  );
+
+  for (const group of children) {
+    files.push(...group);
+  }
+
+  return files.sort(sortTemplateFilesByFreshness);
+}
+
+async function listSkillPackagedInputFiles(
+  source: SkillInputSource
+): Promise<TemplatePanelFile[]> {
+  if (!SAFE_WORKSPACE_SKILL_ID_PATTERN.test(source.skillId)) {
+    return [];
+  }
+
+  const rootPath = `.agents/skills/${source.skillId}/assets/inputs`;
+  return listSkillInputDirectoryFiles({
+    agentId: source.agentId,
+    searchPath: rootPath,
+    skillDisplayName: source.skillDisplayName,
+  });
 }
 
 function inferTemplateOutputKind(value: string): TemplateOutputKind {
@@ -645,36 +896,21 @@ async function openRockyWorkspacePath(
     return;
   }
 
-  const popup = window.open("", "_blank");
+  const popup = onOpenPreviewPanel ? null : window.open("", "_blank");
 
   try {
     const preview = await agentEngineClient.getAgentWorkspaceFilePreview(
       agentId,
       normalizedPath
     );
-    const previewPanelKind =
-      preview.previewKind === "html"
-        ? "html"
-        : isPowerPointFile(preview.name, preview.contentType)
-          ? "powerpoint"
-          : null;
+    const previewPanelSource = buildWorkspacePreviewPanelSource({
+      agentId,
+      preview,
+      workspacePath: normalizedPath,
+    });
 
-    if (previewPanelKind && onOpenPreviewPanel) {
-      popup?.close();
-      onOpenPreviewPanel({
-        contentType: preview.contentType,
-        detail: `${preview.path} · ${preview.contentType}`,
-        downloadHref: agentEngineClient.resolveApiPath(preview.downloadUrl),
-        kind: previewPanelKind,
-        name: preview.name,
-        nativeOpenPath:
-          previewPanelKind === "powerpoint"
-            ? agentEngineClient.agentWorkspaceFileNativeOpenPath(agentId, normalizedPath)
-            : null,
-        previewHref: preview.inlinePreviewUrl
-          ? agentEngineClient.resolveApiPath(preview.inlinePreviewUrl)
-          : null,
-      });
+    if (previewPanelSource && onOpenPreviewPanel) {
+      onOpenPreviewPanel(previewPanelSource);
       return;
     }
 
@@ -854,8 +1090,6 @@ function findLatestPreviewableArtifact(
 ): AgentSessionArtifactManifestEntry | null {
   let bestOutput: AgentSessionArtifactManifestEntry | null = null;
   let bestOutputAt = "";
-  let bestInput: AgentSessionArtifactManifestEntry | null = null;
-  let bestInputAt = "";
 
   for (const dispatch of chat.dispatches) {
     const orchestration = dispatch.orchestration;
@@ -868,23 +1102,17 @@ function findLatestPreviewableArtifact(
       const messageUpdatedAt = message.createdAt ?? "";
 
       for (const artifact of artifacts) {
+        if (!isUserOutputArtifact(artifact)) continue;
         if (!buildArtifactPreviewPanelSource(artifact)) continue;
-        if (artifact.role === "output") {
-          if (messageUpdatedAt >= bestOutputAt) {
-            bestOutput = artifact;
-            bestOutputAt = messageUpdatedAt;
-          }
-        } else if (artifact.role === "input") {
-          if (messageUpdatedAt >= bestInputAt) {
-            bestInput = artifact;
-            bestInputAt = messageUpdatedAt;
-          }
+        if (messageUpdatedAt >= bestOutputAt) {
+          bestOutput = artifact;
+          bestOutputAt = messageUpdatedAt;
         }
       }
     }
   }
 
-  return bestOutput ?? bestInput;
+  return bestOutput;
 }
 
 function buildChatAttachmentPreviewSource(
@@ -1269,6 +1497,116 @@ function buildTemplateFilePanelContext(input: {
   };
 }
 
+function buildGeneralFilePanelContext(input: {
+  chat: RockyChatRecord | null;
+  packagedInputFiles: TemplatePanelFile[];
+  transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
+}): TemplateFilePanelContext | null {
+  if (!input.chat) {
+    return null;
+  }
+
+  const inputMap = new Map<string, TemplatePanelFile>();
+  const outputMap = new Map<string, TemplatePanelFile>();
+
+  for (const attachment of input.chat.attachments) {
+    const workspacePath = attachment.workspacePath
+      ? normalizeTemplateFilePath(attachment.workspacePath)
+      : null;
+    const key = `input:${workspacePath ?? attachment.id}`;
+    inputMap.set(key, {
+      key,
+      role: "input",
+      name: attachment.name,
+      detail: workspacePath ?? "업로드 원본",
+      contentType: attachment.contentType,
+      size: attachment.size,
+      agentId: input.chat.worker?.agentId ?? null,
+      workspacePath,
+      artifact: null,
+      createdAt: attachment.addedAt,
+      expected: false,
+    });
+  }
+
+  for (const file of input.packagedInputFiles) {
+    inputMap.set(file.key, file);
+  }
+
+  for (const dispatch of input.chat.dispatches) {
+    const orchestration = dispatch.orchestration;
+    if (!orchestration?.sessionId) {
+      continue;
+    }
+
+    const transcript = input.transcriptsBySessionId[orchestration.sessionId] ?? [];
+    const scopedMessages = transcript.filter(
+      (message) =>
+        message.role === "assistant" &&
+        (!orchestration.runId || message.runId === orchestration.runId)
+    );
+
+    for (const message of scopedMessages) {
+      const artifacts = splitTranscriptArtifacts(message.artifacts).visibleArtifacts;
+
+      for (const artifact of artifacts) {
+        if (!isUserOutputArtifact(artifact)) {
+          continue;
+        }
+
+        const workspacePath = artifact.workspaceRelativePath
+          ? normalizeTemplateFilePath(artifact.workspaceRelativePath)
+          : null;
+        const key = `output:${templateFileKey(workspacePath ?? artifact.role)}`;
+        const existing = outputMap.get(key);
+        const createdAt = message.createdAt ?? dispatch.createdAt;
+        outputMap.set(key, {
+          key,
+          role: "output",
+          name: existing?.name ?? artifact.name,
+          detail: workspacePath ?? artifact.role,
+          contentType: artifact.contentType,
+          size: artifact.size,
+          agentId: orchestration.agentId,
+          workspacePath,
+          artifact,
+          createdAt: existing
+            ? latestCreatedAt(existing.createdAt, createdAt)
+            : createdAt,
+          expected: false,
+        });
+      }
+    }
+  }
+
+  const inputFiles = [...inputMap.values()].sort(sortTemplateFilesByFreshness);
+  const outputFiles = [...outputMap.values()].sort(sortTemplateFilesByFreshness);
+
+  if (inputFiles.length === 0 && outputFiles.length === 0) {
+    return null;
+  }
+
+  const usedSkillNames = [
+    ...new Set(
+      input.chat.messages.flatMap((message) =>
+        message.usedSkills.map((skill) => skill.displayName)
+      )
+    ),
+  ];
+
+  return {
+    title: usedSkillNames.length > 0 ? usedSkillNames.join(", ") : input.chat.title,
+    outputFormatLabel: "Input / Output",
+    inputFiles,
+    outputFiles,
+    hasExplicitOutputFiles: false,
+    active: input.chat.dispatches.some((dispatch) => {
+      const status = dispatch.orchestration?.status;
+      return status === "running" || status === "planned";
+    }),
+  };
+}
+
 function resolveRockyMessageState(
   orchestration:
     | RockyChatRecord["dispatches"][number]["orchestration"]
@@ -1590,6 +1928,34 @@ function MessageAttachmentList({
   );
 }
 
+function UsedSkillBadges({
+  pending = false,
+  skills,
+}: {
+  pending?: boolean;
+  skills: RockyMessageRecord["usedSkills"];
+}) {
+  if (skills.length === 0) {
+    return null;
+  }
+
+  const label = pending ? "사용 중인 스킬" : "사용한 스킬";
+
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5">
+      {skills.map((skill) => (
+        <Badge
+          key={skill.id}
+          variant="outline"
+          className="h-6 rounded-md border-primary/25 bg-primary/5 px-2 text-[11px] text-foreground"
+        >
+          {label}: {skill.displayName}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 function MessageBubble({
   agentWorkspaceRootsByAgentId,
   chat,
@@ -1633,6 +1999,7 @@ function MessageBubble({
   const attachments = chat.attachments.filter((attachment) =>
     message.attachmentIds.includes(attachment.id)
   );
+  const usedSkills = isRocky ? message.usedSkills : [];
 
   if (isRocky && rockyMessageState.kind === "pending") {
     const runId = dispatch?.orchestration?.runId ?? null;
@@ -1669,6 +2036,7 @@ function MessageBubble({
           <div className="mt-1 text-xs leading-5 text-muted-foreground/80">
             현재 {progressLabel}
           </div>
+          <UsedSkillBadges pending skills={usedSkills} />
         </article>
       </div>
     );
@@ -1678,6 +2046,9 @@ function MessageBubble({
     !isRocky || rockyMessageState.kind === "pending"
       ? compactTemplateRunMessage(message.text)
       : rockyMessageState.text;
+  const userFacingArtifacts = rockyMessageState.artifacts.filter(
+    isUserOutputArtifact
+  );
   const bubbleTone =
     isRocky && rockyMessageState.kind === "error"
       ? "text-destructive"
@@ -1706,13 +2077,14 @@ function MessageBubble({
         )}
         style={isRocky ? replyBubbleStyle : undefined}
       >
+        {isRocky ? <UsedSkillBadges skills={usedSkills} /> : null}
         {isRocky ? (
           rockyMessageState.kind === "error" ? (
             <div className="whitespace-pre-wrap">{bubbleText}</div>
           ) : (
             <RockyMarkdownViewer
               agentId={agentId}
-              artifacts={rockyMessageState.artifacts}
+              artifacts={userFacingArtifacts}
               markdown={bubbleText}
               onOpenPreviewPanel={onOpenPreviewPanel}
               workspaceRoot={workspaceRoot}
@@ -1724,7 +2096,7 @@ function MessageBubble({
         <MessageAttachmentList attachments={attachments} isRocky={isRocky} />
         {isRocky ? (
           <RockyArtifactGrid
-            artifacts={rockyMessageState.artifacts}
+            artifacts={userFacingArtifacts}
             onOpenPreviewPanel={onOpenPreviewPanel}
           />
         ) : null}
@@ -2087,6 +2459,8 @@ function panelLabelFor(kind: RockyPreviewPanelSource["kind"]): string {
       return "마크다운";
     case "text":
       return "텍스트";
+    case "spreadsheet":
+      return "엑셀 뷰어";
   }
 }
 
@@ -2149,6 +2523,270 @@ function copyArtifactText(text: string, name: string): void {
     .catch(() => toast.error("복사에 실패했습니다."));
 }
 
+function PreviewModeToggle({
+  mode,
+  onModeChange,
+}: {
+  mode: PreviewMode;
+  onModeChange: (mode: PreviewMode) => void;
+}) {
+  return (
+    <div className="inline-flex h-8 shrink-0 rounded-lg border border-border bg-muted/50 p-0.5">
+      {(["viewer", "original"] as const).map((entry) => (
+        <button
+          key={entry}
+          type="button"
+          onClick={() => onModeChange(entry)}
+          className={cn(
+            "inline-flex min-w-14 items-center justify-center rounded-md px-2 text-xs font-semibold transition",
+            mode === entry
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {entry === "viewer" ? "Viewer" : "원본"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function canEmbedOriginalFile(contentType: string, name: string): boolean {
+  const normalizedType = baseContentType(contentType);
+  const normalizedName = name.toLowerCase();
+
+  return (
+    normalizedType === "application/pdf" ||
+    normalizedType.startsWith("image/") ||
+    normalizedType.startsWith("audio/") ||
+    normalizedType.startsWith("video/") ||
+    normalizedType === "text/html" ||
+    normalizedType.startsWith("text/") ||
+    normalizedName.endsWith(".pdf")
+  );
+}
+
+function OriginalFilePreview({
+  contentType,
+  downloadHref,
+  name,
+  openHref,
+}: {
+  contentType: string;
+  downloadHref: string | null;
+  name: string;
+  openHref: string | null;
+}) {
+  const href = openHref ?? downloadHref;
+
+  if (href && canEmbedOriginalFile(contentType, name)) {
+    if (baseContentType(contentType).startsWith("image/")) {
+      return (
+        <div className="flex min-h-full items-center justify-center bg-muted/40 p-3">
+          <img src={href} alt={name} className="max-h-full max-w-full object-contain" />
+        </div>
+      );
+    }
+
+    if (baseContentType(contentType).startsWith("audio/")) {
+      return (
+        <div className="flex min-h-full items-center justify-center bg-muted/40 p-4">
+          <audio controls src={href} className="w-full" />
+        </div>
+      );
+    }
+
+    if (baseContentType(contentType).startsWith("video/")) {
+      return (
+        <video controls src={href} className="h-full w-full bg-black object-contain" />
+      );
+    }
+
+    return (
+      <iframe
+        title={`${name} 원본`}
+        src={href}
+        className="h-full w-full border-0 bg-white"
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-full items-center justify-center px-5 text-center text-sm text-muted-foreground">
+      <div>
+        <div>이 형식은 브라우저 안에서 원본을 직접 표시하기 어렵습니다.</div>
+        <div className="mt-3 flex justify-center gap-2">
+          {href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
+            >
+              <ExternalLink className="size-4" />
+              새 창
+            </a>
+          ) : null}
+          {downloadHref ? (
+            <a
+              href={downloadHref}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
+            >
+              <Download className="size-4" />
+              다운로드
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function columnName(index: number): string {
+  let value = index + 1;
+  let label = "";
+
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    label = String.fromCharCode(65 + remainder) + label;
+    value = Math.floor((value - 1) / 26);
+  }
+
+  return label;
+}
+
+function SpreadsheetSheetTable({ sheet }: { sheet: XlsxPreviewSheet }) {
+  const visibleColumnCount = Math.min(
+    Math.max(sheet.columnCount, ...sheet.rows.map((row) => row.length), 1),
+    50
+  );
+
+  return (
+    <div className="h-full overflow-auto bg-white">
+      <table className="min-w-full border-separate border-spacing-0 text-xs">
+        <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
+          <tr>
+            <th className="sticky left-0 z-20 w-12 border-b border-r bg-muted px-2 py-2 text-right font-medium">
+              #
+            </th>
+            {Array.from({ length: visibleColumnCount }, (_, index) => (
+              <th
+                key={index}
+                className="min-w-28 border-b border-r px-2 py-2 text-left font-medium"
+              >
+                {columnName(index)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sheet.rows.map((row, rowIndex) => (
+            <tr key={rowIndex} className="odd:bg-background even:bg-muted/20">
+              <th className="sticky left-0 z-10 border-b border-r bg-inherit px-2 py-1.5 text-right font-medium text-muted-foreground">
+                {rowIndex + 1}
+              </th>
+              {Array.from({ length: visibleColumnCount }, (_, columnIndex) => (
+                <td
+                  key={columnIndex}
+                  className="max-w-56 truncate border-b border-r px-2 py-1.5 text-foreground"
+                  title={row[columnIndex] ?? ""}
+                >
+                  {row[columnIndex] ?? ""}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {sheet.truncatedRows || sheet.truncatedColumns ? (
+        <div className="sticky bottom-0 border-t bg-background/95 px-3 py-2 text-xs text-muted-foreground backdrop-blur">
+          큰 파일이라 처음 {Math.min(sheet.rowCount, 200)}행,
+          {Math.min(sheet.columnCount, 50)}열까지만 표시합니다.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SpreadsheetPreviewBody({
+  downloadHref,
+}: {
+  downloadHref: string;
+}) {
+  const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
+  const workbookQuery = useQuery({
+    queryKey: ["xlsx-preview", downloadHref],
+    queryFn: async () => {
+      const response = await fetch(downloadHref);
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+
+      return parseXlsxPreview(await response.arrayBuffer());
+    },
+  });
+  const workbook = workbookQuery.data ?? null;
+  const selectedSheet = workbook?.sheets[selectedSheetIndex] ?? workbook?.sheets[0] ?? null;
+
+  useEffect(() => {
+    if (!workbook || workbook.sheets[selectedSheetIndex]) {
+      return;
+    }
+    setSelectedSheetIndex(0);
+  }, [selectedSheetIndex, workbook]);
+
+  if (workbookQuery.isLoading) {
+    return (
+      <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+        엑셀 파일을 읽는 중입니다.
+      </div>
+    );
+  }
+
+  if (workbookQuery.isError) {
+    return (
+      <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+        엑셀 파일을 표로 읽지 못했습니다.
+      </div>
+    );
+  }
+
+  if (!workbook || workbook.sheets.length === 0 || !selectedSheet) {
+    return (
+      <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+        표시할 시트가 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-background px-3 py-2">
+        {workbook.sheets.map((sheet, index) => (
+          <button
+            key={`${sheet.name}:${index}`}
+            type="button"
+            onClick={() => setSelectedSheetIndex(index)}
+            className={cn(
+              "shrink-0 rounded-md px-2.5 py-1.5 text-xs font-medium transition",
+              selectedSheetIndex === index
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {sheet.name}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1">
+        <SpreadsheetSheetTable sheet={selectedSheet} />
+      </div>
+    </div>
+  );
+}
+
 function ArtifactPreviewPanel({
   onClose,
   source,
@@ -2158,6 +2796,7 @@ function ArtifactPreviewPanel({
 }) {
   const { state } = useFetchedArtifactText(source);
   const [nativeOpenPending, setNativeOpenPending] = useState(false);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
 
   const panelLabel = panelLabelFor(source.kind);
   const closeLabel = `${panelLabel} 닫기`;
@@ -2205,6 +2844,7 @@ function ArtifactPreviewPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
           {canCopy && state.kind === "ready" ? (
             <button
               type="button"
@@ -2254,16 +2894,18 @@ function ArtifactPreviewPanel({
       </header>
 
       <div className="min-h-0 flex-1 bg-white">
-        <ArtifactPreviewBody source={source} state={state} />
+        <ArtifactPreviewBody mode={previewMode} source={source} state={state} />
       </div>
     </aside>
   );
 }
 
 function ArtifactPreviewBody({
+  mode,
   source,
   state,
 }: {
+  mode: PreviewMode;
   source: RockyPreviewPanelSource;
   state:
     | { kind: "idle" }
@@ -2271,6 +2913,21 @@ function ArtifactPreviewBody({
     | { kind: "ready"; text: string }
     | { kind: "error"; message: string };
 }) {
+  if (mode === "original") {
+    return (
+      <OriginalFilePreview
+        contentType={source.contentType}
+        downloadHref={source.downloadHref}
+        name={source.name}
+        openHref={source.previewHref ?? source.downloadHref}
+      />
+    );
+  }
+
+  if (source.kind === "spreadsheet") {
+    return <SpreadsheetPreviewBody downloadHref={source.downloadHref} />;
+  }
+
   if (source.kind === "powerpoint") {
     return (
       <div className="h-full bg-muted/40 p-4">
@@ -2362,6 +3019,7 @@ function EmbeddedArtifactPreviewPanel({
   source: RockyPreviewPanelSource;
 }) {
   const { state } = useFetchedArtifactText(source);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
   const previewOpenHref = source.previewHref ?? source.downloadHref;
   const canCopy =
     state.kind === "ready" && (source.kind === "markdown" || source.kind === "text");
@@ -2381,6 +3039,7 @@ function EmbeddedArtifactPreviewPanel({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
           {canCopy && state.kind === "ready" ? (
             <Button
               type="button"
@@ -2415,7 +3074,7 @@ function EmbeddedArtifactPreviewPanel({
         </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
-        <ArtifactPreviewBody source={source} state={state} />
+        <ArtifactPreviewBody mode={previewMode} source={source} state={state} />
       </div>
     </div>
   );
@@ -2465,7 +3124,7 @@ function TemplateFileRow({
             {file.name}
           </span>
           <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
-            {file.detail}
+            {panelFileDisplayDetail(file)}
           </span>
           <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
             <span className="rounded-md bg-muted px-1.5 py-0.5">
@@ -2524,13 +3183,31 @@ function TemplateFileSection({
 }
 
 function WorkspacePreviewBody({
+  mode,
   record,
 }: {
+  mode: PreviewMode;
   record: AgentWorkspaceFilePreviewRecord;
 }) {
   const inlinePreviewHref = record.inlinePreviewUrl
     ? agentEngineClient.resolveApiPath(record.inlinePreviewUrl)
     : null;
+  const downloadHref = agentEngineClient.resolveApiPath(record.downloadUrl);
+
+  if (mode === "original") {
+    return (
+      <OriginalFilePreview
+        contentType={record.contentType}
+        downloadHref={downloadHref}
+        name={record.name}
+        openHref={inlinePreviewHref}
+      />
+    );
+  }
+
+  if (isXlsxFile(record.name, record.contentType)) {
+    return <SpreadsheetPreviewBody downloadHref={downloadHref} />;
+  }
 
   if (
     TEXT_WORKSPACE_PREVIEW_KINDS.has(record.previewKind) &&
@@ -2578,7 +3255,7 @@ function WorkspacePreviewBody({
       <div className="h-full bg-muted/40 p-3">
         <PptxArtifactPreview
           contentType={record.contentType}
-          downloadHref={agentEngineClient.resolveApiPath(record.downloadUrl)}
+          downloadHref={downloadHref}
           name={record.name}
           previewHref={null}
         />
@@ -2605,13 +3282,30 @@ function WorkspacePreviewBody({
 
 function ArtifactFallbackPreview({
   artifact,
+  mode,
 }: {
   artifact: AgentSessionArtifactManifestEntry;
+  mode: PreviewMode;
 }) {
   const previewHref = artifact.previewUrl
     ? agentEngineClient.resolveApiPath(artifact.previewUrl)
     : null;
   const downloadHref = agentEngineClient.resolveApiPath(artifact.downloadUrl);
+
+  if (mode === "original") {
+    return (
+      <OriginalFilePreview
+        contentType={artifact.contentType}
+        downloadHref={downloadHref}
+        name={artifact.name}
+        openHref={previewHref}
+      />
+    );
+  }
+
+  if (isXlsxFile(artifact.name, artifact.contentType)) {
+    return <SpreadsheetPreviewBody downloadHref={downloadHref} />;
+  }
 
   if (artifact.presentation === "image" && previewHref) {
     return (
@@ -2664,6 +3358,7 @@ function TemplateSelectedFilePreview({
   file: TemplatePanelFile | null;
   refreshKey: string;
 }) {
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
   const workspacePreviewQuery = useQuery({
     queryKey: [
       "rocky-template-file-preview",
@@ -2718,10 +3413,11 @@ function TemplateSelectedFilePreview({
             {file.name}
           </div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-            {file.detail}
+            {panelFileDisplayDetail(file)}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
           {file.role === "output" && file.agentId && file.workspacePath ? (
             <Button
               type="button"
@@ -2772,9 +3468,9 @@ function TemplateSelectedFilePreview({
             {file.expected ? "아직 생성되지 않았습니다." : "파일 내용을 불러오지 못했습니다."}
           </div>
         ) : workspacePreviewQuery.data ? (
-          <WorkspacePreviewBody record={workspacePreviewQuery.data} />
+          <WorkspacePreviewBody mode={previewMode} record={workspacePreviewQuery.data} />
         ) : file.artifact ? (
-          <ArtifactFallbackPreview artifact={file.artifact} />
+          <ArtifactFallbackPreview artifact={file.artifact} mode={previewMode} />
         ) : (
           <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
             파일 경로가 준비되지 않았습니다.
@@ -2789,11 +3485,13 @@ function TemplateFilePanel({
   context,
   externalPreviewSource,
   onClearExternalPreview,
+  onClose,
   refreshKey,
 }: {
   context: TemplateFilePanelContext;
   externalPreviewSource: RockyPreviewPanelSource | null;
   onClearExternalPreview: () => void;
+  onClose: () => void;
   refreshKey: string;
 }) {
   const allFiles = [...context.outputFiles, ...context.inputFiles];
@@ -2826,7 +3524,7 @@ function TemplateFilePanel({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-xs font-semibold uppercase text-muted-foreground">
               <LayoutTemplate className="size-3.5" />
-              스킬 파일
+              Input / Output
             </div>
             <div className="mt-1 truncate text-sm font-semibold text-foreground">
               {context.title}
@@ -2835,11 +3533,23 @@ function TemplateFilePanel({
               {context.outputFormatLabel}
             </div>
           </div>
-          {context.active ? (
-            <Badge variant="secondary" className="shrink-0">
-              진행 중
-            </Badge>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {context.active ? (
+              <Badge variant="secondary" className="shrink-0">
+                진행 중
+              </Badge>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="파일 패널 닫기"
+              title="파일 패널 닫기"
+              onClick={onClose}
+            >
+              <PanelRightClose className="size-4" />
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -2863,7 +3573,7 @@ function TemplateFilePanel({
               onSelect={(file) => setSelectedKey(file.key)}
             />
             <TemplateFileSection
-              title="Input 원본"
+              title="Input"
               files={context.inputFiles}
               selectedKey={selectedFile?.key ?? selectedKey}
               emptyText="연결된 input 파일이 없습니다."
@@ -2899,11 +3609,13 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     useState<MdTemplateDefinition | null>(null);
   const [previewPanelSource, setPreviewPanelSource] =
     useState<RockyPreviewPanelSource | null>(null);
+  const [filePanelOpen, setFilePanelOpen] = useState(true);
   const [runProgressByRunId, setRunProgressByRunId] = useState<Record<string, string>>(
     {}
   );
   const submitInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const filePanelSignatureRef = useRef<string | null>(null);
   const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
   const { userTemplates } = useMdTemplates();
   const createChatMutation = useCreateRockyChatMutation();
@@ -2955,6 +3667,53 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       staleTime: 60_000,
     })),
   });
+  const skillInputSources = useMemo<SkillInputSource[]>(() => {
+    if (!chat) {
+      return [];
+    }
+
+    const sources = new Map<string, SkillInputSource>();
+    for (const messageEntry of chat.messages) {
+      if (messageEntry.usedSkills.length === 0) {
+        continue;
+      }
+
+      const dispatch = chat.dispatches.find(
+        (entry) => entry.id === messageEntry.dispatchId
+      );
+      const agentId =
+        dispatch?.orchestration?.agentId ?? chat.worker?.agentId ?? null;
+      if (!agentId) {
+        continue;
+      }
+
+      for (const skill of messageEntry.usedSkills) {
+        const key = `${agentId}:${skill.id}`;
+        sources.set(key, {
+          agentId,
+          skillId: skill.id,
+          skillDisplayName: skill.displayName,
+        });
+      }
+    }
+
+    return [...sources.values()];
+  }, [chat]);
+  const packagedInputQueries = useQueries({
+    queries: skillInputSources.map((source) => ({
+      queryKey: [
+        "rocky-skill-packaged-inputs",
+        source.agentId,
+        source.skillId,
+      ],
+      queryFn: () => listSkillPackagedInputFiles(source),
+      enabled: Boolean(source.agentId && source.skillId),
+      staleTime: 60_000,
+    })),
+  });
+  const packagedInputFiles = packagedInputQueries.flatMap(
+    (query) => query.data ?? []
+  );
   const transcriptsBySessionId: Record<string, AgentSessionMessage[]> = {};
   const agentWorkspaceRootsByAgentId: Record<string, string> = {};
   uniqueTranscriptSessionIds.forEach((sessionId, index) => {
@@ -2972,23 +3731,41 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const transcriptRefreshMarker = transcriptQueries
     .map((query) => String(query.dataUpdatedAt ?? 0))
     .join(":");
-  const templateFilePanelContext = useMemo(
-    () =>
-      buildTemplateFilePanelContext({
+  const packagedInputRefreshMarker = packagedInputQueries
+    .map((query) => `${query.dataUpdatedAt ?? 0}:${query.data?.length ?? 0}`)
+    .join(":");
+  const filePanelContext = useMemo(() => {
+    const templateContext = buildTemplateFilePanelContext({
         chat,
         transcriptsBySessionId,
         userTemplates,
-      }),
-    [chat, transcriptRefreshMarker, userTemplates]
-  );
+      });
+
+    if (templateContext) {
+      return mergePanelInputFiles(templateContext, packagedInputFiles);
+    }
+
+    return buildGeneralFilePanelContext({
+      chat,
+      packagedInputFiles,
+      transcriptsBySessionId,
+    });
+  }, [chat, transcriptRefreshMarker, packagedInputRefreshMarker, userTemplates]);
   const templateFileRefreshKey = `${chat?.updatedAt ?? "no-chat"}:${transcriptRefreshMarker}`;
+  const filePanelSignature = filePanelContext
+    ? [
+        chat?.id ?? "no-chat",
+        ...filePanelContext.inputFiles.map((file) => file.key),
+        ...filePanelContext.outputFiles.map((file) => file.key),
+      ].join("\n")
+    : null;
 
   const autoPreviewedTaskIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isTaskDetail || !chat) return;
     if (previewPanelSource) return;
     if (autoPreviewedTaskIdRef.current === chat.id) return;
-    if (templateFilePanelContext) return;
+    if (filePanelContext) return;
 
     const latest = findLatestPreviewableArtifact(chat, transcriptsBySessionId);
     const source = latest
@@ -3002,7 +3779,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     isTaskDetail,
     chat,
     previewPanelSource,
-    templateFilePanelContext,
+    filePanelContext,
     transcriptRefreshMarker,
   ]);
   useEffect(() => {
@@ -3010,6 +3787,18 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       autoPreviewedTaskIdRef.current = null;
     }
   }, [isTaskDetail, routeTaskId]);
+
+  useEffect(() => {
+    if (!filePanelSignature) {
+      filePanelSignatureRef.current = null;
+      return;
+    }
+
+    if (filePanelSignatureRef.current !== filePanelSignature) {
+      filePanelSignatureRef.current = filePanelSignature;
+      setFilePanelOpen(true);
+    }
+  }, [filePanelSignature]);
 
   const messageCount = chat?.messages.length ?? 0;
   const hasActiveOrchestration =
@@ -3260,9 +4049,45 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   };
 
+  const openPreviewPanel = (source: RockyPreviewPanelSource) => {
+    setPreviewPanelSource(source);
+    if (filePanelContext) {
+      setFilePanelOpen(true);
+    }
+  };
+  const closeFilePanel = () => {
+    setFilePanelOpen(false);
+    setPreviewPanelSource(null);
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background lg:flex-row">
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {filePanelContext ? (
+          <div className="pointer-events-none absolute right-4 top-4 z-20">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="pointer-events-auto bg-background/95 shadow-sm backdrop-blur"
+              aria-label={filePanelOpen ? "파일 패널 닫기" : "파일 패널 열기"}
+              onClick={() => {
+                if (filePanelOpen) {
+                  closeFilePanel();
+                  return;
+                }
+                setFilePanelOpen(true);
+              }}
+            >
+              {filePanelOpen ? (
+                <PanelRightClose className="size-4" />
+              ) : (
+                <PanelRightOpen className="size-4" />
+              )}
+              파일
+            </Button>
+          </div>
+        ) : null}
         <main className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
           {isTaskDetail && !chat ? (
             <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center text-center">
@@ -3287,7 +4112,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
               chat={chat}
               endRef={messagesEndRef}
-              onOpenPreviewPanel={setPreviewPanelSource}
+              onOpenPreviewPanel={openPreviewPanel}
               runProgressByRunId={runProgressByRunId}
               transcriptsBySessionId={transcriptsBySessionId}
             />
@@ -3340,14 +4165,15 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         template={templateExecutionTemplate}
       />
 
-      {templateFilePanelContext ? (
+      {filePanelContext && filePanelOpen ? (
         <TemplateFilePanel
-          context={templateFilePanelContext}
+          context={filePanelContext}
           externalPreviewSource={previewPanelSource}
           onClearExternalPreview={() => setPreviewPanelSource(null)}
+          onClose={closeFilePanel}
           refreshKey={templateFileRefreshKey}
         />
-      ) : previewPanelSource ? (
+      ) : !filePanelContext && previewPanelSource ? (
         <ArtifactPreviewPanel
           source={previewPanelSource}
           onClose={() => setPreviewPanelSource(null)}

@@ -218,19 +218,11 @@ export function composeSkillRunPrompt(
   brief: string,
   fileNames: string[],
 ): string {
-  const lines = [
-    "[Rocky 스킬 실행]",
-    "",
-    `스킬: ${skill.title}`,
-    `목표: ${skill.description}`,
-    "",
-    "선택한 파일:",
-    fileNames.length > 0 ? fileNames.map((name) => `- ${name}`).join("\n") : "- 아직 없음",
-    "",
-    "추가 요청:",
-    brief.trim() || "특이사항 없음",
-  ];
-  return lines.join("\n");
+  const userBrief = composeFreeFormPrompt(
+    brief || `${skill.title}로 진행해줘.`,
+    fileNames,
+  ).trim();
+  return `${skill.skill.invocation}${userBrief ? `\n\n${userBrief}` : ""}`;
 }
 
 export function composeFreeFormPrompt(brief: string, fileNames: string[]): string {

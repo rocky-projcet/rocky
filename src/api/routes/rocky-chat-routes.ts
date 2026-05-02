@@ -27,6 +27,7 @@ interface RockyChatRoutesOptions extends FastifyPluginOptions {
 }
 
 const ROCKY_CHAT_BODY_LIMIT = Number.MAX_SAFE_INTEGER;
+const SKILL_ID_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 function badRequest(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), {
@@ -156,6 +157,8 @@ function parseAttachments(value: unknown): RockyAttachmentInput[] {
 function parseMessageBody(body: unknown): {
   message: string;
   attachments: RockyAttachmentInput[];
+  agentId: string | null;
+  skillId: string | null;
 } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw badRequest("Rocky chat requests require a JSON object body.");
@@ -164,6 +167,35 @@ function parseMessageBody(body: unknown): {
   const input = body as Record<string, unknown>;
   const attachments = parseAttachments(input.attachments);
   const message = typeof input.message === "string" ? input.message.trim() : "";
+  const agentId =
+    typeof input.agentId === "string" && input.agentId.trim()
+      ? input.agentId.trim()
+      : null;
+  const skillId =
+    typeof input.skillId === "string" && input.skillId.trim()
+      ? input.skillId.trim()
+      : null;
+  if (
+    "agentId" in input &&
+    input.agentId !== null &&
+    input.agentId !== undefined &&
+    typeof input.agentId !== "string"
+  ) {
+    throw badRequest("agentId must be a string or null.");
+  }
+  if (
+    "skillId" in input &&
+    input.skillId !== null &&
+    input.skillId !== undefined &&
+    typeof input.skillId !== "string"
+  ) {
+    throw badRequest("skillId must be a string or null.");
+  }
+  if (skillId && !SKILL_ID_PATTERN.test(skillId)) {
+    throw badRequest(
+      "skillId may only contain letters, numbers, dots, underscores, or hyphens."
+    );
+  }
   if (!message && attachments.length === 0) {
     throw badRequest("message or attachments are required.");
   }
@@ -171,6 +203,8 @@ function parseMessageBody(body: unknown): {
   return {
     message,
     attachments,
+    agentId,
+    skillId,
   };
 }
 

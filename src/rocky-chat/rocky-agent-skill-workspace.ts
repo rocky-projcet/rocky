@@ -1,9 +1,10 @@
 import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 
 import {
   WORKSPACE_LOCAL_SKILL_AUTHORING_DIR,
   ensureWorkspaceSkillBridge,
+  listWorkspaceLocalSkills,
 } from "../agents/agent-workspace.js";
 
 import type { AgentRecord } from "../agents/agent-types.js";
@@ -17,6 +18,13 @@ import type {
 import type { RockyOrchestrationSkill } from "./rocky-skill-registry.js";
 
 export const ROCKY_AGENT_REQUEST_CONTEXT_DIR = ".agents/rocky/requests";
+
+interface PackagedSkillInputSummary {
+  skillDisplayName: string;
+  files: string[];
+}
+
+const IGNORED_PACKAGED_INPUT_FILENAMES = new Set([".DS_Store"]);
 
 function formatList(items: string[]): string {
   if (items.length === 0) {
@@ -62,6 +70,68 @@ function formatAttachments(attachments: RockyAttachmentRecord[]): string {
         : "";
       return `- ${attachment.name} (${contentType}, ${size}${workspacePath})`;
     })
+    .join("\n");
+}
+
+async function collectPackagedInputFileNames(root: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (IGNORED_PACKAGED_INPUT_FILENAMES.has(entry.name)) {
+      continue;
+    }
+
+    const childPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectPackagedInputFileNames(childPath)));
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(entry.name);
+    }
+  }
+
+  return [...new Set(files)].sort((left, right) => left.localeCompare(right));
+}
+
+async function listPackagedSkillInputSummaries(
+  workspaceRoot: string
+): Promise<PackagedSkillInputSummary[]> {
+  const skills = await listWorkspaceLocalSkills(workspaceRoot);
+  const summaries: PackagedSkillInputSummary[] = [];
+
+  for (const skill of skills) {
+    const inputRoot = path.join(path.dirname(skill.skillPath), "assets", "inputs");
+    const files = await collectPackagedInputFileNames(inputRoot);
+    if (files.length === 0) {
+      continue;
+    }
+
+    summaries.push({
+      skillDisplayName: skill.displayName,
+      files,
+    });
+  }
+
+  return summaries;
+}
+
+function formatPackagedSkillInputs(summaries: PackagedSkillInputSummary[]): string {
+  if (summaries.length === 0) {
+    return "- 없음";
+  }
+
+  return summaries
+    .flatMap((summary) =>
+      summary.files.map((file) => `- ${file} (스킬: ${summary.skillDisplayName})`)
+    )
     .join("\n");
 }
 
@@ -119,6 +189,7 @@ export function buildRockyTurnContextMarkdown(input: {
   domain: RockyChatDomain;
   skill: RockyOrchestrationSkill;
   attachments: RockyAttachmentRecord[];
+  packagedSkillInputs?: PackagedSkillInputSummary[];
   skillCandidates: RockySkillCandidateRecord[];
   protectionHints: string[];
   timestamp: string;
@@ -141,6 +212,14 @@ export function buildRockyTurnContextMarkdown(input: {
     "",
     "첨부 메타데이터:",
     formatAttachments(input.attachments),
+    "",
+    "스킬 포함 파일:",
+    formatPackagedSkillInputs(input.packagedSkillInputs ?? []),
+    "",
+    "파일 목록 답변 기준:",
+    "- 사용자가 첨부 파일만 물으면 첨부 메타데이터를 기준으로 답합니다.",
+    "- 사용자가 올라와 있는 파일, 사용 가능한 파일, 또는 파일 목록을 물으면 첨부 메타데이터와 스킬 포함 파일을 함께 구분해 답합니다.",
+    "- 스킬 포함 파일은 파일명과 스킬 표시 이름만 답하고 내부 저장 경로는 노출하지 않습니다.",
     "",
   ].join("\n");
 }
@@ -183,8 +262,73 @@ export async function writeRockyTurnContextFile(input: {
       domain: input.domain,
       skill: input.skill,
       attachments: input.attachments,
+      packagedSkillInputs: await listPackagedSkillInputSummaries(
+        input.agent.workspaceRoot
+      ),
       skillCandidates: input.skillCandidates,
       protectionHints: input.protectionHints,
+      timestamp: input.timestamp,
+    }),
+    "utf8"
+  );
+  return relativePath;
+}
+
+export function buildAgentTurnContextMarkdown(input: {
+  agent: AgentRecord;
+  chatId: string;
+  dispatch: RockyDispatchRecord;
+  attachments: RockyAttachmentRecord[];
+  packagedSkillInputs?: PackagedSkillInputSummary[];
+  timestamp: string;
+}): string {
+  return [
+    "# Agent Turn Context",
+    "",
+    `Agent: ${input.agent.name}`,
+    `Agent ID: ${input.agent.id}`,
+    "Execution mode: agent session",
+    "",
+    "요청 분류:",
+    `- chat_id: ${input.chatId}`,
+    `- dispatch_id: ${input.dispatch.id}`,
+    `- intent: ${input.dispatch.intent}`,
+    `- created_at: ${input.timestamp}`,
+    "",
+    "첨부 메타데이터:",
+    formatAttachments(input.attachments),
+    "",
+    "스킬 포함 파일:",
+    formatPackagedSkillInputs(input.packagedSkillInputs ?? []),
+    "",
+    "파일 목록 답변 기준:",
+    "- 사용자가 첨부 파일만 물으면 첨부 메타데이터를 기준으로 답합니다.",
+    "- 사용자가 올라와 있는 파일, 사용 가능한 파일, 또는 파일 목록을 물으면 첨부 메타데이터와 스킬 포함 파일을 함께 구분해 답합니다.",
+    "- 스킬 포함 파일은 파일명과 스킬 표시 이름만 답하고 내부 저장 경로는 노출하지 않습니다.",
+    "",
+  ].join("\n");
+}
+
+export async function writeAgentTurnContextFile(input: {
+  agent: AgentRecord;
+  chatId: string;
+  dispatch: RockyDispatchRecord;
+  attachments: RockyAttachmentRecord[];
+  timestamp: string;
+}): Promise<string> {
+  const relativePath = `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${input.dispatch.id}.md`;
+  const absolutePath = path.join(input.agent.workspaceRoot, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(
+    absolutePath,
+    buildAgentTurnContextMarkdown({
+      agent: input.agent,
+      chatId: input.chatId,
+      dispatch: input.dispatch,
+      attachments: input.attachments,
+      packagedSkillInputs: await listPackagedSkillInputSummaries(
+        input.agent.workspaceRoot
+      ),
       timestamp: input.timestamp,
     }),
     "utf8"
@@ -204,5 +348,24 @@ export function buildRockyTurnSystemInstructions(input: {
     ),
     `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
     "Treat the current user message as the canonical original request.",
+  ];
+}
+
+export function buildAgentTurnSystemInstructions(input: {
+  agent: AgentRecord;
+  contextRelativePath: string;
+}): string[] {
+  return [
+    `You are running as the "${input.agent.name}" agent. Use this agent's configured role and available local skills when relevant.`,
+    "When applying an installed user-facing skill, inspect the matching skill directory under `.agents/skills/`, read its `SKILL.md`, and inspect packaged files in that skill directory before asking the user to upload missing inputs.",
+    "Generic file searches can skip hidden skill directories, so explicitly inspect `.agents/skills/` when a needed input may be bundled with an installed skill.",
+    "When the user asks for uploaded, available, current, or listed files, distinguish newly attached files from packaged files included with installed skills; include packaged input filenames from the turn context when present.",
+    "Do not answer that no usable files exist only because attachment metadata is empty; skill-packaged input files in the turn context are already available inputs.",
+    `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
+    "Treat the current user message as the canonical original request.",
+    "If the user asks which skills are available, installed, or equipped, answer only with this agent's installed skill display names; do not list read-only system skills or unavailable repository-root developer skills.",
+    "Do not expose internal skill identifiers, invocation strings, file paths, or storage categories in user-facing answers.",
+    "Never use the literal phrases `workspace-local`, `호출 ID`, `SKILL.md`, `.agents/skills`, `system`, or `read-only` in user-facing skill inventory answers.",
+    "When you apply one or more installed user-facing skills, append a final hidden HTML comment exactly like `<!-- rocky-used-skills: [\"Skill Display Name\"] -->`; keep this marker out of the visible answer text.",
   ];
 }

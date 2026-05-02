@@ -160,6 +160,9 @@ export function templateToDraft(template: MdTemplateDefinition): MdTemplateDraft
     description: template.description,
     triggerLabel: template.triggerLabel,
     requiredInputs: template.requiredInputs,
+    inputFiles: template.inputFiles,
+    inputArtifacts: template.inputArtifacts,
+    sourceRunId: template.sourceRunId,
     outputFormatLabel: template.outputFormatLabel,
     defaultInstructions: template.defaultInstructions,
   };
@@ -454,6 +457,9 @@ export function normalizeTemplateDraft(draft: MdTemplateDraft): MdTemplateDraft 
     description,
     triggerLabel,
     requiredInputs,
+    inputFiles: draft.inputFiles,
+    inputArtifacts: draft.inputArtifacts,
+    sourceRunId: draft.sourceRunId,
     outputFormatLabel,
     defaultInstructions,
   };
@@ -501,6 +507,38 @@ function formatMarkdownList(values: string[]): string {
   return values.length > 0 ? values.map((value) => `- ${value}`).join("\n") : "- 없음";
 }
 
+function packagedInputPath(input: {
+  id: string;
+  fieldId: string;
+  fileName: string;
+  skillPath?: string | null;
+}): string {
+  return (
+    input.skillPath ||
+    ["assets", "inputs", input.fieldId || "general", input.id, input.fileName]
+      .map((entry) => entry.replace(/[^\p{L}\p{N}._-]+/gu, "-") || "input")
+      .join("/")
+  );
+}
+
+function formatPackagedInputArtifacts(
+  values: NonNullable<MdTemplateDraft["inputArtifacts"]>
+): string[] {
+  if (values.length === 0) {
+    return [];
+  }
+
+  return [
+    "## Packaged Input Files",
+    "Paths are relative to this skill directory and are already available inputs.",
+    ...values.map(
+      (artifact) =>
+        `- ${artifact.fileName}: \`${packagedInputPath(artifact)}\``
+    ),
+    "",
+  ];
+}
+
 export function buildOpenAiSkillDefinition(input: {
   skillId: string;
   draft: MdTemplateDraft;
@@ -527,12 +565,14 @@ export function buildOpenAiSkillDefinition(input: {
     "## Required Inputs",
     formatMarkdownList(normalized.requiredInputs),
     "",
+    ...formatPackagedInputArtifacts(normalized.inputArtifacts ?? []),
     "## Workflow",
-    "1. Check the user's latest request and uploaded files before asking anything.",
-    "2. Identify which required inputs are already available.",
-    "3. Ask for one missing input at a time in short Korean.",
-    "4. Separate reference documents, source data, user constraints, and output format.",
-    "5. Produce a draft result, then ask what should be revised.",
+    "1. Check the user's latest request, uploaded files, and Packaged Input Files before asking anything.",
+    "2. Treat Packaged Input Files as available inputs and inspect those paths before asking the user to upload them.",
+    "3. Identify which required inputs are still missing.",
+    "4. Ask for one missing input at a time in short Korean.",
+    "5. Separate reference documents, source data, user constraints, and output format.",
+    "6. Produce a draft result, then ask what should be revised.",
     "",
     "## Output",
     `- Preferred output: ${normalized.outputFormatLabel}`,
@@ -629,7 +669,9 @@ export function createUserTemplateRecord(input: {
     description: normalized.description,
     triggerLabel: normalized.triggerLabel,
     requiredInputs: normalized.requiredInputs,
-    inputFiles: input.existing?.inputFiles,
+    inputFiles: normalized.inputFiles ?? input.existing?.inputFiles,
+    inputArtifacts: normalized.inputArtifacts ?? input.existing?.inputArtifacts,
+    sourceRunId: normalized.sourceRunId ?? input.existing?.sourceRunId ?? null,
     outputFormatLabel: normalized.outputFormatLabel,
     outputFiles: input.existing?.outputFiles,
     defaultInstructions: normalized.defaultInstructions,
@@ -719,6 +761,15 @@ export function buildTemplateRunPrompt(
     options.selectedFileNames && options.selectedFileNames.length > 0
       ? options.selectedFileNames.map((name) => `- ${name}`).join("\n")
       : "- 아직 없음";
+  const packagedFiles =
+    normalized.inputArtifacts && normalized.inputArtifacts.length > 0
+      ? normalized.inputArtifacts
+          .map(
+            (artifact) =>
+              `- ${artifact.fileName}: ${packagedInputPath(artifact)}`
+          )
+          .join("\n")
+      : "- 스킬에 묶인 입력 파일이 없습니다.";
   const outputFiles =
     normalized.outputFiles && normalized.outputFiles.length > 0
       ? normalized.outputFiles.map((name) => `- ${name}`).join("\n")
@@ -735,7 +786,7 @@ export function buildTemplateRunPrompt(
     `목표: ${normalized.description}`,
     `최종 산출물: ${normalized.outputFormatLabel}`,
     "",
-    "연결된 OpenAI Skill:",
+    "연결된 Codex Skill:",
     `- 호출명: ${normalized.skill.invocation}`,
     `- workspace-local skill 경로: .agents/skills/${normalized.skill.id}/SKILL.md`,
     "- 위 skill 파일이 있으면 먼저 읽고, 해당 절차와 품질 기준을 우선 적용합니다.",
@@ -744,6 +795,8 @@ export function buildTemplateRunPrompt(
     `- 추가 요청: ${userBrief}`,
     "- 선택된 파일:",
     selectedFiles,
+    "- 스킬에 묶인 파일:",
+    packagedFiles,
     "",
     "필요한 입력값:",
     inputs,
@@ -753,7 +806,7 @@ export function buildTemplateRunPrompt(
     "",
     "진행 방식:",
     "1. 사용자가 이미 올린 파일과 메시지를 먼저 확인합니다.",
-    "2. 실행 준비 UI에서 확인한 내용과 연결된 OpenAI Skill을 기준으로 누락값을 판단합니다.",
+    "2. 실행 준비 UI에서 확인한 내용과 연결된 Codex Skill을 기준으로 누락값을 판단합니다.",
     "3. 누락된 입력값은 한 번에 하나씩 짧게 질문합니다.",
     "4. 레퍼런스 문서, 원본 데이터, 최종 산출물 조건을 분리해서 확인합니다.",
     "5. 사용자가 답한 내용을 바탕으로 결과물 초안을 만들고 수정 요청을 받습니다.",

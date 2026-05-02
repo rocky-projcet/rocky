@@ -68,6 +68,17 @@ const TRANSCRIPT_INTERNAL_ARTIFACT_ROLE_HINTS = [
   "tox",
   "nox",
 ];
+const TRANSCRIPT_INTERNAL_ARTIFACT_NAMES = new Set([
+  ".DS_Store",
+  ".env.template",
+  "AGENTS.md",
+  "fontlist-v390.json",
+]);
+const TRANSCRIPT_INTERNAL_WORKSPACE_PATH_PREFIXES = [
+  ".agents/",
+  ".matplotlib-cache/",
+  "scripts/",
+];
 
 export function buildTranscriptDisplayEntries(
   messages: AgentSessionMessage[]
@@ -197,7 +208,10 @@ export function splitTextWithWorkspacePaths(
 }
 
 export function isSuppressedTranscriptArtifact(
-  artifact: Pick<AgentSessionArtifactManifestEntry, "role" | "name" | "contentType">
+  artifact: Pick<
+    AgentSessionArtifactManifestEntry,
+    "role" | "name" | "contentType" | "workspaceRelativePath"
+  >
 ): boolean {
   if (
     artifact.role === "output-last-message" &&
@@ -208,6 +222,20 @@ export function isSuppressedTranscriptArtifact(
 
   const normalizedRole = normalizeArtifactIdentifier(artifact.role);
   const normalizedName = normalizeArtifactIdentifier(artifact.name);
+  const workspacePath = artifact.workspaceRelativePath?.replace(/^\.\/+/, "") ?? "";
+
+  if (TRANSCRIPT_INTERNAL_ARTIFACT_NAMES.has(artifact.name)) {
+    return true;
+  }
+
+  if (
+    workspacePath &&
+    TRANSCRIPT_INTERNAL_WORKSPACE_PATH_PREFIXES.some((prefix) =>
+      workspacePath.startsWith(prefix)
+    )
+  ) {
+    return true;
+  }
 
   if (
     TRANSCRIPT_INTERNAL_ARTIFACT_ROLE_HINTS.some((hint) => normalizedRole.includes(hint))

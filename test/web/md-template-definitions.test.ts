@@ -20,7 +20,7 @@ test("md template draft uses category defaults for empty fields", () => {
     requiredInputs: [],
   });
 
-  assert.equal(normalized.title, "데이터 업무 템플릿");
+  assert.equal(normalized.title, "데이터 업무 스킬");
   assert.equal(normalized.triggerLabel, "데이터 분석");
   assert.ok(normalized.requiredInputs.some((input) => /엑셀/u.test(input)));
 });
@@ -116,6 +116,45 @@ test("createUserTemplateRecord generates OpenAI skill files", () => {
   assert.match(files[0]?.content ?? "", /name: md-/u);
 });
 
+test("generated skill instructions list packaged input files", () => {
+  const template = createUserTemplateRecord({
+    draft: {
+      ...createTemplateDraft("data"),
+      title: "매출 분석",
+      requiredInputs: ["공구_CEO-OFFICE.xlsx"],
+      inputFiles: ["공구_CEO-OFFICE.xlsx"],
+      inputArtifacts: [
+        {
+          id: "upload-001",
+          runId: "run-001",
+          fieldId: "datasets",
+          fileName: "공구_CEO-OFFICE.xlsx",
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          size: 123,
+          runtimePath: "skill-template-runs/run-001/inputs/datasets/upload-001/공구_CEO-OFFICE.xlsx",
+          skillPath: "assets/inputs/datasets/upload-001/공구_CEO-OFFICE.xlsx",
+          uploadedAt: "2026-05-01T00:00:00.000Z",
+        },
+      ],
+      outputFormatLabel: "PDF 보고서",
+    },
+    id: "template.sales",
+    now: "2026-05-01T00:00:00.000Z",
+  });
+  const files = buildTemplateSkillFiles(template);
+  const prompt = buildTemplateRunPrompt(template);
+  const skillMarkdown = files.find((file) => file.path === "SKILL.md")?.content ?? "";
+
+  assert.match(skillMarkdown, /Packaged Input Files/u);
+  assert.match(
+    skillMarkdown,
+    /assets\/inputs\/datasets\/upload-001\/공구_CEO-OFFICE\.xlsx/u
+  );
+  assert.match(skillMarkdown, /already available inputs/u);
+  assert.match(prompt, /스킬에 묶인 파일/u);
+  assert.match(prompt, /공구_CEO-OFFICE\.xlsx/u);
+});
+
 test("buildTemplateRunPrompt asks Rocky to guide the user step by step", () => {
   const template = createUserTemplateRecord({
     draft: {
@@ -133,7 +172,7 @@ test("buildTemplateRunPrompt asks Rocky to guide the user step by step", () => {
   });
 
   assert.match(prompt, /템플릿: GS 프로모션 양식/u);
-  assert.match(prompt, /연결된 OpenAI Skill/u);
+  assert.match(prompt, /연결된 Codex Skill/u);
   assert.match(prompt, /\$md-/u);
   assert.match(prompt, /gs\.xlsx/u);
   assert.match(prompt, /4월 행사 기준/u);

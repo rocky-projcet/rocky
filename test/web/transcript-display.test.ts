@@ -245,6 +245,24 @@ test("isSuppressedTranscriptArtifact hides virtualenv and bootstrap artifacts fr
     }),
     false
   );
+  assert.equal(
+    isSuppressedTranscriptArtifact({
+      role: "workspace-agents",
+      name: "AGENTS.md",
+      workspaceRelativePath: "AGENTS.md",
+      contentType: "text/markdown; charset=utf-8",
+    }),
+    true
+  );
+  assert.equal(
+    isSuppressedTranscriptArtifact({
+      role: "workspace-agents-rocky-requests-dispatch-1",
+      name: "dispatch-1.md",
+      workspaceRelativePath: ".agents/rocky/requests/dispatch-1.md",
+      contentType: "text/markdown; charset=utf-8",
+    }),
+    true
+  );
 });
 
 test("splitTranscriptArtifacts keeps meaningful transcript artifacts and counts hidden bootstrap noise", () => {

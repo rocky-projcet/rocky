@@ -40,7 +40,6 @@ import type { MdTemplateDefinition } from "@/domains/template/types";
 import {
   TaskComposer,
   composeFreeFormPrompt,
-  composeSkillRunPrompt,
 } from "@/domains/skill/components/task-composer";
 import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { Button } from "@/shared/ui/button";
@@ -59,6 +58,12 @@ import { useAgentEmoji } from "../lib/agent-avatar-store";
 import { readAllTaskAgentMap, rememberTaskAgent } from "../lib/task-agent-store";
 import { AgentAvatar } from "../components/agent-avatar";
 import { AgentEmojiPicker } from "../components/agent-emoji-picker";
+import type { AgentLocalSkillRecord } from "../types";
+
+type EquippedSkillItem = {
+  record: AgentLocalSkillRecord;
+  template: MdTemplateDefinition | null;
+};
 
 export function AgentDetailPage() {
   const navigate = useNavigate();
@@ -67,7 +72,8 @@ export function AgentDetailPage() {
   const updateMutation = useUpdateAgentMutation(agentId);
   const createChatMutation = useCreateRockyChatMutation();
   const deleteMutation = useDeleteAgentMutation();
-  const { skillIds, attachSkill, detachSkill } = useAgentSkills(agentId);
+  const { skillIds, skillRecords, attachSkill, detachSkill, isMutating: skillMutating } =
+    useAgentSkills(agentId);
   const { userTemplates } = useMdTemplates();
   const sessionsQuery = useAgentSessionsQuery(agentId, { includeArchived: true });
   const chatsQuery = useRockyChatsQuery();
@@ -75,23 +81,34 @@ export function AgentDetailPage() {
   const agent = agentQuery.data ?? null;
   const { emoji, setEmoji } = useAgentEmoji(agentId);
 
-  const equippedSkills = useMemo(
+  const equippedSkillItems = useMemo<EquippedSkillItem[]>(
     () =>
-      skillIds
-        .map((id) => userTemplates.find((entry) => entry.id === id) ?? null)
+      skillRecords.map((record) => ({
+        record,
+        template:
+          userTemplates.find((entry) => entry.skill.id === record.id) ??
+          userTemplates.find((entry) => entry.id === record.id) ??
+          null,
+      })),
+    [skillRecords, userTemplates],
+  );
+  const equippedTemplateSkills = useMemo(
+    () =>
+      equippedSkillItems
+        .map((item) => item.template)
         .filter((entry): entry is MdTemplateDefinition => Boolean(entry)),
-    [skillIds, userTemplates],
+    [equippedSkillItems],
   );
 
   const availableSkills = useMemo(
-    () => userTemplates.filter((entry) => !skillIds.includes(entry.id)),
+    () => userTemplates.filter((entry) => !skillIds.includes(entry.skill.id)),
     [skillIds, userTemplates],
   );
 
   const taskCount = (chatsQuery.data ?? []).length + (sessionsQuery.data ?? []).length;
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
-  const [pendingDetach, setPendingDetach] = useState<MdTemplateDefinition | null>(null);
+  const [pendingDetach, setPendingDetach] = useState<EquippedSkillItem | null>(null);
 
   if (agentQuery.isLoading) {
     return (
@@ -252,7 +269,7 @@ export function AgentDetailPage() {
         </header>
 
         <CharacterStats
-          skillCount={equippedSkills.length}
+          skillCount={skillRecords.length}
           taskCount={taskCount}
         />
 
@@ -263,7 +280,7 @@ export function AgentDetailPage() {
                 <Sparkles className="size-4 text-muted-foreground" />
                 장착된 스킬
                 <span className="text-xs font-normal text-muted-foreground">
-                  {equippedSkills.length}개
+                  {skillRecords.length}개
                 </span>
               </h2>
               {archived ? null : (
@@ -288,14 +305,21 @@ export function AgentDetailPage() {
               open={skillPickerOpen}
               onOpenChange={setSkillPickerOpen}
               available={availableSkills}
-              onAttach={(skillId) => {
-                attachSkill(skillId);
-                toast.success("스킬을 장착했습니다.");
+              pending={skillMutating}
+              onAttach={async (skill) => {
+                try {
+                  await attachSkill(skill);
+                  toast.success("스킬을 장착했습니다.");
+                } catch (error) {
+                  toast.error("스킬을 장착하지 못했습니다.", {
+                    description: error instanceof Error ? error.message : undefined,
+                  });
+                }
               }}
             />
           )}
 
-          {equippedSkills.length === 0 ? (
+          {equippedSkillItems.length === 0 ? (
             <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
               {archived
                 ? "장착된 스킬이 없는 채로 보관되었어요."
@@ -303,13 +327,13 @@ export function AgentDetailPage() {
             </div>
           ) : (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {equippedSkills.map((skill) => (
-                <li key={skill.id}>
+              {equippedSkillItems.map((item) => (
+                <li key={item.record.id}>
                   <EquippedSkillCard
-                    skill={skill}
+                    item={item}
                     fromAgentId={agent.id}
                     readOnly={archived}
-                    onDetach={() => setPendingDetach(skill)}
+                    onDetach={() => setPendingDetach(item)}
                   />
                 </li>
               ))}
@@ -333,16 +357,19 @@ export function AgentDetailPage() {
       ) : (
         <TaskComposer
           recipientName={agent.name}
-          equippedSkills={equippedSkills}
+          equippedSkills={equippedTemplateSkills}
           pending={createChatMutation.isPending}
           onSubmit={async ({ message, files, skill }) => {
             const fileNames = files.map((file) => file.name);
-            const composedMessage = skill
-              ? composeSkillRunPrompt(skill, message, fileNames)
-              : composeFreeFormPrompt(message, fileNames);
+            const composedMessage = composeFreeFormPrompt(
+              message || (skill ? `${skill.title}로 진행해줘.` : ""),
+              fileNames,
+            );
             try {
               const chat = await createChatMutation.mutateAsync({
                 message: composedMessage,
+                agentId: agent.id,
+                skillId: skill?.skill.id ?? null,
               });
               rememberTaskAgent(chat.id, agent.id);
               toast.success(`${agent.name}이(가) 작업을 시작했어요.`);
@@ -379,15 +406,22 @@ export function AgentDetailPage() {
         title="스킬을 해제할까요?"
         description={
           pendingDetach
-            ? `"${pendingDetach.title}"을(를) 이 에이전트에서 제거합니다. 스킬 자체는 사라지지 않아요.`
+            ? `"${pendingDetach.template?.title ?? pendingDetach.record.displayName}"을(를) 이 에이전트에서 제거합니다. 저장된 템플릿은 유지됩니다.`
             : undefined
         }
         confirmLabel="해제"
-        onConfirm={() => {
+        pending={skillMutating}
+        onConfirm={async () => {
           if (!pendingDetach) return;
-          detachSkill(pendingDetach.id);
-          toast.success("스킬을 해제했습니다.");
-          setPendingDetach(null);
+          try {
+            await detachSkill(pendingDetach.record.id);
+            toast.success("스킬을 해제했습니다.");
+            setPendingDetach(null);
+          } catch (error) {
+            toast.error("스킬을 해제하지 못했습니다.", {
+              description: error instanceof Error ? error.message : undefined,
+            });
+          }
         }}
       />
     </div>
@@ -421,19 +455,28 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function EquippedSkillCard({
-  skill,
+  item,
   fromAgentId,
   onDetach,
   readOnly = false,
 }: {
-  skill: MdTemplateDefinition;
+  item: EquippedSkillItem;
   fromAgentId: string;
   onDetach: () => void;
   readOnly?: boolean;
 }) {
-  const theme = skillKindTheme(skill);
+  const skill = item.template;
+  const theme = skillKindTheme(skill ?? { category: "document", triggerLabel: "리서치" });
   const Icon = theme.Icon;
-  const skillHref = `/skills/${encodeURIComponent(skill.id)}?from=agent:${encodeURIComponent(fromAgentId)}`;
+  const title = skill?.title ?? item.record.displayName;
+  const description =
+    skill?.description ??
+    item.record.description ??
+    "이 에이전트 workspace와 runtime home에 설치된 agent-local skill입니다.";
+  const triggerLabel = skill?.triggerLabel ?? item.record.invocation;
+  const skillHref = skill
+    ? `/skills/${encodeURIComponent(skill.id)}?from=agent:${encodeURIComponent(fromAgentId)}`
+    : null;
 
   return (
     <div className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
@@ -447,21 +490,27 @@ function EquippedSkillCard({
             theme.chip,
           )}
         >
-          {skill.triggerLabel}
+          {triggerLabel}
         </span>
       </div>
 
       <div className="mt-3 min-w-0 flex-1">
-        <Link
-          to={skillHref}
-          className="block min-w-0 no-underline"
-        >
-          <h3 className="truncate text-sm font-semibold text-foreground hover:underline">
-            {skill.title}
+        {skillHref ? (
+          <Link
+            to={skillHref}
+            className="block min-w-0 no-underline"
+          >
+            <h3 className="truncate text-sm font-semibold text-foreground hover:underline">
+              {title}
+            </h3>
+          </Link>
+        ) : (
+          <h3 className="truncate text-sm font-semibold text-foreground">
+            {title}
           </h3>
-        </Link>
+        )}
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-          {skill.description}
+          {description}
         </p>
       </div>
 
@@ -487,11 +536,13 @@ function SkillPickerDialog({
   onOpenChange,
   available,
   onAttach,
+  pending,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   available: MdTemplateDefinition[];
-  onAttach: (skillId: string) => void;
+  onAttach: (skill: MdTemplateDefinition) => void | Promise<void>;
+  pending: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -516,11 +567,12 @@ function SkillPickerDialog({
                 <li key={skill.id} className="h-full">
                   <button
                     type="button"
-                    onClick={() => {
-                      onAttach(skill.id);
+                    disabled={pending}
+                    onClick={async () => {
+                      await onAttach(skill);
                       onOpenChange(false);
                     }}
-                    className="flex h-full w-full items-start gap-3 overflow-hidden rounded-xl border border-border/70 bg-background p-4 text-left transition hover:border-foreground/40 hover:bg-muted/40"
+                    className="flex h-full w-full items-start gap-3 overflow-hidden rounded-xl border border-border/70 bg-background p-4 text-left transition hover:border-foreground/40 hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", theme.icon)}>
                       <Icon className="size-5" />
@@ -564,7 +616,14 @@ function AgentTaskList({ agentId }: { agentId: string }) {
   }
 
   const items = chats
-    .filter((chat) => taskAgentMap[chat.id] === agentId)
+    .filter(
+      (chat) =>
+        taskAgentMap[chat.id] === agentId ||
+        chat.worker?.agentId === agentId ||
+        chat.dispatches.some(
+          (dispatch) => dispatch.orchestration?.agentId === agentId,
+        ),
+    )
     .map((chat) => ({
       id: chat.id,
       title: chat.title || getRockyTaskRequest(chat) || "제목 없음",

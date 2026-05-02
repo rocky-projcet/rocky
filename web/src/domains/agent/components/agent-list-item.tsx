@@ -3,7 +3,7 @@ import { ArrowRight, Sparkles, Zap } from "lucide-react";
 
 import { useAgentSessionsQuery } from "@/domains/session/hooks";
 import { summarizeTaskRequests } from "@/domains/session/lib/request-status";
-import { readAgentSkillIds } from "../lib/agent-skill-store";
+import { useAgentSkillCount } from "../lib/agent-skill-store";
 import { useAgentEmoji } from "../lib/agent-avatar-store";
 import { AgentAvatar } from "./agent-avatar";
 import { Badge } from "@/shared/ui/badge";
@@ -16,7 +16,7 @@ export function AgentListItem({ agent }: { agent: AgentSummary }) {
   });
   const sessions = sessionsQuery.data ?? [];
   const summary = summarizeTaskRequests(sessions);
-  const equippedSkillCount = readAgentSkillIds(agent.id).length;
+  const equippedSkillCount = useAgentSkillCount(agent.id);
 
   const tinted = agent.color
     ? {

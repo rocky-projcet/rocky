@@ -1,5 +1,6 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import {
   ArrowRight,
   Clock3,
@@ -8,9 +9,10 @@ import {
   ListTodo,
   Loader2,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 
-import { useRockyChatsQuery } from "@/domains/rocky/hooks";
+import { useDeleteRockyChatMutation, useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
   formatRockyTaskDateTime,
   formatRockyTaskDuration,
@@ -36,6 +38,7 @@ import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
+import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -81,6 +84,26 @@ export function TasksPage() {
   const { userTemplates } = useMdTemplates();
   const rockyChatsQuery = useRockyChatsQuery();
   const agentsQuery = useAgentsQuery({ includeArchived: true });
+  const deleteChatMutation = useDeleteRockyChatMutation(null);
+  const [pendingDelete, setPendingDelete] = useState<RockyChatRecord | null>(null);
+
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
+    deleteChatMutation.mutate(target.id, {
+      onSuccess: () => {
+        toast.success("작업을 삭제했습니다.", {
+          description: target.title || getRockyTaskRequest(target),
+        });
+        setPendingDelete(null);
+      },
+      onError: (error) => {
+        toast.error("작업 삭제에 실패했습니다.", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      },
+    });
+  }
 
   const chats = rockyChatsQuery.data ?? [];
   const sortedChats = useMemo(
@@ -197,6 +220,7 @@ export function TasksPage() {
                   : null
               }
               templates={userTemplates}
+              onDelete={() => setPendingDelete(chat)}
             />
           ))
         ) : (
@@ -216,6 +240,23 @@ export function TasksPage() {
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(null);
+        }}
+        title="작업을 삭제할까요?"
+        description={
+          pendingDelete
+            ? `"${pendingDelete.title || getRockyTaskRequest(pendingDelete)}" 작업과 대화 기록을 되돌릴 수 없게 삭제합니다.`
+            : undefined
+        }
+        confirmLabel="삭제"
+        destructive
+        pending={deleteChatMutation.isPending}
+        onConfirm={confirmDelete}
+      />
     </PageContainer>
   );
 }
@@ -353,10 +394,12 @@ function TaskCard({
   chat,
   agent,
   templates,
+  onDelete,
 }: {
   chat: RockyChatRecord;
   agent: AgentRecord | null;
   templates: MdTemplateDefinition[];
+  onDelete: () => void;
 }) {
   const status = getRockyTaskStatus(chat);
   const inputFiles = getRockyTaskInputFiles(chat);
@@ -383,11 +426,17 @@ function TaskCard({
       }
     : undefined;
 
+  function handleDeleteClick(event: ReactMouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    onDelete();
+  }
+
   return (
     <Link
       to={taskHref}
       style={tinted}
-      className="block rounded-lg border bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+      className="group block rounded-lg border bg-card p-4 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
     >
       <article>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -437,17 +486,28 @@ function TaskCard({
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            nativeButton={false}
-            onClick={(event) => event.stopPropagation()}
-            render={<Link to={taskHref} />}
-          >
-            열기
-            <ArrowRight className="size-4" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              onClick={handleDeleteClick}
+              aria-label="작업 삭제"
+              className="border-destructive/40 text-destructive opacity-0 transition hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              onClick={(event) => event.stopPropagation()}
+              render={<Link to={taskHref} />}
+            >
+              열기
+              <ArrowRight className="size-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">

@@ -3566,20 +3566,18 @@ function ArtifactFallbackPreview({
 function TemplateSelectedFilePreview({
   active,
   file,
-  refreshKey,
 }: {
   active: boolean;
   file: TemplatePanelFile | null;
-  refreshKey: string;
 }) {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
   const [folderOpenPending, setFolderOpenPending] = useState(false);
+  const wasActiveRef = useRef(active);
   const workspacePreviewQuery = useQuery({
     queryKey: [
       "rocky-template-file-preview",
       file?.agentId ?? "unknown",
       file?.workspacePath ?? "",
-      refreshKey,
     ],
     queryFn: () =>
       agentEngineClient.getAgentWorkspaceFilePreview(
@@ -3587,8 +3585,6 @@ function TemplateSelectedFilePreview({
         file!.workspacePath!
       ),
     enabled: Boolean(file?.agentId && file.workspacePath),
-    refetchInterval: active ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS : false,
-    refetchIntervalInBackground: active,
   });
   const artifactPreviewSource = file?.artifact
     ? buildArtifactPreviewPanelSource(file.artifact)
@@ -3605,6 +3601,17 @@ function TemplateSelectedFilePreview({
       setPreviewMode("viewer");
     }
   }, [canUseOriginalMode, previewMode]);
+
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = active;
+
+    if (!wasActive || active || !file?.agentId || !file.workspacePath) {
+      return;
+    }
+
+    void workspacePreviewQuery.refetch();
+  }, [active, file?.agentId, file?.workspacePath, workspacePreviewQuery.refetch]);
 
   if (!file) {
     return (
@@ -3754,7 +3761,6 @@ function TemplateFilePanel({
   onClearExternalPreview,
   onClose,
   panelWidth,
-  refreshKey,
 }: {
   context: TemplateFilePanelContext;
   externalPreviewSource: RockyPreviewPanelSource | null;
@@ -3762,7 +3768,6 @@ function TemplateFilePanel({
   onClearExternalPreview: () => void;
   onClose: () => void;
   panelWidth: number;
-  refreshKey: string;
 }) {
   const allFiles = [...context.outputFiles, ...context.inputFiles];
   const defaultSelectedKey =
@@ -4054,7 +4059,6 @@ function TemplateFilePanel({
             <TemplateSelectedFilePreview
               active={context.active}
               file={selectedFile}
-              refreshKey={refreshKey}
             />
           </div>
         </div>
@@ -4224,7 +4228,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       transcriptsBySessionId,
     });
   }, [chat, transcriptRefreshMarker, packagedInputRefreshMarker, userTemplates]);
-  const templateFileRefreshKey = `${chat?.updatedAt ?? "no-chat"}:${transcriptRefreshMarker}`;
   const filePanelSignature = filePanelContext
     ? [
         chat?.id ?? "no-chat",
@@ -4648,7 +4651,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
           onClearExternalPreview={() => setPreviewPanelSource(null)}
           onClose={closeFilePanel}
           panelWidth={filePanelWidth}
-          refreshKey={templateFileRefreshKey}
         />
       ) : !filePanelContext && previewPanelSource ? (
         <ArtifactPreviewPanel

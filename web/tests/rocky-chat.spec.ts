@@ -1,5 +1,187 @@
 import { expect, test } from "@playwright/test";
 
+test("right file preview does not reload while Rocky is answering", async ({ page }) => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const chatId = "preview-refresh-test";
+  const agentId = "agent-preview-refresh";
+  const sessionId = "session-preview-refresh";
+  let chatRequests = 0;
+  let previewRequests = 0;
+
+  const runningChat = () => {
+    chatRequests += 1;
+    const updatedAt = new Date(Date.parse(now) + chatRequests * 1000).toISOString();
+
+    return {
+      id: chatId,
+      title: "미리보기 안정성 테스트",
+      intent: "conversation",
+      domain: "general",
+      worker: {
+        id: "worker-preview-refresh",
+        skillId: "general",
+        domain: "general",
+        displayName: "General",
+        agentId,
+        reason: "test",
+        status: "ready",
+        createdAt: now,
+        updatedAt,
+      },
+      attachments: [
+        {
+          id: "attachment-source",
+          name: "source.md",
+          contentType: "text/markdown",
+          size: 20,
+          workspacePath: "uploads/rocky/source.md",
+          addedAt: now,
+        },
+      ],
+      messages: [
+        {
+          id: "message-user",
+          chatId,
+          role: "user",
+          intent: "conversation",
+          text: "파일을 보고 답변해줘",
+          attachmentIds: ["attachment-source"],
+          domain: "general",
+          workerId: "worker-preview-refresh",
+          skillCandidateIds: [],
+          usedSkills: [],
+          dispatchId: null,
+          createdAt: now,
+        },
+        {
+          id: "message-rocky",
+          chatId,
+          role: "rocky",
+          intent: "conversation",
+          text: "",
+          attachmentIds: [],
+          domain: "general",
+          workerId: "worker-preview-refresh",
+          skillCandidateIds: [],
+          usedSkills: [],
+          dispatchId: "dispatch-preview-refresh",
+          createdAt: now,
+        },
+      ],
+      skillCandidates: [],
+      dispatches: [
+        {
+          id: "dispatch-preview-refresh",
+          chatId,
+          messageId: "message-user",
+          skillId: "general",
+          intent: "conversation",
+          domain: "general",
+          workerId: "worker-preview-refresh",
+          attachmentIds: ["attachment-source"],
+          originalRequest: "파일을 보고 답변해줘",
+          skillCandidateIds: [],
+          protectionHints: [],
+          orchestration: {
+            id: "orchestration-preview-refresh",
+            status: "running",
+            agentId,
+            sessionId,
+            runId: null,
+            output: null,
+            error: null,
+            startedAt: now,
+            endedAt: null,
+            updatedAt,
+          },
+          executionStarted: true,
+          createdAt: now,
+        },
+      ],
+      orchestration: null,
+      executionStarted: true,
+      createdAt: now,
+      updatedAt,
+    };
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(runningChat()),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "Preview Refresh Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/preview-refresh-agent",
+        runtimeHome: "/tmp/preview-refresh-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace/file?**`, async (route) => {
+    previewRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/preview-refresh-agent",
+        path: "uploads/rocky/source.md",
+        name: "source.md",
+        contentType: "text/markdown",
+        size: 20,
+        updatedAt: now,
+        previewKind: "markdown",
+        text: "stable preview body",
+        lineCount: 1,
+        truncated: false,
+        downloadUrl: `/agents/${agentId}/workspace/file/content?path=uploads%2Frocky%2Fsource.md`,
+        inlinePreviewUrl: null,
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("Input / Output").first()).toBeVisible();
+  await expect(page.getByText("stable preview body")).toBeVisible();
+  expect(previewRequests).toBe(1);
+
+  await page.waitForTimeout(3600);
+  expect(previewRequests).toBe(1);
+});
+
 test("home starts Rocky work and task routes own the conversation", async ({
   page,
   request,

@@ -1,5 +1,4 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import {
   AudioLines,
   ChevronRight,
@@ -36,6 +35,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
 import { IconButton } from "@/shared/ui/icon-button";
 import {
@@ -179,6 +179,7 @@ function codeLanguageMetadata(record: AgentWorkspaceFilePreviewRecord): {
     ".jsonl": { label: "JSONL", language: "json" },
     ".jsx": { label: "React", language: "jsx" },
     ".md": { label: "Markdown", language: "markdown" },
+    ".markdown": { label: "Markdown", language: "markdown" },
     ".mjs": { label: "JavaScript", language: "js" },
     ".php": { label: "PHP", language: "php" },
     ".py": { label: "Python", language: "python" },
@@ -361,61 +362,24 @@ function MarkdownPreviewPanel(props: {
 
       <TabsContent
         value="preview"
-        className={cn("min-h-0 flex-1 custom-scrollbar overflow-auto", props.compact ? "px-3 py-3" : "px-5 py-5")}
+        className="min-h-0 flex-1 overflow-hidden"
       >
-        <article className="space-y-4 text-sm leading-7 text-foreground">
-          <ReactMarkdown
-            components={{
-              h1: (props) => <h1 className="text-2xl font-semibold tracking-tight" {...props} />,
-              h2: (props) => <h2 className="text-xl font-semibold tracking-tight" {...props} />,
-              h3: (props) => <h3 className="text-lg font-semibold" {...props} />,
-              p: (props) => <p className="leading-7 text-foreground" {...props} />,
-              a: ({ children, href }) => (
-                <WorkspaceAwareMarkdownLink
-                  href={href}
-                  workspaceRoot={props.workspaceRoot}
-                  onOpenWorkspacePath={props.onOpenWorkspacePath}
-                  className="inline border-0 bg-transparent p-0 font-medium text-foreground underline decoration-border underline-offset-4"
-                >
-                  {children}
-                </WorkspaceAwareMarkdownLink>
-              ),
-              ul: (props) => <ul className="list-disc space-y-2 pl-5" {...props} />,
-              ol: (props) => <ol className="list-decimal space-y-2 pl-5" {...props} />,
-              li: (props) => <li className="leading-7" {...props} />,
-              blockquote: (props) => (
-                <blockquote className="border-l-2 border-border pl-4 text-muted-foreground" {...props} />
-              ),
-              code: ({ children, className, ...props }) => {
-                const inline = !className;
-                if (inline) {
-                  return (
-                    <code
-                      className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-xs text-foreground"
-                      {...props}
-                    >
-                      {children}
-                    </code>
-                  );
-                }
-
-                return (
-                  <code className="font-mono text-xs text-slate-100" {...props}>
-                    {children}
-                  </code>
-                );
-              },
-              pre: (props) => (
-                <pre
-                  className="custom-scrollbar overflow-x-auto rounded-2xl bg-slate-950 px-4 py-4 text-slate-100"
-                  {...props}
-                />
-              ),
-            }}
-          >
-            {props.text}
-          </ReactMarkdown>
-        </article>
+        <MarkdownDocumentPreview
+          markdown={props.text}
+          className={props.compact ? "px-3 py-3" : "px-5 py-5"}
+          components={{
+            a: ({ children, href }) => (
+              <WorkspaceAwareMarkdownLink
+                href={href}
+                workspaceRoot={props.workspaceRoot}
+                onOpenWorkspacePath={props.onOpenWorkspacePath}
+                className="inline border-0 bg-transparent p-0 font-medium text-foreground underline decoration-border underline-offset-4"
+              >
+                {children}
+              </WorkspaceAwareMarkdownLink>
+            ),
+          }}
+        />
       </TabsContent>
 
       <TabsContent value="source" className="min-h-0 flex-1 overflow-hidden">

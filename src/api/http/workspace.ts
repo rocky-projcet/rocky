@@ -173,8 +173,10 @@ function isEnvLikeWorkspaceFile(filePath: string): boolean {
 }
 
 function isMarkdownPreview(filePath: string, contentType: string): boolean {
+  const extension = extensionForWorkspaceFile(filePath);
   return (
-    extensionForWorkspaceFile(filePath) === ".md" ||
+    extension === ".md" ||
+    extension === ".markdown" ||
     baseContentType(contentType) === "text/markdown"
   );
 }

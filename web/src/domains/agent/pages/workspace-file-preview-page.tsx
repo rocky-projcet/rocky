@@ -8,17 +8,11 @@ import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-prev
 import { Button } from "@/shared/ui/button";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type { AgentWorkspaceFilePreviewRecord } from "@/shared/lib/agent-engine-client";
+import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
 
 const PPT_CONTENT_TYPE = "application/vnd.ms-powerpoint";
 const PPTX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-const TEXT_WORKSPACE_PREVIEW_KINDS = new Set([
-  "text",
-  "code",
-  "markdown",
-  "html",
-]);
-
 function baseContentType(value: string): string {
   return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -59,11 +53,32 @@ function WorkspaceFilePreviewBody({
   }
 
   if (
-    TEXT_WORKSPACE_PREVIEW_KINDS.has(record.previewKind) &&
+    record.previewKind === "html" &&
     typeof record.text === "string"
   ) {
     return (
-      <pre className="min-h-full whitespace-pre-wrap break-words p-6 font-mono text-sm leading-6 text-foreground">
+      <iframe
+        title={`${record.name} HTML 미리보기`}
+        srcDoc={record.text}
+        sandbox=""
+        className="h-full w-full border-0 bg-white"
+      />
+    );
+  }
+
+  if (
+    record.previewKind === "markdown" &&
+    typeof record.text === "string"
+  ) {
+    return <MarkdownDocumentPreview markdown={record.text} />;
+  }
+
+  if (
+    (record.previewKind === "text" || record.previewKind === "code") &&
+    typeof record.text === "string"
+  ) {
+    return (
+      <pre className="custom-scrollbar h-full whitespace-pre-wrap break-words overflow-auto p-6 font-mono text-sm leading-6 text-foreground">
         {record.text || "빈 파일입니다."}
       </pre>
     );

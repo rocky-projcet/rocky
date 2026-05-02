@@ -82,7 +82,7 @@ export function contentTypeForArtifactPath(filePath: string): string {
     return "text/plain; charset=utf-8";
   }
 
-  if (extension === ".md") {
+  if (extension === ".md" || extension === ".markdown") {
     return "text/markdown; charset=utf-8";
   }
 

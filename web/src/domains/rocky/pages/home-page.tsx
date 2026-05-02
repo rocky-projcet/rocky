@@ -64,6 +64,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
@@ -2559,7 +2560,25 @@ function isFetchedTextKind(kind: RockyPreviewPanelSource["kind"]): boolean {
   return kind === "html" || kind === "markdown" || kind === "text";
 }
 
-function useFetchedArtifactText(source: RockyPreviewPanelSource): {
+function previewSourceHasOriginalMode(source: RockyPreviewPanelSource): boolean {
+  return isFetchedTextKind(source.kind);
+}
+
+function workspaceRecordHasOriginalMode(record: AgentWorkspaceFilePreviewRecord): boolean {
+  return (
+    TEXT_WORKSPACE_PREVIEW_KINDS.has(record.previewKind) &&
+    typeof record.text === "string"
+  );
+}
+
+function effectivePreviewModeFor(
+  mode: PreviewMode,
+  canUseOriginalMode: boolean
+): PreviewMode {
+  return canUseOriginalMode ? mode : "viewer";
+}
+
+function useFetchedArtifactText(source: RockyPreviewPanelSource | null): {
   state:
     | { kind: "idle" }
     | { kind: "loading" }
@@ -2571,10 +2590,10 @@ function useFetchedArtifactText(source: RockyPreviewPanelSource): {
     | { kind: "loading" }
     | { kind: "ready"; text: string }
     | { kind: "error"; message: string }
-  >(() => (isFetchedTextKind(source.kind) ? { kind: "loading" } : { kind: "idle" }));
+  >(() => (source && isFetchedTextKind(source.kind) ? { kind: "loading" } : { kind: "idle" }));
 
   useEffect(() => {
-    if (!isFetchedTextKind(source.kind)) {
+    if (!source || !isFetchedTextKind(source.kind)) {
       setState({ kind: "idle" });
       return;
     }
@@ -2598,7 +2617,7 @@ function useFetchedArtifactText(source: RockyPreviewPanelSource): {
       });
 
     return () => controller.abort();
-  }, [source.downloadHref, source.kind]);
+  }, [source?.downloadHref, source?.kind]);
 
   return { state };
 }
@@ -2612,6 +2631,25 @@ function copyArtifactText(text: string, name: string): void {
     .writeText(text)
     .then(() => toast.success(`${name} 내용을 복사했습니다.`))
     .catch(() => toast.error("복사에 실패했습니다."));
+}
+
+function SourceTextPreview({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  return (
+    <pre
+      className={cn(
+        "custom-scrollbar h-full min-h-full overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-xs leading-6 text-foreground",
+        className
+      )}
+    >
+      {text || "빈 파일입니다."}
+    </pre>
+  );
 }
 
 function PreviewModeToggle({
@@ -2668,7 +2706,7 @@ function OriginalFilePreview({
   name: string;
   openHref: string | null;
 }) {
-  const href = openHref ?? downloadHref;
+  const href = openHref;
 
   if (href && canEmbedOriginalFile(contentType, name)) {
     if (baseContentType(contentType).startsWith("image/")) {
@@ -2892,12 +2930,20 @@ function ArtifactPreviewPanel({
 
   const panelLabel = panelLabelFor(source.kind);
   const closeLabel = `${panelLabel} 닫기`;
+  const canUseOriginalMode = previewSourceHasOriginalMode(source);
+  const effectivePreviewMode = effectivePreviewModeFor(previewMode, canUseOriginalMode);
   const nativeOpenLabel = nativeOpenPending
     ? "PowerPoint 여는 중"
     : "PowerPoint에서 열기";
-  const previewOpenHref = source.previewHref ?? source.downloadHref;
+  const previewOpenHref = source.previewHref ?? null;
   const canCopy =
     state.kind === "ready" && (source.kind === "markdown" || source.kind === "text");
+
+  useEffect(() => {
+    if (!canUseOriginalMode && previewMode === "original") {
+      setPreviewMode("viewer");
+    }
+  }, [canUseOriginalMode, previewMode]);
 
   function openNativePowerPoint(): void {
     if (!source.nativeOpenPath || nativeOpenPending) {
@@ -2955,7 +3001,9 @@ function ArtifactPreviewPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
+          {canUseOriginalMode ? (
+            <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
+          ) : null}
           {canCopy && state.kind === "ready" ? (
             <button
               type="button"
@@ -2966,14 +3014,16 @@ function ArtifactPreviewPanel({
               복사
             </button>
           ) : null}
-          <a
-            href={previewOpenHref}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
-          >
-            새 창
-          </a>
+          {previewOpenHref ? (
+            <a
+              href={previewOpenHref}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground no-underline transition hover:bg-secondary"
+            >
+              새 창
+            </a>
+          ) : null}
           {source.nativeOpenPath ? (
             <button
               type="button"
@@ -3016,7 +3066,7 @@ function ArtifactPreviewPanel({
       </header>
 
       <div className="min-h-0 flex-1 bg-white">
-        <ArtifactPreviewBody mode={previewMode} source={source} state={state} />
+        <ArtifactPreviewBody mode={effectivePreviewMode} source={source} state={state} />
       </div>
     </aside>
   );
@@ -3036,12 +3086,36 @@ function ArtifactPreviewBody({
     | { kind: "error"; message: string };
 }) {
   if (mode === "original") {
+    if (isFetchedTextKind(source.kind)) {
+      if (state.kind === "loading") {
+        return (
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            원본을 불러오는 중입니다.
+          </div>
+        );
+      }
+
+      if (state.kind === "error") {
+        return (
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            원본을 불러오지 못했습니다. {state.message}
+          </div>
+        );
+      }
+
+      if (state.kind === "ready") {
+        return <SourceTextPreview text={state.text} />;
+      }
+
+      return null;
+    }
+
     return (
       <OriginalFilePreview
         contentType={source.contentType}
         downloadHref={source.downloadHref}
         name={source.name}
-        openHref={source.previewHref ?? source.downloadHref}
+        openHref={source.previewHref ?? null}
       />
     );
   }
@@ -3064,23 +3138,31 @@ function ArtifactPreviewBody({
   }
 
   if (source.kind === "pdf") {
-    return (
+    return source.previewHref ? (
       <iframe
         title={`${source.name} PDF 미리보기`}
-        src={source.previewHref ?? source.downloadHref}
+        src={source.previewHref}
         className="h-full w-full border-0"
       />
+    ) : (
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        PDF 미리보기를 준비하지 못했습니다.
+      </div>
     );
   }
 
   if (source.kind === "image") {
-    return (
+    return source.previewHref ? (
       <div className="flex h-full items-center justify-center bg-muted/40 p-4">
         <img
-          src={source.previewHref ?? source.downloadHref}
+          src={source.previewHref}
           alt={source.name}
           className="max-h-full max-w-full object-contain"
         />
+      </div>
+    ) : (
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        이미지 미리보기를 준비하지 못했습니다.
       </div>
     );
   }
@@ -3114,19 +3196,11 @@ function ArtifactPreviewBody({
     }
 
     if (source.kind === "markdown") {
-      return (
-        <div className="custom-scrollbar h-full overflow-y-auto px-6 py-5 text-sm leading-7 text-foreground">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.text}</ReactMarkdown>
-        </div>
-      );
+      return <MarkdownDocumentPreview markdown={state.text} />;
     }
 
     if (source.kind === "text") {
-      return (
-        <pre className="custom-scrollbar h-full overflow-auto whitespace-pre-wrap break-words px-6 py-5 font-mono text-xs leading-6 text-foreground">
-          {state.text}
-        </pre>
-      );
+      return <SourceTextPreview text={state.text} />;
     }
   }
 
@@ -3143,9 +3217,17 @@ function EmbeddedArtifactPreviewPanel({
   const { state } = useFetchedArtifactText(source);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
   const [folderOpenPending, setFolderOpenPending] = useState(false);
-  const previewOpenHref = source.previewHref ?? source.downloadHref;
+  const previewOpenHref = source.previewHref ?? null;
+  const canUseOriginalMode = previewSourceHasOriginalMode(source);
+  const effectivePreviewMode = effectivePreviewModeFor(previewMode, canUseOriginalMode);
   const canCopy =
     state.kind === "ready" && (source.kind === "markdown" || source.kind === "text");
+
+  useEffect(() => {
+    if (!canUseOriginalMode && previewMode === "original") {
+      setPreviewMode("viewer");
+    }
+  }, [canUseOriginalMode, previewMode]);
 
   function openActualFolder(): void {
     if (!source.folderOpenPath || folderOpenPending) {
@@ -3181,7 +3263,9 @@ function EmbeddedArtifactPreviewPanel({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
+          {canUseOriginalMode ? (
+            <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
+          ) : null}
           {canCopy && state.kind === "ready" ? (
             <Button
               type="button"
@@ -3194,16 +3278,18 @@ function EmbeddedArtifactPreviewPanel({
               <Copy className="size-4" />
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="새 창에서 열기"
-            title="새 창에서 열기"
-            render={<a href={previewOpenHref} target="_blank" rel="noreferrer" />}
-          >
-            <ExternalLink className="size-4" />
-          </Button>
+          {previewOpenHref ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="새 창에서 열기"
+              title="새 창에서 열기"
+              render={<a href={previewOpenHref} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLink className="size-4" />
+            </Button>
+          ) : null}
           {source.folderOpenPath ? (
             <Button
               type="button"
@@ -3229,7 +3315,7 @@ function EmbeddedArtifactPreviewPanel({
         </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
-        <ArtifactPreviewBody mode={previewMode} source={source} state={state} />
+        <ArtifactPreviewBody mode={effectivePreviewMode} source={source} state={state} />
       </div>
     </div>
   );
@@ -3344,35 +3430,39 @@ function WorkspacePreviewBody({
   mode: PreviewMode;
   record: AgentWorkspaceFilePreviewRecord;
 }) {
+  const canUseOriginalMode = workspaceRecordHasOriginalMode(record);
+  const effectiveMode = effectivePreviewModeFor(mode, canUseOriginalMode);
   const inlinePreviewHref = record.inlinePreviewUrl
     ? agentEngineClient.resolveApiPath(record.inlinePreviewUrl)
     : null;
   const downloadHref = agentEngineClient.resolveApiPath(record.downloadUrl);
+  const text = typeof record.text === "string" ? record.text : null;
 
-  if (mode === "original") {
-    return (
-      <OriginalFilePreview
-        contentType={record.contentType}
-        downloadHref={downloadHref}
-        name={record.name}
-        openHref={inlinePreviewHref}
-      />
-    );
+  if (effectiveMode === "original" && text !== null) {
+    return <SourceTextPreview text={text} className="px-4 py-4" />;
   }
 
   if (isXlsxFile(record.name, record.contentType)) {
     return <SpreadsheetPreviewBody downloadHref={downloadHref} />;
   }
 
-  if (
-    TEXT_WORKSPACE_PREVIEW_KINDS.has(record.previewKind) &&
-    typeof record.text === "string"
-  ) {
+  if (record.previewKind === "html" && text !== null) {
     return (
-      <pre className="min-h-full whitespace-pre-wrap break-words p-4 font-mono text-xs leading-6 text-foreground">
-        {record.text || "빈 파일입니다."}
-      </pre>
+      <iframe
+        title={`${record.name} HTML 미리보기`}
+        srcDoc={text}
+        sandbox=""
+        className="h-full w-full border-0"
+      />
     );
+  }
+
+  if (record.previewKind === "markdown" && text !== null) {
+    return <MarkdownDocumentPreview markdown={text} className="px-4 py-4" />;
+  }
+
+  if ((record.previewKind === "text" || record.previewKind === "code") && text !== null) {
+    return <SourceTextPreview text={text} className="px-4 py-4" />;
   }
 
   if (record.previewKind === "image" && inlinePreviewHref) {
@@ -3442,56 +3532,25 @@ function ArtifactFallbackPreview({
   artifact: AgentSessionArtifactManifestEntry;
   mode: PreviewMode;
 }) {
-  const previewHref = artifact.previewUrl
-    ? agentEngineClient.resolveApiPath(artifact.previewUrl)
-    : null;
-  const downloadHref = agentEngineClient.resolveApiPath(artifact.downloadUrl);
+  const source = buildArtifactPreviewPanelSource(artifact);
+  const { state } = useFetchedArtifactText(source);
 
-  if (mode === "original") {
+  if (source) {
+    const canUseOriginalMode = previewSourceHasOriginalMode(source);
     return (
-      <OriginalFilePreview
-        contentType={artifact.contentType}
-        downloadHref={downloadHref}
-        name={artifact.name}
-        openHref={previewHref}
+      <ArtifactPreviewBody
+        mode={effectivePreviewModeFor(mode, canUseOriginalMode)}
+        source={source}
+        state={state}
       />
     );
   }
 
-  if (isXlsxFile(artifact.name, artifact.contentType)) {
-    return <SpreadsheetPreviewBody downloadHref={downloadHref} />;
-  }
-
-  if (artifact.presentation === "image" && previewHref) {
-    return (
-      <div className="flex min-h-full items-center justify-center bg-muted/40 p-3">
-        <img
-          src={previewHref}
-          alt={artifact.name}
-          className="max-h-full max-w-full object-contain"
-        />
-      </div>
-    );
-  }
-
-  if (isPowerPointArtifact(artifact)) {
-    return (
-      <div className="h-full bg-muted/40 p-3">
-        <PptxArtifactPreview
-          contentType={artifact.contentType}
-          downloadHref={downloadHref}
-          name={artifact.name}
-          previewHref={null}
-        />
-      </div>
-    );
-  }
-
-  if (previewHref) {
+  if (artifact.previewUrl) {
     return (
       <iframe
         title={`${artifact.name} 미리보기`}
-        src={previewHref}
+        src={agentEngineClient.resolveApiPath(artifact.previewUrl)}
         className="h-full w-full border-0 bg-white"
       />
     );
@@ -3531,6 +3590,21 @@ function TemplateSelectedFilePreview({
     refetchInterval: active ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS : false,
     refetchIntervalInBackground: active,
   });
+  const artifactPreviewSource = file?.artifact
+    ? buildArtifactPreviewPanelSource(file.artifact)
+    : null;
+  const canUseOriginalMode = workspacePreviewQuery.data
+    ? workspaceRecordHasOriginalMode(workspacePreviewQuery.data)
+    : artifactPreviewSource
+      ? previewSourceHasOriginalMode(artifactPreviewSource)
+      : false;
+  const effectivePreviewMode = effectivePreviewModeFor(previewMode, canUseOriginalMode);
+
+  useEffect(() => {
+    if (!canUseOriginalMode && previewMode === "original") {
+      setPreviewMode("viewer");
+    }
+  }, [canUseOriginalMode, previewMode]);
 
   if (!file) {
     return (
@@ -3551,7 +3625,7 @@ function TemplateSelectedFilePreview({
       ? workspacePreviewPageHref(file.agentId, file.workspacePath)
       : file.artifact?.previewUrl
         ? agentEngineClient.resolveApiPath(file.artifact.previewUrl)
-        : downloadHref;
+        : null;
   const folderOpenPath = nativeFolderPathForTemplateFile(file);
   const fileRoleLabel = templatePanelRoleLabel(file.role);
 
@@ -3594,7 +3668,9 @@ function TemplateSelectedFilePreview({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
+          {canUseOriginalMode ? (
+            <PreviewModeToggle mode={previewMode} onModeChange={setPreviewMode} />
+          ) : null}
           {file.role === "output" && file.agentId && file.workspacePath ? (
             <Button
               type="button"
@@ -3658,9 +3734,9 @@ function TemplateSelectedFilePreview({
             {file.expected ? "아직 생성되지 않았습니다." : "파일 내용을 불러오지 못했습니다."}
           </div>
         ) : workspacePreviewQuery.data ? (
-          <WorkspacePreviewBody mode={previewMode} record={workspacePreviewQuery.data} />
+          <WorkspacePreviewBody mode={effectivePreviewMode} record={workspacePreviewQuery.data} />
         ) : file.artifact ? (
-          <ArtifactFallbackPreview artifact={file.artifact} mode={previewMode} />
+          <ArtifactFallbackPreview artifact={file.artifact} mode={effectivePreviewMode} />
         ) : (
           <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
             파일 경로가 준비되지 않았습니다.

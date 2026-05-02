@@ -137,8 +137,14 @@ function parseXml(text: string, name: string): Document {
   return document;
 }
 
-function childText(element: Element, tagName: string): string {
-  return element.getElementsByTagName(tagName)[0]?.textContent ?? "";
+function elementsByLocalName(root: Document | Element, localName: string): Element[] {
+  return Array.from(root.getElementsByTagName("*")).filter(
+    (element) => element.localName === localName
+  );
+}
+
+function childText(element: Element, localName: string): string {
+  return elementsByLocalName(element, localName)[0]?.textContent ?? "";
 }
 
 function relationshipId(element: Element): string {
@@ -188,7 +194,7 @@ function cellValue(cell: Element, sharedStrings: string[]): string {
   const type = cell.getAttribute("t") ?? "";
 
   if (type === "inlineStr") {
-    return Array.from(cell.getElementsByTagName("t"))
+    return elementsByLocalName(cell, "t")
       .map((entry) => entry.textContent ?? "")
       .join("");
   }
@@ -216,8 +222,8 @@ function parseSharedStrings(document: Document | null): string[] {
     return [];
   }
 
-  return Array.from(document.getElementsByTagName("si")).map((item) =>
-    Array.from(item.getElementsByTagName("t"))
+  return elementsByLocalName(document, "si").map((item) =>
+    elementsByLocalName(item, "t")
       .map((entry) => entry.textContent ?? "")
       .join("")
   );
@@ -228,7 +234,7 @@ function parseSheet(
   name: string,
   sharedStrings: string[]
 ): XlsxPreviewSheet {
-  const rowElements = Array.from(document.getElementsByTagName("row"));
+  const rowElements = elementsByLocalName(document, "row");
   const rows: string[][] = [];
   let columnCount = 0;
   let truncatedColumns = false;
@@ -237,7 +243,7 @@ function parseSheet(
     const row: string[] = [];
     let fallbackColumnIndex = 0;
 
-    for (const cell of Array.from(rowElement.getElementsByTagName("c"))) {
+    for (const cell of elementsByLocalName(rowElement, "c")) {
       const reference = cell.getAttribute("r") ?? "";
       const columnIndex = columnIndexFromReference(reference) ?? fallbackColumnIndex;
       fallbackColumnIndex = columnIndex + 1;
@@ -297,9 +303,9 @@ export async function parseXlsxPreview(
   );
   const relationshipTargets = new Map<string, string>();
 
-  for (const relationship of Array.from(
-    relationshipsDocument?.getElementsByTagName("Relationship") ?? []
-  )) {
+  for (const relationship of relationshipsDocument
+    ? elementsByLocalName(relationshipsDocument, "Relationship")
+    : []) {
     const id = relationship.getAttribute("Id") ?? "";
     const target = relationship.getAttribute("Target") ?? "";
     if (id && target) {
@@ -308,7 +314,7 @@ export async function parseXlsxPreview(
   }
 
   const sheets: XlsxPreviewSheet[] = [];
-  for (const sheet of Array.from(workbookDocument.getElementsByTagName("sheet"))) {
+  for (const sheet of elementsByLocalName(workbookDocument, "sheet")) {
     const name = sheet.getAttribute("name") ?? `Sheet ${sheets.length + 1}`;
     const target = relationshipTargets.get(relationshipId(sheet));
     if (!target) {

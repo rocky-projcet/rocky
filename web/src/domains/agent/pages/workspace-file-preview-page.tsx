@@ -9,10 +9,13 @@ import { Button } from "@/shared/ui/button";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type { AgentWorkspaceFilePreviewRecord } from "@/shared/lib/agent-engine-client";
 import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
+import { XlsxWorkbookPreview } from "@/shared/components/xlsx-workbook-preview";
 
 const PPT_CONTENT_TYPE = "application/vnd.ms-powerpoint";
 const PPTX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const XLSX_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 function baseContentType(value: string): string {
   return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -29,6 +32,13 @@ function isPowerPointFile(name: string, contentType: string): boolean {
   );
 }
 
+function isXlsxFile(name: string, contentType: string): boolean {
+  const normalizedType = baseContentType(contentType);
+  const normalizedName = name.toLowerCase();
+
+  return normalizedType === XLSX_CONTENT_TYPE || normalizedName.endsWith(".xlsx");
+}
+
 function WorkspaceFilePreviewBody({
   record,
 }: {
@@ -38,6 +48,10 @@ function WorkspaceFilePreviewBody({
     ? agentEngineClient.resolveApiPath(record.inlinePreviewUrl)
     : null;
   const downloadHref = agentEngineClient.resolveApiPath(record.downloadUrl);
+
+  if (isXlsxFile(record.name, record.contentType)) {
+    return <XlsxWorkbookPreview sourceHref={downloadHref} />;
+  }
 
   if (isPowerPointFile(record.name, record.contentType)) {
     return (

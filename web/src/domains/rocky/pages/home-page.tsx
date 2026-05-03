@@ -161,6 +161,7 @@ type FileMentionRange = {
 type TemplateFilePanelContext = {
   title: string;
   outputFormatLabel: string;
+  outputRootPath: string;
   inputFiles: TemplatePanelFile[];
   outputFiles: TemplatePanelFile[];
   hasExplicitOutputFiles: boolean;
@@ -581,6 +582,23 @@ function normalizeTemplateFilePath(value: string): string {
   return value.trim().replace(/^\.\/+/, "").replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function sanitizeRockyTaskPathSegment(value: string): string {
+  return (
+    value
+      .trim()
+      .normalize("NFKC")
+      .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "") || "task"
+  );
+}
+
+function rockyTaskOutputRootPath(chatId: string | null | undefined): string {
+  return chatId
+    ? `${TEMPLATE_OUTPUTS_ROOT}/${sanitizeRockyTaskPathSegment(chatId)}`
+    : TEMPLATE_OUTPUTS_ROOT;
+}
+
 function templateFileName(value: string): string {
   const normalized = normalizeTemplateFilePath(value);
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized;
@@ -604,6 +622,41 @@ function templatePanelFileKind(file: TemplatePanelFile | null | undefined): Temp
 
 function templateFilePathParts(value: string): string[] {
   return normalizeTemplateFilePath(value).split("/").filter(Boolean);
+}
+
+function templatePathIsUnderRoot(
+  workspacePath: string | null | undefined,
+  rootPath: string
+): boolean {
+  const normalizedPath = normalizeTemplateFilePath(workspacePath ?? "");
+  const normalizedRoot = normalizeTemplateFilePath(rootPath);
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}/`)
+  );
+}
+
+function scopeOutputPathToRoot(value: string, outputRootPath: string): string {
+  const normalized = normalizeTemplateFilePath(value);
+  const normalizedRoot = normalizeTemplateFilePath(outputRootPath);
+  if (
+    !normalized ||
+    !normalizedRoot ||
+    normalizedRoot === TEMPLATE_OUTPUTS_ROOT ||
+    templatePathIsUnderRoot(normalized, normalizedRoot)
+  ) {
+    return normalized;
+  }
+
+  if (normalized === TEMPLATE_OUTPUTS_ROOT) {
+    return normalizedRoot;
+  }
+
+  if (normalized.startsWith(`${TEMPLATE_OUTPUTS_ROOT}/`)) {
+    return `${normalizedRoot}/${normalized.slice(TEMPLATE_OUTPUTS_ROOT.length + 1)}`;
+  }
+
+  return normalized;
 }
 
 function templatePanelFileFromDirectoryPath(input: {
@@ -779,15 +832,21 @@ function templatePanelFilesFromWorkspaceEntries(input: {
 }
 
 function collapseOutputFilesToOutputsRootChildren(
-  files: TemplatePanelFile[]
+  files: TemplatePanelFile[],
+  outputRootPath: string
 ): TemplatePanelFile[] {
   const outputChildren = new Map<string, TemplatePanelFile>();
+  const rootParts = templateFilePathParts(outputRootPath);
 
   for (const file of files) {
     const workspacePath = file.workspacePath ?? file.detail;
     const parts = templateFilePathParts(workspacePath);
 
-    if (parts[0] !== TEMPLATE_OUTPUTS_ROOT || parts.length <= 2) {
+    if (
+      rootParts.length === 0 ||
+      !templatePathIsUnderRoot(workspacePath, outputRootPath) ||
+      parts.length <= rootParts.length + 1
+    ) {
       outputChildren.set(templatePanelFileIdentity(file), file);
       continue;
     }
@@ -797,7 +856,7 @@ function collapseOutputFilesToOutputsRootChildren(
       continue;
     }
 
-    const directChildPath = `${TEMPLATE_OUTPUTS_ROOT}/${parts[1]}`;
+    const directChildPath = parts.slice(0, rootParts.length + 1).join("/");
     const directChild = templatePanelFileFromDirectoryPath({
       agentId: file.agentId,
       role: file.role,
@@ -969,7 +1028,10 @@ function nativeFolderPathForTemplateFile(file: TemplatePanelFile): string | null
   return file.artifact ? `${file.artifact.downloadUrl}/open-folder-native` : null;
 }
 
-function outputDirectoryAncestors(workspacePath: string | null | undefined): string[] {
+function outputDirectoryAncestors(
+  workspacePath: string | null | undefined,
+  outputRootPath = TEMPLATE_OUTPUTS_ROOT
+): string[] {
   if (!workspacePath) {
     return [];
   }
@@ -979,13 +1041,17 @@ function outputDirectoryAncestors(workspacePath: string | null | undefined): str
     return [];
   }
 
+  const rootParts = templateFilePathParts(outputRootPath);
   const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 2) {
+  const rootDepth = templatePathIsUnderRoot(normalized, outputRootPath)
+    ? rootParts.length
+    : 1;
+  if (parts.length <= rootDepth + 1) {
     return [];
   }
 
   const directories: string[] = [];
-  for (let index = 2; index < parts.length; index += 1) {
+  for (let index = rootDepth + 1; index < parts.length; index += 1) {
     directories.push(parts.slice(0, index).join("/"));
   }
 
@@ -1849,12 +1915,15 @@ function compareCreatedAtAscending(
 
 function buildTemplateFilePanelContext(input: {
   chat: RockyChatRecord | null;
+  outputRootPath: string;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
   userTemplates: MdTemplateDefinition[];
 }): TemplateFilePanelContext | null {
   if (!input.chat) {
     return null;
   }
+  const outputRootPath =
+    normalizeTemplateFilePath(input.outputRootPath) || TEMPLATE_OUTPUTS_ROOT;
 
   let templateMessage: RockyMessageRecord | null = null;
   let parsedTemplate: ReturnType<typeof parseTemplateRunMessage> = null;
@@ -1912,6 +1981,7 @@ function buildTemplateFilePanelContext(input: {
     ...new Set(
       [...(template?.outputFiles ?? []), ...parsedTemplate.outputFiles]
         .map(normalizeTemplateFilePath)
+        .map((outputPath) => scopeOutputPathToRoot(outputPath, outputRootPath))
         .filter((outputPath) => !isIgnoredPanelWorkspacePath(outputPath))
         .filter(Boolean)
     ),
@@ -1935,7 +2005,7 @@ function buildTemplateFilePanelContext(input: {
 
       rememberObservedOutputPath(
         observedOutputPathMap,
-        outputPath,
+        scopeOutputPathToRoot(outputPath, outputRootPath),
         message.createdAt
       );
     }
@@ -1951,7 +2021,7 @@ function buildTemplateFilePanelContext(input: {
 
       rememberObservedOutputPath(
         observedOutputPathMap,
-        outputPath,
+        scopeOutputPathToRoot(outputPath, outputRootPath),
         dispatch.orchestration?.endedAt ??
           dispatch.orchestration?.updatedAt ??
           dispatch.createdAt
@@ -1978,7 +2048,7 @@ function buildTemplateFilePanelContext(input: {
 
       rememberObservedOutputPath(
         observedOutputPathMap,
-        outputPath,
+        scopeOutputPathToRoot(outputPath, outputRootPath),
         transcriptMessage?.createdAt ?? dispatch.createdAt
       );
     }
@@ -2141,7 +2211,10 @@ function buildTemplateFilePanelContext(input: {
       });
       const existing = outputMap.get(key);
       const createdAt = transcriptMessage?.createdAt ?? dispatch.createdAt;
-      for (const directoryPath of outputDirectoryAncestors(resolvedWorkspacePath)) {
+      for (const directoryPath of outputDirectoryAncestors(
+        resolvedWorkspacePath,
+        outputRootPath
+      )) {
         rememberOutputDirectory({
           outputMap,
           directoryPath,
@@ -2171,6 +2244,7 @@ function buildTemplateFilePanelContext(input: {
   return {
     title: parsedTemplate.title,
     outputFormatLabel: parsedTemplate.outputFormatLabel,
+    outputRootPath,
     inputFiles: [...inputMap.values()],
     outputFiles: [...outputMap.values()].sort(sortTemplateFilesByFreshness),
     hasExplicitOutputFiles: explicitOutputPaths.length > 0,
@@ -2183,12 +2257,16 @@ function buildTemplateFilePanelContext(input: {
 
 function buildGeneralFilePanelContext(input: {
   chat: RockyChatRecord | null;
+  outputRootPath: string;
   packagedInputFiles: TemplatePanelFile[];
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
+  workspaceOutputFiles: TemplatePanelFile[];
 }): TemplateFilePanelContext | null {
   if (!input.chat) {
     return null;
   }
+  const outputRootPath =
+    normalizeTemplateFilePath(input.outputRootPath) || TEMPLATE_OUTPUTS_ROOT;
 
   const inputMap = new Map<string, TemplatePanelFile>();
   const outputMap = new Map<string, TemplatePanelFile>();
@@ -2259,7 +2337,10 @@ function buildGeneralFilePanelContext(input: {
         const key = `output:${templateFileKey(workspacePath ?? artifact.role)}`;
         const existing = outputMap.get(key);
         const createdAt = message.createdAt ?? dispatch.createdAt;
-        for (const directoryPath of outputDirectoryAncestors(workspacePath)) {
+        for (const directoryPath of outputDirectoryAncestors(
+          workspacePath,
+          outputRootPath
+        )) {
           rememberOutputDirectory({
             outputMap,
             directoryPath,
@@ -2288,7 +2369,10 @@ function buildGeneralFilePanelContext(input: {
   }
 
   const inputFiles = [...inputMap.values()].sort(sortTemplateFilesByFreshness);
-  const outputFiles = [...outputMap.values()].sort(sortTemplateFilesByFreshness);
+  const outputFiles = mergeTemplatePanelFiles(
+    input.workspaceOutputFiles,
+    [...outputMap.values()]
+  );
 
   if (inputFiles.length === 0 && outputFiles.length === 0) {
     return null;
@@ -2305,6 +2389,7 @@ function buildGeneralFilePanelContext(input: {
   return {
     title: usedSkillNames.length > 0 ? usedSkillNames.join(", ") : input.chat.title,
     outputFormatLabel: "파일 관리",
+    outputRootPath,
     inputFiles,
     outputFiles,
     hasExplicitOutputFiles: false,
@@ -2621,7 +2706,55 @@ function formatRockyAnswerSeconds(
     return null;
   }
 
-  return `${Math.max(1, Math.round((end - start) / 1000))}초`;
+  return formatDurationLabel(Math.max(1, Math.round((end - start) / 1000)));
+}
+
+function formatDurationLabel(totalSeconds: number): string {
+  if (totalSeconds < 60) {
+    return `${totalSeconds}초`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return seconds > 0 ? `${totalMinutes}분 ${seconds}초` : `${totalMinutes}분`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}시간 ${minutes}분` : `${hours}시간`;
+}
+
+function formatRockyElapsedSeconds(
+  startedAt: string | null | undefined,
+  now: number
+): string | null {
+  if (!startedAt) {
+    return null;
+  }
+
+  const start = new Date(startedAt).getTime();
+  if (!Number.isFinite(start) || now < start) {
+    return null;
+  }
+
+  return formatDurationLabel(Math.floor((now - start) / 1000));
+}
+
+function useElapsedNow(enabled: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  return now;
 }
 
 function MessageAttachmentList({
@@ -2727,12 +2860,14 @@ function MessageBubble({
     message,
     transcriptMessage
   );
+  const isPendingReply = isRocky && rockyMessageState.kind === "pending";
+  const pendingNow = useElapsedNow(isPendingReply);
   const attachments = chat.attachments.filter((attachment) =>
     message.attachmentIds.includes(attachment.id)
   );
   const usedSkills = isRocky ? message.usedSkills : [];
 
-  if (isRocky && rockyMessageState.kind === "pending") {
+  if (isPendingReply) {
     const runId = dispatch?.orchestration?.runId ?? null;
     const progressLabel =
       (runId ? runProgressByRunId[runId] : null) ??
@@ -2741,6 +2876,10 @@ function MessageBubble({
         skillId: dispatch?.skillId ?? null,
         status: dispatch?.orchestration?.status ?? null,
       });
+    const elapsedLabel = formatRockyElapsedSeconds(
+      dispatch?.orchestration?.startedAt ?? dispatch?.createdAt ?? message.createdAt,
+      pendingNow
+    );
 
     return (
       <div className="flex w-full items-start justify-start gap-2.5">
@@ -2757,7 +2896,7 @@ function MessageBubble({
           role="status"
         >
           <div className="inline-flex items-center gap-2">
-            <span>답변중</span>
+            <span>{elapsedLabel ? `답변중 · ${elapsedLabel}` : "답변중"}</span>
             <span className="ia-streaming-dots" aria-label="Rocky가 답변을 작성하고 있습니다">
               <span className="ia-streaming-dot" />
               <span className="ia-streaming-dot" />
@@ -4925,18 +5064,20 @@ function TemplateFilePanel({
   const appliedSelectionRequestIdRef = useRef<number | null>(null);
   const fileKeySignature = allFiles.map((file) => file.key).join("\n");
   const normalizedSearchTerm = searchTerm.trim();
+  const outputRootPath =
+    normalizeTemplateFilePath(context.outputRootPath) || TEMPLATE_OUTPUTS_ROOT;
   const outputRootQuery = useQuery({
     queryKey: [
       "rocky-template-directory-preview",
       outputAgentId ?? "unknown",
-      TEMPLATE_OUTPUTS_ROOT,
+      outputRootPath,
     ],
     queryFn: () =>
-      agentEngineClient.listAgentWorkspace(outputAgentId!, TEMPLATE_OUTPUTS_ROOT),
+      agentEngineClient.listAgentWorkspace(outputAgentId!, outputRootPath),
     enabled: Boolean(outputAgentId),
   });
   const workspaceSearchAgentId = browsedDirectory?.agentId ?? outputAgentId;
-  const workspaceSearchPath = browsedDirectory?.workspacePath ?? TEMPLATE_OUTPUTS_ROOT;
+  const workspaceSearchPath = browsedDirectory?.workspacePath ?? outputRootPath;
   const workspaceSearchQuery = useQuery({
     queryKey: [
       "rocky-template-directory-search",
@@ -4958,7 +5099,8 @@ function TemplateFilePanel({
     (file) => !isTemplateFileDeleted(file, deletedTargets)
   );
   const shallowContextOutputFiles = collapseOutputFilesToOutputsRootChildren(
-    removeExpectedOutputFilesResolvedElsewhere(contextOutputFiles)
+    removeExpectedOutputFilesResolvedElsewhere(contextOutputFiles),
+    outputRootPath
   );
   const outputRootFiles =
     outputRootQuery.data && outputAgentId
@@ -4969,7 +5111,11 @@ function TemplateFilePanel({
         }).filter((file) => !isTemplateFileDeleted(file, deletedTargets))
       : [];
   const contextFallbackOutputFiles = outputRootQuery.data
-    ? shallowContextOutputFiles.filter((file) => file.expected)
+    ? shallowContextOutputFiles.filter(
+        (file) =>
+          file.expected ||
+          !templatePathIsUnderRoot(file.workspacePath ?? file.detail, outputRootPath)
+      )
     : shallowContextOutputFiles;
   const initialOutputFiles = mergeTemplatePanelFiles(
     outputRootFiles,
@@ -5099,7 +5245,7 @@ function TemplateFilePanel({
     const normalizedPath = normalizeTemplateFilePath(file.workspacePath ?? "");
     if (
       file.role === "output" &&
-      (!normalizedPath || normalizedPath === TEMPLATE_OUTPUTS_ROOT)
+      (!normalizedPath || normalizedPath === outputRootPath)
     ) {
       setBrowsedDirectory(null);
       return;
@@ -5152,7 +5298,7 @@ function TemplateFilePanel({
       !normalizedParentPath ||
       normalizedParentPath === "." ||
       (browsedDirectory.role === "output" &&
-        normalizedParentPath === TEMPLATE_OUTPUTS_ROOT)
+        normalizedParentPath === outputRootPath)
     ) {
       setBrowsedDirectory(null);
       return;
@@ -5690,6 +5836,12 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     isTaskDetail ? routeTaskId : chat?.id ?? null
   );
   const { data: refreshedChat, refetch: refetchRockyChat } = rockyChatQuery;
+  const messageCount = chat?.messages.length ?? 0;
+  const hasActiveOrchestration =
+    chat?.dispatches.some((dispatch) => {
+      const status = dispatch.orchestration?.status;
+      return status === "running" || status === "planned";
+    }) ?? false;
   const transcriptSessionIds =
     chat?.dispatches.flatMap((dispatch) =>
       dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
@@ -5700,6 +5852,14 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     ) ?? [];
   const uniqueTranscriptSessionIds = [...new Set(transcriptSessionIds)];
   const uniqueTranscriptAgentIds = [...new Set(transcriptAgentIds)];
+  const outputAgentIds = [
+    ...new Set(
+      [...uniqueTranscriptAgentIds, chat?.worker?.agentId ?? null].filter(
+        (agentId): agentId is string => Boolean(agentId)
+      )
+    ),
+  ];
+  const taskOutputRootPath = rockyTaskOutputRootPath(chat?.id);
   const activeTranscriptSessionIds = new Set(
     chat?.dispatches.flatMap((dispatch) => {
       const orchestration = dispatch.orchestration;
@@ -5730,6 +5890,23 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       queryFn: () => agentEngineClient.getAgent(agentId),
       enabled: Boolean(agentId),
       staleTime: 60_000,
+    })),
+  });
+  const outputRootQueries = useQueries({
+    queries: outputAgentIds.map((agentId) => ({
+      queryKey: [
+        "rocky-template-directory-preview",
+        agentId,
+        taskOutputRootPath,
+      ],
+      queryFn: () =>
+        agentEngineClient.listAgentWorkspace(agentId, taskOutputRootPath),
+      enabled: Boolean(chat?.id && agentId),
+      refetchInterval: hasActiveOrchestration
+        ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS
+        : false,
+      refetchIntervalInBackground: hasActiveOrchestration,
+      retry: false,
     })),
   });
   const skillInputSources = useMemo<SkillInputSource[]>(() => {
@@ -5779,6 +5956,18 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const packagedInputFiles = packagedInputQueries.flatMap(
     (query) => query.data ?? []
   );
+  const workspaceOutputFiles = outputRootQueries.flatMap((query, index) => {
+    const agentId = outputAgentIds[index];
+    if (!agentId || !query.data) {
+      return [];
+    }
+
+    return templatePanelFilesFromWorkspaceEntries({
+      entries: query.data.entries,
+      role: "output",
+      agentId,
+    });
+  });
   const transcriptsBySessionId: Record<string, AgentSessionMessage[]> = {};
   const agentWorkspaceRootsByAgentId: Record<string, string> = {};
   uniqueTranscriptSessionIds.forEach((sessionId, index) => {
@@ -5799,12 +5988,21 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const packagedInputRefreshMarker = packagedInputQueries
     .map((query) => `${query.dataUpdatedAt ?? 0}:${query.data?.length ?? 0}`)
     .join(":");
+  const workspaceOutputRefreshMarker = outputRootQueries
+    .map(
+      (query, index) =>
+        `${outputAgentIds[index] ?? ""}:${query.dataUpdatedAt ?? 0}:${
+          query.data?.entries.length ?? 0
+        }`
+    )
+    .join(":");
   const filePanelContext = useMemo(() => {
     const templateContext = buildTemplateFilePanelContext({
-        chat,
-        transcriptsBySessionId,
-        userTemplates,
-      });
+      chat,
+      outputRootPath: taskOutputRootPath,
+      transcriptsBySessionId,
+      userTemplates,
+    });
 
     if (templateContext) {
       return mergePanelInputFiles(templateContext, packagedInputFiles);
@@ -5812,13 +6010,23 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
 
     return buildGeneralFilePanelContext({
       chat,
+      outputRootPath: taskOutputRootPath,
       packagedInputFiles,
       transcriptsBySessionId,
+      workspaceOutputFiles,
     });
-  }, [chat, transcriptRefreshMarker, packagedInputRefreshMarker, userTemplates]);
+  }, [
+    chat,
+    transcriptRefreshMarker,
+    packagedInputRefreshMarker,
+    workspaceOutputRefreshMarker,
+    taskOutputRootPath,
+    userTemplates,
+  ]);
   const filePanelSignature = filePanelContext
     ? [
         chat?.id ?? "no-chat",
+        filePanelContext.outputRootPath,
         ...filePanelContext.inputFiles.map((file) => file.key),
         ...filePanelContext.outputFiles.map((file) => file.key),
       ].join("\n")
@@ -5836,12 +6044,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   }, [filePanelSignature]);
 
-  const messageCount = chat?.messages.length ?? 0;
-  const hasActiveOrchestration =
-    chat?.dispatches.some((dispatch) => {
-      const status = dispatch.orchestration?.status;
-      return status === "running" || status === "planned";
-    }) ?? false;
   const activeRunIds = useMemo(
     () => [
       ...new Set(
@@ -6102,6 +6304,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       ? {
           title: "파일 미리보기",
           outputFormatLabel: "파일 관리",
+          outputRootPath: taskOutputRootPath,
           inputFiles: [],
           outputFiles: [],
           hasExplicitOutputFiles: false,

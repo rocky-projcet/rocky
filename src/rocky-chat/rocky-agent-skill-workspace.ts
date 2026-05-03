@@ -25,6 +25,8 @@ interface PackagedSkillInputSummary {
 }
 
 const IGNORED_PACKAGED_INPUT_FILENAMES = new Set([".DS_Store"]);
+const ROCKY_TASK_INPUTS_DIRECTORY = "inputs";
+const ROCKY_TASK_OUTPUTS_DIRECTORY = "outputs";
 
 function formatList(items: string[]): string {
   if (items.length === 0) {
@@ -143,6 +145,59 @@ function domainLabel(_domain: RockyChatDomain): string {
   return "일반 요청";
 }
 
+export function sanitizeRockyTaskPathSegment(value: string): string {
+  return (
+    value
+      .trim()
+      .normalize("NFKC")
+      .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "") || "task"
+  );
+}
+
+export function rockyTaskInputDirectory(chatId: string): string {
+  return path.posix.join(
+    ROCKY_TASK_INPUTS_DIRECTORY,
+    sanitizeRockyTaskPathSegment(chatId)
+  );
+}
+
+export function rockyTaskAttachmentDirectory(
+  chatId: string,
+  attachmentId: string
+): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    sanitizeRockyTaskPathSegment(attachmentId)
+  );
+}
+
+export function rockyTaskOutputDirectory(chatId: string): string {
+  return path.posix.join(
+    ROCKY_TASK_OUTPUTS_DIRECTORY,
+    sanitizeRockyTaskPathSegment(chatId)
+  );
+}
+
+function formatTaskFileWorkspace(chatId: string): string[] {
+  const inputDirectory = rockyTaskInputDirectory(chatId);
+  const outputDirectory = rockyTaskOutputDirectory(chatId);
+
+  return [
+    "작업 파일 영역:",
+    `- task_input_dir: ${inputDirectory}`,
+    `- task_output_dir: ${outputDirectory}`,
+    "",
+    "작업 파일 규칙:",
+    `- 이번 작업의 사용자 첨부와 입력 파일은 \`${inputDirectory}/\` 아래에 둡니다.`,
+    `- 이번 작업의 최종 산출물은 반드시 \`${outputDirectory}/\` 아래에 생성합니다.`,
+    `- 템플릿이나 연결된 스킬 지시문이 일반 \`outputs/\`를 말하면, 이 작업에서는 \`${outputDirectory}/\`로 해석합니다.`,
+    `- 최종 답변에는 생성한 산출물별 \`${outputDirectory}/...\` 상대 경로를 적습니다.`,
+    "",
+  ];
+}
+
 export function buildRockyWorkspaceSkillMarkdown(
   skill: RockyOrchestrationSkill
 ): string {
@@ -210,6 +265,7 @@ export function buildRockyTurnContextMarkdown(input: {
     `- intent: ${input.dispatch.intent}`,
     `- created_at: ${input.timestamp}`,
     "",
+    ...formatTaskFileWorkspace(input.chatId),
     "첨부 메타데이터:",
     formatAttachments(input.attachments),
     "",
@@ -295,6 +351,7 @@ export function buildAgentTurnContextMarkdown(input: {
     `- intent: ${input.dispatch.intent}`,
     `- created_at: ${input.timestamp}`,
     "",
+    ...formatTaskFileWorkspace(input.chatId),
     "첨부 메타데이터:",
     formatAttachments(input.attachments),
     "",
@@ -339,7 +396,10 @@ export async function writeAgentTurnContextFile(input: {
 export function buildRockyTurnSystemInstructions(input: {
   skill: RockyOrchestrationSkill;
   contextRelativePath: string;
+  chatId: string;
 }): string[] {
+  const outputDirectory = rockyTaskOutputDirectory(input.chatId);
+
   return [
     `Use the workspace-local Rocky Core instructions in \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${input.skill.id}/SKILL.md\` for this turn.`,
     ...linkedSkillIds(input.skill).map(
@@ -347,6 +407,7 @@ export function buildRockyTurnSystemInstructions(input: {
         `If \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}/${skillId}/SKILL.md\` exists, read it and apply it as the linked skill instructions for this turn.`
     ),
     `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
+    `Use \`${outputDirectory}\` as the only final deliverable directory for this task; generic \`outputs/\` instructions from templates or linked skills mean \`${outputDirectory}/\` here.`,
     "Treat the current user message as the canonical original request.",
   ];
 }
@@ -354,7 +415,10 @@ export function buildRockyTurnSystemInstructions(input: {
 export function buildAgentTurnSystemInstructions(input: {
   agent: AgentRecord;
   contextRelativePath: string;
+  chatId: string;
 }): string[] {
+  const outputDirectory = rockyTaskOutputDirectory(input.chatId);
+
   return [
     `You are running as the "${input.agent.name}" agent. Use this agent's configured role and available local skills when relevant.`,
     "When applying an installed user-facing skill, inspect the matching skill directory under `.agents/skills/`, read its `SKILL.md`, and inspect packaged files in that skill directory before asking the user to upload missing inputs.",
@@ -362,6 +426,7 @@ export function buildAgentTurnSystemInstructions(input: {
     "When the user asks for uploaded, available, current, or listed files, distinguish newly attached files from packaged files included with installed skills; include packaged input filenames from the turn context when present.",
     "Do not answer that no usable files exist only because attachment metadata is empty; skill-packaged input files in the turn context are already available inputs.",
     `Read \`${input.contextRelativePath}\` in the workspace before answering.`,
+    `Use \`${outputDirectory}\` as the only final deliverable directory for this task; generic \`outputs/\` instructions from installed skills mean \`${outputDirectory}/\` here.`,
     "Treat the current user message as the canonical original request.",
     "If the user asks which skills are available, installed, or equipped, answer only with this agent's installed skill display names; do not list read-only system skills or unavailable repository-root developer skills.",
     "Do not expose internal skill identifiers, invocation strings, file paths, or storage categories in user-facing answers.",

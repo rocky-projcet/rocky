@@ -5,7 +5,10 @@ import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
-import { ROCKY_AGENT_REQUEST_CONTEXT_DIR } from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
+import {
+  ROCKY_AGENT_REQUEST_CONTEXT_DIR,
+  rockyTaskOutputDirectory,
+} from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
 
 import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type {
@@ -688,7 +691,10 @@ test("rocky chat accepts attachment-only PPT requests with a default prompt", as
     assert.equal(chat.worker?.skillId, "rocky.presentation");
     assert.equal(chat.messages[0]?.role, "user");
     assert.equal(chat.messages[0]?.text, "Please review the attached file.");
-    assert.match(chat.attachments[0]?.workspacePath ?? "", /^uploads\/rocky\//u);
+    assert.match(
+      chat.attachments[0]?.workspacePath ?? "",
+      new RegExp(`^inputs/${chat.id}/attachment-`, "u")
+    );
     const uploadedBody = await readFile(
       path.join(agents[0]!.workspaceRoot, chat.attachments[0]!.workspacePath!)
     );
@@ -721,7 +727,16 @@ test("rocky chat accepts attachment-only PPT requests with a default prompt", as
       path.join(agents[0]!.workspaceRoot, contextPath),
       "utf8"
     );
-    assert.match(requestContext, /workspace path: uploads\/rocky\//u);
+    assert.match(requestContext, new RegExp(`task_input_dir: inputs/${chat.id}`, "u"));
+    assert.match(
+      requestContext,
+      new RegExp(`task_output_dir: outputs/${chat.id}`, "u")
+    );
+    assert.match(
+      requestContext,
+      new RegExp(`workspace path: inputs/${chat.id}/attachment-`, "u")
+    );
+    await access(path.join(agents[0]!.workspaceRoot, rockyTaskOutputDirectory(chat.id)));
     const presentationSkill = await readFile(
       path.join(
         agents[0]!.workspaceRoot,
@@ -1681,7 +1696,12 @@ test("rocky chat routes simple conversation through rocky core", async () => {
       path.join(agents[0]!.workspaceRoot, coreContextPath),
       "utf8"
     );
+    assert.match(coreContext, new RegExp(`task_output_dir: outputs/${chat.id}`, "u"));
     assert.match(coreContext, /첨부 메타데이터:\n- 없음/);
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      new RegExp(`outputs/${chat.id}`, "u")
+    );
   } finally {
     await server.close();
   }

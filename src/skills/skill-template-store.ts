@@ -218,7 +218,9 @@ function formatOutputDirectorySection(outputFormatLabel: string): string {
 
   if (requiresPdfOutput(outputFormatLabel)) {
     lines.push(
-      "- For PDF deliverables, first create an HTML source file in `outputs/`, then generate the PDF from that HTML source. Keep both files in `outputs/`."
+      "- For PDF deliverables, first create a self-contained HTML source file in `outputs/`, then generate the PDF from that exact HTML source. Keep both files in `outputs/`.",
+      "- Use a browser rendering engine for HTML-to-PDF whenever available, such as Playwright, Puppeteer, or Chromium with `printBackground: true` and `preferCSSPageSize: true`, so CSS, fonts, backgrounds, tables, and page breaks are preserved.",
+      "- Do not replace browser rendering with text-only or manual PDF libraries such as PyMuPDF, ReportLab, or fpdf when the HTML styling matters. If no browser-capable renderer is available, leave the HTML source, explain the blocker, and do not claim the PDF preserves the HTML styling."
     );
   }
 

@@ -186,6 +186,186 @@ test("right file preview does not reload while Rocky is answering", async ({ pag
   expect(previewRequests).toBe(1);
 });
 
+test("file management appears while Rocky creates a new outputs file", async ({ page }) => {
+  const startedAt = new Date(Date.now() - 3500).toISOString();
+  const chatId = "outputs-appear-running-test";
+  const agentId = "agent-outputs-appear-running";
+  const sessionId = "session-outputs-appear-running";
+  let workspaceRequests = 0;
+
+  const chat = {
+    id: chatId,
+    title: "실행 중 산출물 표시 테스트",
+    intent: "conversation",
+    domain: "general",
+    worker: {
+      id: "worker-outputs-appear-running",
+      skillId: "general",
+      domain: "general",
+      displayName: "General",
+      agentId,
+      reason: "test",
+      status: "ready",
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    },
+    attachments: [],
+    messages: [
+      {
+        id: "message-user",
+        chatId,
+        role: "user",
+        intent: "conversation",
+        text: "report.md 파일을 만들어줘",
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-outputs-appear-running",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: null,
+        createdAt: startedAt,
+      },
+      {
+        id: "message-rocky",
+        chatId,
+        role: "rocky",
+        intent: "conversation",
+        text: "",
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-outputs-appear-running",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: "dispatch-outputs-appear-running",
+        createdAt: startedAt,
+      },
+    ],
+    skillCandidates: [],
+    dispatches: [
+      {
+        id: "dispatch-outputs-appear-running",
+        chatId,
+        messageId: "message-user",
+        skillId: "general",
+        intent: "conversation",
+        domain: "general",
+        workerId: "worker-outputs-appear-running",
+        attachmentIds: [],
+        originalRequest: "report.md 파일을 만들어줘",
+        skillCandidateIds: [],
+        protectionHints: [],
+        orchestration: {
+          id: "orchestration-outputs-appear-running",
+          status: "running",
+          agentId,
+          sessionId,
+          runId: null,
+          output: null,
+          error: null,
+          startedAt,
+          endedAt: null,
+          updatedAt: startedAt,
+        },
+        executionStarted: true,
+        createdAt: startedAt,
+      },
+    ],
+    orchestration: null,
+    executionStarted: true,
+    createdAt: startedAt,
+    updatedAt: startedAt,
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(chat),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "Outputs Appear Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/outputs-appear-running-agent",
+        runtimeHome: "/tmp/outputs-appear-running-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace?**`, async (route) => {
+    workspaceRequests += 1;
+    const taskOutputRoot = `outputs/${chatId}`;
+    const entries =
+      workspaceRequests >= 2
+        ? [
+            {
+              kind: "file",
+              name: "report.md",
+              path: `${taskOutputRoot}/report.md`,
+              contentType: "text/markdown",
+              size: 24,
+              updatedAt: new Date().toISOString(),
+              previewKind: "markdown",
+            },
+          ]
+        : [];
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/outputs-appear-running-agent",
+        path: taskOutputRoot,
+        parentPath: "outputs",
+        entries,
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("파일 관리")).toHaveCount(0);
+  await expect(page.getByText(/답변중 · \d+초/)).toBeVisible();
+  await expect(page.getByText("파일 관리").first()).toBeVisible({
+    timeout: 5000,
+  });
+  await expect(
+    page.getByRole("button", {
+      name: new RegExp(`report\\.md outputs/${chatId}/report\\.md`),
+    })
+  ).toBeVisible();
+  expect(workspaceRequests).toBeGreaterThanOrEqual(2);
+});
+
 test("conversation file clicks select the file management preview panel", async ({ page }) => {
   const now = "2026-01-01T00:00:00.000Z";
   const chatId = "io-panel-click-test";

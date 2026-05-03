@@ -553,7 +553,9 @@ function formatOutputDirectoryRules(outputFormatLabel: string): string[] {
 
   if (requiresPdfOutput(outputFormatLabel)) {
     rules.push(
-      "- For PDF deliverables, first create an HTML source file in `outputs/`, then generate the PDF from that HTML source. Keep both files in `outputs/`."
+      "- For PDF deliverables, first create a self-contained HTML source file in `outputs/`, then generate the PDF from that exact HTML source. Keep both files in `outputs/`.",
+      "- Use a browser rendering engine for HTML-to-PDF whenever available, such as Playwright, Puppeteer, or Chromium with `printBackground: true` and `preferCSSPageSize: true`, so CSS, fonts, backgrounds, tables, and page breaks are preserved.",
+      "- Do not replace browser rendering with text-only or manual PDF libraries such as PyMuPDF, ReportLab, or fpdf when the HTML styling matters. If no browser-capable renderer is available, leave the HTML source, explain the blocker, and do not claim the PDF preserves the HTML styling."
     );
   }
 
@@ -569,7 +571,9 @@ function formatRunPromptOutputRules(outputFormatLabel: string): string[] {
 
   if (requiresPdfOutput(outputFormatLabel)) {
     rules.push(
-      "- PDF 산출물은 먼저 `outputs/...html` HTML 원본을 만들고, 그 HTML에서 `outputs/...pdf`를 생성합니다."
+      "- PDF 산출물은 먼저 `outputs/...html` 자급자족 HTML 원본을 만들고, 그 HTML에서 `outputs/...pdf`를 생성합니다.",
+      "- HTML→PDF는 가능하면 Playwright, Puppeteer, Chromium 같은 브라우저 렌더러로 생성하고 `printBackground: true`, `preferCSSPageSize: true`를 사용해 CSS, 폰트, 배경, 표, 페이지 나눔을 보존합니다.",
+      "- HTML 스타일이 중요한 경우 PyMuPDF, ReportLab, fpdf 같은 수동 PDF 라이브러리로 재구성한 결과를 스타일 보존 PDF로 간주하지 않습니다. 브라우저 렌더러가 없으면 HTML 원본을 남기고 blocker를 설명합니다."
     );
   }
 

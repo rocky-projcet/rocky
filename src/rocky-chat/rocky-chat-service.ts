@@ -37,6 +37,9 @@ import {
 import {
   buildAgentTurnSystemInstructions,
   buildRockyTurnSystemInstructions,
+  rockyTaskAttachmentDirectory,
+  rockyTaskInputDirectory,
+  rockyTaskOutputDirectory,
   syncRockyAgentSkillWorkspace,
   writeAgentTurnContextFile,
   writeRockyTurnContextFile,
@@ -202,7 +205,6 @@ function skillInvocationMessage(message: string, skillId: string | null | undefi
 }
 
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
-const ROCKY_UPLOADS_DIRECTORY = "uploads/rocky";
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
 const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
@@ -1109,7 +1111,7 @@ export class RockyChatService {
       }
       if (
         requiresPdfOutputLabel(template.outputFormatLabel) &&
-        !markdown.includes("HTML source file")
+        !markdown.includes("browser rendering engine")
       ) {
         return true;
       }
@@ -1245,8 +1247,10 @@ export class RockyChatService {
     });
     const attachments = await this.materializeAttachmentUploads({
       agent: input.agent,
+      chatId: input.chatId,
       attachments: input.attachments,
     });
+    await this.ensureTaskFileWorkspace(input.agent, input.chatId);
     const selectedUsedSkills = await this.resolveUsedSkills(
       input.agent,
       input.selectedSkillId ? [input.selectedSkillId] : []
@@ -1286,6 +1290,7 @@ export class RockyChatService {
       extraSystemInstructions: buildAgentTurnSystemInstructions({
         agent: input.agent,
         contextRelativePath,
+        chatId: input.chatId,
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);
@@ -1338,6 +1343,7 @@ export class RockyChatService {
     });
     const attachments = await this.materializeAttachmentUploads({
       agent,
+      chatId: input.chatId,
       attachments: input.attachments,
     });
     const localSkillManagementMessage =
@@ -1359,6 +1365,9 @@ export class RockyChatService {
         dispatch: null,
         rockyMessage: localSkillManagementMessage,
       };
+    }
+    if (agent) {
+      await this.ensureTaskFileWorkspace(agent, input.chatId);
     }
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
@@ -1429,6 +1438,7 @@ export class RockyChatService {
 
   private async materializeAttachmentUploads(input: {
     agent: AgentRecord | null;
+    chatId: string;
     attachments: Array<RockyAttachmentRecord | RockyAttachmentDraft>;
   }): Promise<RockyAttachmentRecord[]> {
     return Promise.all(
@@ -1451,8 +1461,7 @@ export class RockyChatService {
         const body = Buffer.from(contentBase64, "base64");
         const safeName = sanitizeUploadedFilename(existingRecord.name);
         const workspacePath = path.posix.join(
-          ROCKY_UPLOADS_DIRECTORY,
-          this.idGenerator(),
+          rockyTaskAttachmentDirectory(input.chatId, existingRecord.id),
           safeName
         );
         const absolutePath = path.join(
@@ -1469,6 +1478,22 @@ export class RockyChatService {
           workspacePath,
         };
       })
+    );
+  }
+
+  private async ensureTaskFileWorkspace(
+    agent: AgentRecord,
+    chatId: string
+  ): Promise<void> {
+    await Promise.all(
+      [rockyTaskInputDirectory(chatId), rockyTaskOutputDirectory(chatId)].map(
+        async (relativePath) => {
+          await mkdir(
+            path.join(agent.workspaceRoot, ...relativePath.split("/")),
+            { recursive: true }
+          );
+        }
+      )
     );
   }
 
@@ -1489,6 +1514,7 @@ export class RockyChatService {
 
     const extraSystemInstructions = buildRockyTurnSystemInstructions({
       skill: input.skill,
+      chatId: input.chatId,
       contextRelativePath: await writeRockyTurnContextFile({
         agent: input.agent,
         chatId: input.chatId,

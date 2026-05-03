@@ -1060,6 +1060,15 @@ export interface AgentWorkspaceDirectoryRecord {
   entries: AgentWorkspaceEntryRecord[];
 }
 
+export interface AgentWorkspaceSearchRecord {
+  agentId: string;
+  workspaceRoot: string;
+  path: string;
+  query: string;
+  matches: AgentWorkspaceEntryRecord[];
+  truncated: boolean;
+}
+
 export interface AgentWorkspaceFilePreviewRecord {
   agentId: string;
   workspaceRoot: string;
@@ -1074,6 +1083,14 @@ export interface AgentWorkspaceFilePreviewRecord {
   truncated: boolean;
   downloadUrl: string;
   inlinePreviewUrl: string | null;
+}
+
+export interface AgentWorkspaceDeleteResult {
+  agentId: string;
+  path: string;
+  name: string;
+  kind: AgentWorkspaceEntryRecord["kind"];
+  deleted: true;
 }
 
 function trimTrailingSlash(value: string): string {
@@ -1714,6 +1731,37 @@ export class AgentEngineClient {
 
     return this.request<AgentWorkspaceDirectoryRecord>(
       search.size > 0 ? `${pathname}?${search.toString()}` : pathname
+    );
+  }
+
+  searchAgentWorkspace(
+    agentId: string,
+    query: string,
+    searchPath?: string | null
+  ): Promise<AgentWorkspaceSearchRecord> {
+    const search = new URLSearchParams();
+    search.set("query", query);
+    if (searchPath) {
+      search.set("path", searchPath);
+    }
+
+    return this.request<AgentWorkspaceSearchRecord>(
+      `/agents/${encodeURIComponent(agentId)}/workspace/search?${search.toString()}`
+    );
+  }
+
+  async deleteAgentWorkspacePath(
+    agentId: string,
+    searchPath: string
+  ): Promise<AgentWorkspaceDeleteResult> {
+    const search = new URLSearchParams();
+    search.set("path", searchPath);
+
+    return this.request<AgentWorkspaceDeleteResult>(
+      `/agents/${encodeURIComponent(agentId)}/workspace?${search.toString()}`,
+      {
+        method: "DELETE",
+      }
     );
   }
 

@@ -104,6 +104,15 @@ function buildTaskPrompt(
   ].join("\n");
 }
 
+function buildTaskOutputInstructions(): string[] {
+  return [
+    "Use `outputs/` as the only final deliverable directory for this single task.",
+    "Create `outputs/` before writing final deliverable files if it does not already exist.",
+    "Do not place final deliverables in the workspace root or unrelated folders.",
+    "In the final response, list each generated deliverable with its `outputs/...` relative path.",
+  ];
+}
+
 function hydrateTaskRecord(
   task: AgentTaskRecord
 ): AgentTaskRecord {
@@ -188,6 +197,7 @@ export interface TaskServiceOptions {
     sendTurn(input: {
       sessionId: string;
       prompt: string;
+      extraSystemInstructions?: string[];
       triggerType?: AgentRunRecord["triggerType"];
     }): Promise<AgentRunRecord>;
     getRunResult(runId: string): Promise<RuntimeRunResult>;
@@ -491,6 +501,7 @@ export class TaskService {
     const run = await this.sessionService.sendTurn({
       sessionId: session.id,
       prompt: buildTaskPrompt(task, input),
+      extraSystemInstructions: buildTaskOutputInstructions(),
       triggerType: input.triggerType ?? "manual_task",
     });
     const now = this.now();

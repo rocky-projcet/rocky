@@ -5,7 +5,10 @@ import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
-import { ROCKY_AGENT_REQUEST_CONTEXT_DIR } from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
+import {
+  ROCKY_AGENT_REQUEST_CONTEXT_DIR,
+  rockyTaskOutputDirectory,
+} from "../../src/rocky-chat/rocky-agent-skill-workspace.js";
 
 import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type {
@@ -162,6 +165,7 @@ function createRockyChatTestServer(stateRoot: string) {
 
   const server = createAgentEngineServer({
     stateRoot,
+    now: () => "2026-04-21T00:00:00.000Z",
     agentService: {
       async createAgent(input) {
         const agentId = input?.id ?? "rocky-core";
@@ -687,7 +691,10 @@ test("rocky chat accepts attachment-only PPT requests with a default prompt", as
     assert.equal(chat.worker?.skillId, "rocky.presentation");
     assert.equal(chat.messages[0]?.role, "user");
     assert.equal(chat.messages[0]?.text, "Please review the attached file.");
-    assert.match(chat.attachments[0]?.workspacePath ?? "", /^uploads\/rocky\//u);
+    assert.match(
+      chat.attachments[0]?.workspacePath ?? "",
+      new RegExp(`^inputs/${chat.id}/attachment-`, "u")
+    );
     const uploadedBody = await readFile(
       path.join(agents[0]!.workspaceRoot, chat.attachments[0]!.workspacePath!)
     );
@@ -720,7 +727,16 @@ test("rocky chat accepts attachment-only PPT requests with a default prompt", as
       path.join(agents[0]!.workspaceRoot, contextPath),
       "utf8"
     );
-    assert.match(requestContext, /workspace path: uploads\/rocky\//u);
+    assert.match(requestContext, new RegExp(`task_input_dir: inputs/${chat.id}`, "u"));
+    assert.match(
+      requestContext,
+      new RegExp(`task_output_dir: outputs/${chat.id}`, "u")
+    );
+    assert.match(
+      requestContext,
+      new RegExp(`workspace path: inputs/${chat.id}/attachment-`, "u")
+    );
+    await access(path.join(agents[0]!.workspaceRoot, rockyTaskOutputDirectory(chat.id)));
     const presentationSkill = await readFile(
       path.join(
         agents[0]!.workspaceRoot,
@@ -1093,6 +1109,158 @@ test("rocky chat reports used agent skills without exposing internal ids", async
     assert.doesNotMatch(
       chat.messages[1]?.text ?? "",
       /rocky-used-skills|workspace-local|호출 ID|\$md-content|SKILL\.md|read-only|system/u
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat refreshes used skill names from renamed saved templates", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, server } = createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "sales-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "sales-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "sales-agent",
+      name: "매출 분석 에이전트",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const skillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-sales-123"
+  );
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-sales-123",
+      'description: "매출 분석 업무를 처리합니다."',
+      "---",
+      "",
+      "# 매출 분석",
+      "",
+    ].join("\n")
+  );
+
+  try {
+    const createdResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "지난달 매출 분석해줘",
+        agentId: "sales-agent",
+        skillId: "md-sales-123",
+      },
+    });
+    assert.equal(createdResponse.statusCode, 201);
+    const created = createdResponse.json<RockyChatRecord>();
+    assert.deepEqual(created.messages[1]?.usedSkills, [
+      {
+        id: "md-sales-123",
+        displayName: "매출 분석",
+      },
+    ]);
+
+    const renamedTemplate = {
+      id: "template.sales",
+      source: "user",
+      category: "data",
+      title: "매출 분석짱",
+      description: "매출 데이터를 분석해 보고서를 만듭니다.",
+      triggerLabel: "데이터 분석",
+      requiredInputs: ["매출 데이터"],
+      outputFormatLabel: "PDF 보고서",
+      defaultInstructions: "매출 지표와 추천 액션을 분리합니다.",
+      skill: {
+        id: "md-sales-123",
+        displayName: "매출 분석짱",
+        description: "Use when the user wants Rocky to run sales analysis.",
+        invocation: "$md-sales-123",
+        skillMarkdown: [
+          "---",
+          "name: md-sales-123",
+          'description: "Use when the user wants Rocky to run sales analysis."',
+          "---",
+          "",
+          "# 매출 분석짱",
+          "",
+          "## Output",
+          "- Preferred output: PDF 보고서",
+          "",
+          "## Quality Rules",
+          "매출 지표와 추천 액션을 분리합니다.",
+          "",
+        ].join("\n"),
+        openAiYaml: [
+          "interface:",
+          '  display_name: "매출 분석짱"',
+          '  short_description: "매출 데이터를 분석해 보고서를 만듭니다."',
+          '  default_prompt: "Use $md-sales-123 to run the sales analysis workflow."',
+          "",
+        ].join("\n"),
+        syncStatus: "local",
+        workspacePath: null,
+      },
+      sortOrder: 1,
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:01:00.000Z",
+    };
+    const renameResponse = await server.inject({
+      method: "PUT",
+      url: "/skills/template.sales",
+      payload: renamedTemplate,
+    });
+    assert.equal(renameResponse.statusCode, 200);
+
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+    assert.deepEqual(refreshed.messages[1]?.usedSkills, [
+      {
+        id: "md-sales-123",
+        displayName: "매출 분석짱",
+      },
+    ]);
+
+    const nextResponse = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "이번달도 같은 방식으로 분석해줘",
+        agentId: "sales-agent",
+        skillId: "md-sales-123",
+      },
+    });
+    assert.equal(nextResponse.statusCode, 201);
+    const next = nextResponse.json<RockyChatRecord>();
+    assert.deepEqual(next.messages[1]?.usedSkills, [
+      {
+        id: "md-sales-123",
+        displayName: "매출 분석짱",
+      },
+    ]);
+    assert.match(
+      await readFile(path.join(skillRoot, "SKILL.md"), "utf8"),
+      /# 매출 분석짱/u
     );
   } finally {
     await server.close();
@@ -1528,7 +1696,12 @@ test("rocky chat routes simple conversation through rocky core", async () => {
       path.join(agents[0]!.workspaceRoot, coreContextPath),
       "utf8"
     );
+    assert.match(coreContext, new RegExp(`task_output_dir: outputs/${chat.id}`, "u"));
     assert.match(coreContext, /첨부 메타데이터:\n- 없음/);
+    assert.match(
+      sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "",
+      new RegExp(`outputs/${chat.id}`, "u")
+    );
   } finally {
     await server.close();
   }
@@ -1744,6 +1917,8 @@ test("rocky chat refreshes Rocky Core status from the backing run", async () => 
     assert.equal(refreshed.messages[1]?.text, "Rocky Core가 작업을 정리했습니다.");
     assert.equal(refreshed.dispatches[0]?.orchestration?.status, "completed");
     assert.equal(refreshed.dispatches[0]?.orchestration?.endedAt, "2026-04-21T00:01:00.000Z");
+    assert.equal(refreshed.dispatches[0]?.orchestration?.updatedAt, "2026-04-21T00:01:00.000Z");
+    assert.equal(refreshed.updatedAt, "2026-04-21T00:01:00.000Z");
   } finally {
     await server.close();
   }

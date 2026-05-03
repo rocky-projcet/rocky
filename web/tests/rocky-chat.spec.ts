@@ -174,7 +174,11 @@ test("right file preview does not reload while Rocky is answering", async ({ pag
 
   await page.goto(`/tasks/${chatId}`);
 
-  await expect(page.getByText("Input / Output").first()).toBeVisible();
+  await expect(page.getByText("파일 관리").first()).toBeVisible();
+  await expect(page.getByText("stable preview body")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: /source\.md uploads\/rocky\/source\.md/ })
+    .click();
   await expect(page.getByText("stable preview body")).toBeVisible();
   expect(previewRequests).toBe(1);
 
@@ -182,7 +186,187 @@ test("right file preview does not reload while Rocky is answering", async ({ pag
   expect(previewRequests).toBe(1);
 });
 
-test("conversation file clicks select the Input Output preview panel", async ({ page }) => {
+test("file management appears while Rocky creates a new outputs file", async ({ page }) => {
+  const startedAt = new Date(Date.now() - 3500).toISOString();
+  const chatId = "outputs-appear-running-test";
+  const agentId = "agent-outputs-appear-running";
+  const sessionId = "session-outputs-appear-running";
+  let workspaceRequests = 0;
+
+  const chat = {
+    id: chatId,
+    title: "실행 중 산출물 표시 테스트",
+    intent: "conversation",
+    domain: "general",
+    worker: {
+      id: "worker-outputs-appear-running",
+      skillId: "general",
+      domain: "general",
+      displayName: "General",
+      agentId,
+      reason: "test",
+      status: "ready",
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    },
+    attachments: [],
+    messages: [
+      {
+        id: "message-user",
+        chatId,
+        role: "user",
+        intent: "conversation",
+        text: "report.md 파일을 만들어줘",
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-outputs-appear-running",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: null,
+        createdAt: startedAt,
+      },
+      {
+        id: "message-rocky",
+        chatId,
+        role: "rocky",
+        intent: "conversation",
+        text: "",
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-outputs-appear-running",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: "dispatch-outputs-appear-running",
+        createdAt: startedAt,
+      },
+    ],
+    skillCandidates: [],
+    dispatches: [
+      {
+        id: "dispatch-outputs-appear-running",
+        chatId,
+        messageId: "message-user",
+        skillId: "general",
+        intent: "conversation",
+        domain: "general",
+        workerId: "worker-outputs-appear-running",
+        attachmentIds: [],
+        originalRequest: "report.md 파일을 만들어줘",
+        skillCandidateIds: [],
+        protectionHints: [],
+        orchestration: {
+          id: "orchestration-outputs-appear-running",
+          status: "running",
+          agentId,
+          sessionId,
+          runId: null,
+          output: null,
+          error: null,
+          startedAt,
+          endedAt: null,
+          updatedAt: startedAt,
+        },
+        executionStarted: true,
+        createdAt: startedAt,
+      },
+    ],
+    orchestration: null,
+    executionStarted: true,
+    createdAt: startedAt,
+    updatedAt: startedAt,
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(chat),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "Outputs Appear Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/outputs-appear-running-agent",
+        runtimeHome: "/tmp/outputs-appear-running-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace?**`, async (route) => {
+    workspaceRequests += 1;
+    const taskOutputRoot = `outputs/${chatId}`;
+    const entries =
+      workspaceRequests >= 2
+        ? [
+            {
+              kind: "file",
+              name: "report.md",
+              path: `${taskOutputRoot}/report.md`,
+              contentType: "text/markdown",
+              size: 24,
+              updatedAt: new Date().toISOString(),
+              previewKind: "markdown",
+            },
+          ]
+        : [];
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/outputs-appear-running-agent",
+        path: taskOutputRoot,
+        parentPath: "outputs",
+        entries,
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("파일 관리")).toHaveCount(0);
+  await expect(page.getByText(/답변중 · \d+초/)).toBeVisible();
+  await expect(page.getByText("파일 관리").first()).toBeVisible({
+    timeout: 5000,
+  });
+  await expect(
+    page.getByRole("button", {
+      name: new RegExp(`report\\.md outputs/${chatId}/report\\.md`),
+    })
+  ).toBeVisible();
+  expect(workspaceRequests).toBeGreaterThanOrEqual(2);
+});
+
+test("conversation file clicks select the file management preview panel", async ({ page }) => {
   const now = "2026-01-01T00:00:00.000Z";
   const chatId = "io-panel-click-test";
   const agentId = "agent-io-panel-click";
@@ -349,7 +533,7 @@ test("conversation file clicks select the Input Output preview panel", async ({ 
     const url = new URL(route.request().url());
     const workspacePath = url.searchParams.get("path");
     const previews: Record<string, string> = {
-      "outputs/output.md": "output preview body",
+      "outputs/current/output.md": "output preview body",
       "uploads/rocky/source.md": "source preview body",
     };
     const text = workspacePath ? previews[workspacePath] : undefined;
@@ -384,6 +568,35 @@ test("conversation file clicks select the Input Output preview panel", async ({ 
       }),
     });
   });
+  await page.route(`**/api/agents/${agentId}/workspace/search?**`, async (route) => {
+    const url = new URL(route.request().url());
+    const query = url.searchParams.get("query");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/io-panel-click-agent",
+        path: "",
+        query,
+        truncated: false,
+        matches:
+          query === "output.md"
+            ? [
+                {
+                  kind: "file",
+                  name: "output.md",
+                  path: "outputs/current/output.md",
+                  contentType: "text/markdown",
+                  size: 32,
+                  updatedAt: now,
+                  previewKind: "markdown",
+                },
+              ]
+            : [],
+      }),
+    });
+  });
   await page.route("**/api/skills", async (route) => {
     await route.fulfill({
       status: 200,
@@ -394,23 +607,358 @@ test("conversation file clicks select the Input Output preview panel", async ({ 
 
   await page.goto(`/tasks/${chatId}`);
 
-  await expect(page.getByText("Input / Output").first()).toBeVisible();
+  await expect(page.getByText("작업 시간")).toHaveCount(0);
+  await expect(page.getByText("총 실행시간")).toHaveCount(0);
+  await expect(page.getByText("답변 1초")).toBeVisible();
+  await expect(page.getByText("파일 관리").first()).toBeVisible();
   await expect(
     page.getByRole("button", { name: /output\.md outputs\/output\.md/ })
   ).toBeVisible();
+  await expect(page.getByText("output preview body")).toHaveCount(0);
 
   await page.getByRole("button", { name: "output.md 파일" }).click();
   await expect(page.getByText("output preview body")).toBeVisible();
+  await expect(page.getByText("outputs/current/output.md")).toBeVisible();
 
-  await page.getByRole("button", { name: "source.md", exact: true }).click();
+  await page
+    .getByRole("button", { name: /source\.md uploads\/rocky\/source\.md/ })
+    .click();
   await expect(page.getByText("source preview body")).toBeVisible();
 
   await page.getByRole("button", { name: "stray.md" }).click();
   await expect(page.getByText("파일을 미리볼 수 없습니다.")).toBeVisible();
   await expect(
-    page.getByText("이 파일은 현재 Input/Output 목록에 없어 미리볼 수 없습니다.")
+    page.getByText("이 파일은 현재 파일 관리 목록에 없어 미리볼 수 없습니다.")
   ).toBeVisible();
   expect(missingPreviewPaths).not.toContain("drafts/stray.md");
+  expect(missingPreviewPaths).toContain("outputs/output.md");
+});
+
+test("file management keeps real output paths and input section while browsing folders", async ({
+  page,
+}) => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const chatId = "file-panel-folder-path-test";
+  const agentId = "agent-file-panel-folder-path";
+  const sessionId = "session-file-panel-folder-path";
+  const runId = "run-file-panel-folder-path";
+  const fileName = "매출분석_스킬_업데이트_패치.md";
+  const displayedWrongPath = `outputs/${fileName}`;
+  const actualPath = `outputs/정리된_산출물/patches/${fileName}`;
+  const templateRunMessage = [
+    "[Rocky 템플릿 실행]",
+    "템플릿: 매출분석",
+    "최종 산출물: Markdown",
+    "템플릿 output 파일:",
+    `- ${displayedWrongPath}`,
+  ].join("\n");
+
+  const chat = {
+    id: chatId,
+    title: "파일 관리 폴더 경로 테스트",
+    intent: "template",
+    domain: "data",
+    worker: {
+      id: "worker-file-panel-folder-path",
+      skillId: "sales-analysis",
+      domain: "data",
+      displayName: "매출분석",
+      agentId,
+      reason: "test",
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    },
+    attachments: [
+      {
+        id: "attachment-source",
+        name: "source.csv",
+        contentType: "text/csv",
+        size: 24,
+        workspacePath: "uploads/rocky/source.csv",
+        addedAt: now,
+      },
+    ],
+    messages: [
+      {
+        id: "message-template",
+        chatId,
+        role: "user",
+        intent: "template",
+        text: templateRunMessage,
+        attachmentIds: ["attachment-source"],
+        domain: "data",
+        workerId: "worker-file-panel-folder-path",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: null,
+        createdAt: now,
+      },
+      {
+        id: "message-rocky",
+        chatId,
+        role: "rocky",
+        intent: "template",
+        text: `완료했습니다. ${displayedWrongPath}`,
+        attachmentIds: [],
+        domain: "data",
+        workerId: "worker-file-panel-folder-path",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: "dispatch-file-panel-folder-path",
+        createdAt: now,
+      },
+    ],
+    skillCandidates: [],
+    dispatches: [
+      {
+        id: "dispatch-file-panel-folder-path",
+        chatId,
+        messageId: "message-template",
+        skillId: "sales-analysis",
+        intent: "template",
+        domain: "data",
+        workerId: "worker-file-panel-folder-path",
+        attachmentIds: ["attachment-source"],
+        originalRequest: templateRunMessage,
+        skillCandidateIds: [],
+        protectionHints: [],
+        orchestration: {
+          id: "orchestration-file-panel-folder-path",
+          status: "completed",
+          agentId,
+          sessionId,
+          runId,
+          output: `완료했습니다. ${displayedWrongPath}`,
+          error: null,
+          startedAt: now,
+          endedAt: now,
+          updatedAt: now,
+        },
+        executionStarted: true,
+        createdAt: now,
+      },
+    ],
+    orchestration: null,
+    executionStarted: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(chat),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: "transcript-output",
+          sessionId,
+          runId,
+          role: "assistant",
+          content: `완료했습니다. ${displayedWrongPath}`,
+          source: "codex",
+          createdAt: now,
+          artifacts: [
+            {
+              kind: "file",
+              role: "output",
+              name: fileName,
+              workspaceRelativePath: actualPath,
+              contentType: "text/markdown",
+              presentation: "file",
+              size: 32,
+              previewable: true,
+              previewUrl: null,
+              downloadUrl: `/runs/${runId}/artifacts/output`,
+              preferredAction: "preview",
+            },
+          ],
+        },
+      ]),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "File Panel Path Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/file-panel-folder-path-agent",
+        runtimeHome: "/tmp/file-panel-folder-path-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace?**`, async (route) => {
+    const url = new URL(route.request().url());
+    const workspacePath = url.searchParams.get("path") ?? "";
+    const entriesByPath: Record<string, unknown[]> = {
+      outputs: [
+        {
+          kind: "file",
+          name: ".DS_Store",
+          path: "outputs/.DS_Store",
+          contentType: "application/octet-stream",
+          size: 6,
+          updatedAt: now,
+          previewKind: "binary",
+        },
+        {
+          kind: "directory",
+          name: "정리된_산출물",
+          path: "outputs/정리된_산출물",
+          contentType: null,
+          size: null,
+          updatedAt: now,
+          previewKind: null,
+        },
+      ],
+      "outputs/정리된_산출물": [
+        {
+          kind: "directory",
+          name: "patches",
+          path: "outputs/정리된_산출물/patches",
+          contentType: null,
+          size: null,
+          updatedAt: now,
+          previewKind: null,
+        },
+      ],
+      "outputs/정리된_산출물/patches": [
+        {
+          kind: "file",
+          name: fileName,
+          path: actualPath,
+          contentType: "text/markdown",
+          size: 32,
+          updatedAt: now,
+          previewKind: "markdown",
+        },
+      ],
+    };
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/file-panel-folder-path-agent",
+        path: workspacePath,
+        parentPath:
+          workspacePath === "outputs"
+            ? ""
+            : workspacePath === "outputs/정리된_산출물"
+              ? "outputs"
+              : workspacePath === "outputs/정리된_산출물/patches"
+                ? "outputs/정리된_산출물"
+                : null,
+        entries: entriesByPath[workspacePath] ?? [],
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace/file?**`, async (route) => {
+    const url = new URL(route.request().url());
+    const workspacePath = url.searchParams.get("path");
+    if (workspacePath !== actualPath && workspacePath !== "uploads/rocky/source.csv") {
+      await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/file-panel-folder-path-agent",
+        path: workspacePath,
+        name: workspacePath.split("/").at(-1),
+        contentType: workspacePath === actualPath ? "text/markdown" : "text/csv",
+        size: 32,
+        updatedAt: now,
+        previewKind: workspacePath === actualPath ? "markdown" : "text",
+        text: workspacePath === actualPath ? "actual output preview" : "input preview",
+        lineCount: 1,
+        truncated: false,
+        downloadUrl: `/agents/${agentId}/workspace/file/content?path=${encodeURIComponent(
+          workspacePath
+        )}`,
+        inlinePreviewUrl: null,
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("파일 관리").first()).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /매출분석_스킬_업데이트_패치\.md outputs\/매출분석_스킬_업데이트_패치\.md/ })
+  ).toHaveCount(0);
+  await expect(page.getByText(".DS_Store")).toHaveCount(0);
+
+  await page
+    .getByRole("button", { name: /정리된_산출물 outputs\/정리된_산출물/ })
+    .click();
+  const outputSection = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "산출물", exact: true }),
+  });
+  const inputSection = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "입력", exact: true }),
+  });
+  await expect(
+    outputSection.getByText("outputs/정리된_산출물", { exact: true })
+  ).toBeVisible();
+  await expect(
+    inputSection.getByText("outputs/정리된_산출물", { exact: true })
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /source\.csv uploads\/rocky\/source\.csv/ })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /patches outputs\/정리된_산출물\/patches/ })
+  ).toBeVisible();
+
+  await page
+    .getByRole("button", { name: /patches outputs\/정리된_산출물\/patches/ })
+    .click();
+  await expect(
+    outputSection.getByText("outputs/정리된_산출물/patches", { exact: true })
+  ).toBeVisible();
+  await expect(
+    inputSection.getByText("outputs/정리된_산출물/patches", { exact: true })
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /source\.csv uploads\/rocky\/source\.csv/ })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: /매출분석_스킬_업데이트_패치\.md outputs\/정리된_산출물\/patches\/매출분석_스킬_업데이트_패치\.md/,
+    })
+  ).toBeVisible();
 });
 
 test("home starts Rocky work and task routes own the conversation", async ({

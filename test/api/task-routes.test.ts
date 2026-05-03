@@ -48,6 +48,8 @@ async function waitForTaskCompletion(server: ReturnType<typeof createAgentEngine
 }
 
 class FakeRuntime extends RuntimeAdapter {
+  readonly requests: RuntimeRequest[] = [];
+
   private readonly sessions = new Map<string, RuntimeSession>();
   private readonly runs = new Map<
     string,
@@ -116,6 +118,7 @@ class FakeRuntime extends RuntimeAdapter {
   }
 
   private async startRun(input: RuntimeRequest): Promise<RuntimeRunStart> {
+    this.requests.push(input);
     const session = this.sessions.get(input.sessionId);
     assert.ok(session);
     const runId = input.runId ?? randomUUID();
@@ -312,6 +315,8 @@ test("task routes support manual and webhook-triggered one-shot runs without pol
     };
     assert.equal(manualRun.taskId, task.id);
     assert.equal(manualRun.triggerType, "manual_task");
+    assert.match(fakeRuntime.requests[0]?.prompt ?? "", /Use `outputs\/` as the only final deliverable directory/u);
+    assert.match(fakeRuntime.requests[0]?.prompt ?? "", /`outputs\/\.\.\.`/u);
 
     const tasks = await waitForTaskCompletion(server);
     assert.equal(tasks[0]?.id, task.id);

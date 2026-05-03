@@ -19,8 +19,10 @@ import { sendJson } from "../http/reply.js";
 import {
   buildWorkspaceDirectoryRecord,
   buildWorkspaceFilePreviewRecord,
+  deleteWorkspacePath,
   openWorkspaceFileInPowerPoint,
   openWorkspaceFolder,
+  searchWorkspaceEntries,
   sendWorkspaceFileDownload,
   sendWorkspaceFilePreview,
   writeWorkspaceUploadFile,
@@ -176,6 +178,38 @@ function parseWorkspaceQuery(
   }
 
   return value.trim();
+}
+
+function parseWorkspaceSearchQuery(query: unknown): {
+  query: string;
+  path?: string;
+} {
+  if (!query || typeof query !== "object" || Array.isArray(query)) {
+    throw badRequest("Workspace search requests require a non-empty query.");
+  }
+
+  const input = query as Record<string, unknown>;
+  const searchQuery = input.query;
+  if (typeof searchQuery !== "string" || !searchQuery.trim()) {
+    throw badRequest("Workspace search requests require a non-empty query.");
+  }
+
+  const parsed: {
+    query: string;
+    path?: string;
+  } = {
+    query: searchQuery.trim(),
+  };
+
+  if (input.path !== undefined && input.path !== null && input.path !== "") {
+    if (typeof input.path !== "string" || !input.path.trim()) {
+      throw badRequest("Workspace search path must be a string when provided.");
+    }
+
+    parsed.path = input.path.trim();
+  }
+
+  return parsed;
 }
 
 function parseWorkspaceUploadBody(body: unknown): {
@@ -556,6 +590,32 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
     });
 
     sendJson(reply, 200, await buildWorkspaceDirectoryRecord(agent, requestedPath));
+  });
+
+  server.delete("/agents/:agentId/workspace", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    const requestedPath = parseWorkspaceQuery(request.query, {
+      required: true,
+    });
+
+    sendJson(reply, 200, await deleteWorkspacePath(agent, requestedPath!));
+  });
+
+  server.get("/agents/:agentId/workspace/search", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    const search = parseWorkspaceSearchQuery(request.query);
+
+    sendJson(
+      reply,
+      200,
+      await searchWorkspaceEntries({
+        agent,
+        query: search.query,
+        requestedPath: search.path,
+      })
+    );
   });
 
   server.post("/agents/:agentId/workspace/open-native", async (request, reply) => {

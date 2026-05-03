@@ -18,6 +18,66 @@ export type RockyTaskTemplateGroup = {
   label: string;
 };
 
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function latestTimestamp(values: Array<string | null | undefined>): string | null {
+  let latest: { value: string; ms: number } | null = null;
+  for (const value of values) {
+    const ms = timestampMs(value);
+    if (ms === null || !value) {
+      continue;
+    }
+    if (!latest || ms > latest.ms) {
+      latest = { value, ms };
+    }
+  }
+
+  return latest?.value ?? null;
+}
+
+function compareTimestampDesc(
+  left: string | null | undefined,
+  right: string | null | undefined
+): number {
+  const leftMs = timestampMs(left) ?? 0;
+  const rightMs = timestampMs(right) ?? 0;
+  return rightMs - leftMs;
+}
+
+function isActiveOrchestrationStatus(status: RockyTaskStatus): boolean {
+  return status === "planned" || status === "running";
+}
+
+function rockyOrchestrationActivityAt(
+  orchestration: RockyOrchestrationRecord | null,
+  fallback: string | null | undefined = null
+): string | null {
+  if (!orchestration) {
+    return fallback ?? null;
+  }
+
+  if (isActiveOrchestrationStatus(orchestration.status)) {
+    return latestTimestamp([
+      orchestration.updatedAt,
+      orchestration.startedAt,
+      fallback,
+    ]);
+  }
+
+  return latestTimestamp([
+    orchestration.endedAt,
+    orchestration.startedAt,
+    fallback,
+  ]);
+}
+
 function latestOrchestration(
   chat: RockyChatRecord
 ): RockyOrchestrationRecord | null {
@@ -30,7 +90,10 @@ function latestOrchestration(
 
   return (
     orchestrations.sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt)
+      compareTimestampDesc(
+        rockyOrchestrationActivityAt(left),
+        rockyOrchestrationActivityAt(right)
+      )
     )[0] ?? null
   );
 }
@@ -84,7 +147,7 @@ export function rockyTaskStatusTone(status: RockyTaskStatus): string {
 
 export function isRockyTaskActive(chat: RockyChatRecord): boolean {
   const status = getRockyTaskStatus(chat);
-  return status === "running" || status === "planned";
+  return isActiveOrchestrationStatus(status);
 }
 
 export function formatRockyTaskDateTime(value: string | null | undefined): string {
@@ -358,23 +421,39 @@ export function getRockyTaskSummary(chat: RockyChatRecord): string {
 }
 
 export function getRockyTaskStartedAt(chat: RockyChatRecord): string | null {
-  const earliestStarted = chat.dispatches
-    .flatMap((dispatch) =>
+  const earliestStarted = [
+    ...chat.dispatches.flatMap((dispatch) =>
       dispatch.orchestration?.startedAt ? [dispatch.orchestration.startedAt] : []
-    )
-    .sort()[0];
+    ),
+    ...(chat.orchestration?.startedAt ? [chat.orchestration.startedAt] : []),
+  ].sort()[0];
 
   return earliestStarted ?? chat.createdAt;
 }
 
+export function getRockyTaskLastActivityAt(chat: RockyChatRecord): string {
+  const dispatchTimes = chat.dispatches.flatMap((dispatch) => [
+    dispatch.createdAt,
+    rockyOrchestrationActivityAt(dispatch.orchestration, dispatch.createdAt),
+  ]);
+  const latest = latestTimestamp([
+    chat.createdAt,
+    ...chat.messages.map((message) => message.createdAt),
+    ...dispatchTimes,
+    rockyOrchestrationActivityAt(chat.orchestration),
+  ]);
+
+  return latest ?? chat.updatedAt ?? chat.createdAt;
+}
+
 export function getRockyTaskEndedAt(chat: RockyChatRecord): string | null {
   const status = getRockyTaskStatus(chat);
-  if (status === "running" || status === "planned") {
+  if (isActiveOrchestrationStatus(status)) {
     return null;
   }
 
   return (
     latestOrchestration(chat)?.endedAt ??
-    (status === "waiting" ? null : chat.updatedAt)
+    (status === "waiting" ? null : getRockyTaskLastActivityAt(chat))
   );
 }

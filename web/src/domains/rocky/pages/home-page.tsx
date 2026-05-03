@@ -8,11 +8,14 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  type ReactNode,
 } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
+  ArrowLeft,
+  AtSign,
   BarChart3,
   Copy,
   Download,
@@ -29,8 +32,10 @@ import {
   Presentation,
   Plus,
   RefreshCw,
+  Search,
   Send,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -67,13 +72,17 @@ import {
 import { MarkdownDocumentPreview } from "@/shared/components/markdown-document-preview";
 import { XlsxWorkbookPreview } from "@/shared/components/xlsx-workbook-preview";
 import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-markdown-link";
+import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import type { WorkspacePreviewPathKind } from "@/shared/lib/workspace-link-target";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
+  AgentWorkspaceDirectoryRecord,
   AgentWorkspaceEntryRecord,
   AgentWorkspaceFilePreviewRecord,
+  AgentWorkspaceSearchRecord,
 } from "@/shared/lib/agent-engine-client";
 import { Textarea } from "@/shared/ui/textarea";
+import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/utils";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
@@ -104,6 +113,7 @@ const TEMPLATE_FILE_LIST_DEFAULT_HEIGHT = 240;
 const TEMPLATE_FILE_LIST_MIN_HEIGHT = 144;
 const TEMPLATE_FILE_PREVIEW_MIN_HEIGHT = 240;
 const TEMPLATE_FILE_SPLIT_STEP = 24;
+const TEMPLATE_OUTPUTS_ROOT = "outputs";
 
 type RockyPreviewPanelSource = {
   contentType: string;
@@ -126,9 +136,11 @@ type RockyPreviewPanelSource = {
 type PreviewMode = "viewer" | "original";
 
 type TemplatePanelFileRole = "input" | "output";
+type TemplatePanelFileKind = "file" | "directory";
 
 type TemplatePanelFile = {
   key: string;
+  kind?: TemplatePanelFileKind;
   role: TemplatePanelFileRole;
   name: string;
   detail: string;
@@ -141,9 +153,15 @@ type TemplatePanelFile = {
   expected: boolean;
 };
 
+type FileMentionRange = {
+  start: number;
+  end: number;
+};
+
 type TemplateFilePanelContext = {
   title: string;
   outputFormatLabel: string;
+  outputRootPath: string;
   inputFiles: TemplatePanelFile[];
   outputFiles: TemplatePanelFile[];
   hasExplicitOutputFiles: boolean;
@@ -160,6 +178,11 @@ type TemplateFilePanelSelectionRequest = {
   id: number;
   selectedKey: string | null;
   error: TemplateFilePanelSelectionError | null;
+};
+
+type DeletedWorkspaceTarget = {
+  agentId: string;
+  path: string;
 };
 
 type RockyConversationFileTarget =
@@ -242,7 +265,7 @@ const TEXT_WORKSPACE_PREVIEW_KINDS = new Set([
   "markdown",
   "html",
 ]);
-const IGNORED_PANEL_INPUT_FILE_NAMES = new Set([".DS_Store"]);
+const IGNORED_PANEL_FILE_NAMES = new Set([".DS_Store"]);
 const SAFE_WORKSPACE_SKILL_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 type SkillInputSource = {
@@ -559,13 +582,147 @@ function normalizeTemplateFilePath(value: string): string {
   return value.trim().replace(/^\.\/+/, "").replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function sanitizeRockyTaskPathSegment(value: string): string {
+  return (
+    value
+      .trim()
+      .normalize("NFKC")
+      .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "") || "task"
+  );
+}
+
+function rockyTaskOutputRootPath(chatId: string | null | undefined): string {
+  return chatId
+    ? `${TEMPLATE_OUTPUTS_ROOT}/${sanitizeRockyTaskPathSegment(chatId)}`
+    : TEMPLATE_OUTPUTS_ROOT;
+}
+
 function templateFileName(value: string): string {
   const normalized = normalizeTemplateFilePath(value);
   return normalized.split("/").filter(Boolean).at(-1) ?? normalized;
 }
 
+function isIgnoredPanelFileName(value: string | null | undefined): boolean {
+  return Boolean(value && IGNORED_PANEL_FILE_NAMES.has(value));
+}
+
+function isIgnoredPanelWorkspacePath(value: string | null | undefined): boolean {
+  return isIgnoredPanelFileName(value ? templateFileName(value) : null);
+}
+
 function templateFileKey(value: string): string {
   return normalizeTemplateFilePath(value).toLowerCase();
+}
+
+function templatePanelFileKind(file: TemplatePanelFile | null | undefined): TemplatePanelFileKind {
+  return file?.kind ?? "file";
+}
+
+function templateFilePathParts(value: string): string[] {
+  return normalizeTemplateFilePath(value).split("/").filter(Boolean);
+}
+
+function templatePathIsUnderRoot(
+  workspacePath: string | null | undefined,
+  rootPath: string
+): boolean {
+  const normalizedPath = normalizeTemplateFilePath(workspacePath ?? "");
+  const normalizedRoot = normalizeTemplateFilePath(rootPath);
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}/`)
+  );
+}
+
+function scopeOutputPathToRoot(value: string, outputRootPath: string): string {
+  const normalized = normalizeTemplateFilePath(value);
+  const normalizedRoot = normalizeTemplateFilePath(outputRootPath);
+  if (
+    !normalized ||
+    !normalizedRoot ||
+    normalizedRoot === TEMPLATE_OUTPUTS_ROOT ||
+    templatePathIsUnderRoot(normalized, normalizedRoot)
+  ) {
+    return normalized;
+  }
+
+  if (normalized === TEMPLATE_OUTPUTS_ROOT) {
+    return normalizedRoot;
+  }
+
+  if (normalized.startsWith(`${TEMPLATE_OUTPUTS_ROOT}/`)) {
+    return `${normalizedRoot}/${normalized.slice(TEMPLATE_OUTPUTS_ROOT.length + 1)}`;
+  }
+
+  return normalized;
+}
+
+function templatePanelFileFromDirectoryPath(input: {
+  agentId: string;
+  role: TemplatePanelFileRole;
+  path: string;
+  createdAt?: string;
+  expected?: boolean;
+}): TemplatePanelFile {
+  const normalizedPath = normalizeTemplateFilePath(input.path);
+
+  return {
+    key: `browse:${input.role}:${input.agentId}:${templateFileKey(normalizedPath || ".")}`,
+    kind: "directory",
+    role: input.role,
+    name: normalizedPath ? templateFileName(normalizedPath) : ".",
+    detail: normalizedPath || ".",
+    contentType: null,
+    size: null,
+    agentId: input.agentId,
+    workspacePath: normalizedPath || ".",
+    artifact: null,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    expected: input.expected ?? false,
+  };
+}
+
+function workspacePathContains(parentPath: string, childPath: string): boolean {
+  const parent = normalizeTemplateFilePath(parentPath);
+  const child = normalizeTemplateFilePath(childPath);
+
+  if (!parent || parent === ".") {
+    return child === parent;
+  }
+
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
+function isTemplateFileDeleted(
+  file: TemplatePanelFile,
+  deletedTargets: DeletedWorkspaceTarget[]
+): boolean {
+  if (!file.agentId || !file.workspacePath) {
+    return false;
+  }
+
+  return deletedTargets.some(
+    (target) =>
+      target.agentId === file.agentId &&
+      workspacePathContains(target.path, file.workspacePath!)
+  );
+}
+
+function canDeleteTemplatePanelFile(file: TemplatePanelFile | null | undefined): boolean {
+  if (!file?.agentId || !file.workspacePath || file.expected) {
+    return false;
+  }
+
+  const normalizedPath = normalizeTemplateFilePath(file.workspacePath);
+  return Boolean(normalizedPath && normalizedPath !== ".");
+}
+
+function templatePathKind(value: string): TemplatePanelFileKind {
+  const normalized = normalizeTemplateFilePath(value);
+  const leaf = templateFileName(normalized);
+  return /\.[^/.]+$/u.test(leaf) ? "file" : "directory";
 }
 
 function panelFileDisplayDetail(file: TemplatePanelFile): string {
@@ -574,6 +731,235 @@ function panelFileDisplayDetail(file: TemplatePanelFile): string {
   }
 
   return file.detail;
+}
+
+function panelFileMatchesSearch(file: TemplatePanelFile, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return [
+    file.name,
+    file.detail,
+    file.workspacePath ?? "",
+    templatePanelRoleLabel(file.role),
+    templatePanelFileKind(file) === "directory" ? "folder directory 폴더" : "file 파일",
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(normalizedQuery);
+}
+
+function templatePanelFileIdentity(file: TemplatePanelFile): string {
+  if (file.agentId && file.workspacePath) {
+    return [
+      file.role,
+      file.agentId,
+      templatePanelFileKind(file),
+      templateFileKey(file.workspacePath),
+    ].join(":");
+  }
+
+  return file.key;
+}
+
+function mergeTemplatePanelFile(
+  existing: TemplatePanelFile,
+  incoming: TemplatePanelFile
+): TemplatePanelFile {
+  return {
+    ...incoming,
+    key: existing.key,
+    artifact: incoming.artifact ?? existing.artifact,
+    createdAt: latestCreatedAt(existing.createdAt, incoming.createdAt),
+    expected: existing.expected && incoming.expected,
+  };
+}
+
+function mergeTemplatePanelFiles(
+  ...fileGroups: TemplatePanelFile[][]
+): TemplatePanelFile[] {
+  const filesByIdentity = new Map<string, TemplatePanelFile>();
+
+  for (const file of fileGroups.flat()) {
+    const identity = templatePanelFileIdentity(file);
+    const existing = filesByIdentity.get(identity);
+    filesByIdentity.set(
+      identity,
+      existing ? mergeTemplatePanelFile(existing, file) : file
+    );
+  }
+
+  return [...filesByIdentity.values()].sort(sortTemplateFilesByFreshness);
+}
+
+function templatePanelFileFromWorkspaceEntry(input: {
+  entry: AgentWorkspaceEntryRecord;
+  role: TemplatePanelFileRole;
+  agentId: string;
+}): TemplatePanelFile {
+  return {
+    key: `browse:${input.role}:${input.agentId}:${templateFileKey(input.entry.path || ".")}`,
+    kind: input.entry.kind,
+    role: input.role,
+    name: input.entry.name || ".",
+    detail: input.entry.path || ".",
+    contentType: input.entry.contentType,
+    size: input.entry.size,
+    agentId: input.agentId,
+    workspacePath: input.entry.path || ".",
+    artifact: null,
+    createdAt: input.entry.updatedAt,
+    expected: false,
+  };
+}
+
+function templatePanelFilesFromWorkspaceEntries(input: {
+  entries: AgentWorkspaceEntryRecord[];
+  role: TemplatePanelFileRole;
+  agentId: string;
+}): TemplatePanelFile[] {
+  return input.entries
+    .filter((entry) => !isIgnoredPanelFileName(entry.name))
+    .map((entry) =>
+      templatePanelFileFromWorkspaceEntry({
+        entry,
+        role: input.role,
+        agentId: input.agentId,
+      })
+    );
+}
+
+function collapseOutputFilesToOutputsRootChildren(
+  files: TemplatePanelFile[],
+  outputRootPath: string
+): TemplatePanelFile[] {
+  const outputChildren = new Map<string, TemplatePanelFile>();
+  const rootParts = templateFilePathParts(outputRootPath);
+
+  for (const file of files) {
+    const workspacePath = file.workspacePath ?? file.detail;
+    const parts = templateFilePathParts(workspacePath);
+
+    if (
+      rootParts.length === 0 ||
+      !templatePathIsUnderRoot(workspacePath, outputRootPath) ||
+      parts.length <= rootParts.length + 1
+    ) {
+      outputChildren.set(templatePanelFileIdentity(file), file);
+      continue;
+    }
+
+    if (!file.agentId) {
+      outputChildren.set(templatePanelFileIdentity(file), file);
+      continue;
+    }
+
+    const directChildPath = parts.slice(0, rootParts.length + 1).join("/");
+    const directChild = templatePanelFileFromDirectoryPath({
+      agentId: file.agentId,
+      role: file.role,
+      path: directChildPath,
+      createdAt: file.createdAt,
+      expected: file.expected,
+    });
+    const identity = templatePanelFileIdentity(directChild);
+    const existing = outputChildren.get(identity);
+    outputChildren.set(
+      identity,
+      existing ? mergeTemplatePanelFile(existing, directChild) : directChild
+    );
+  }
+
+  return [...outputChildren.values()].sort(sortTemplateFilesByFreshness);
+}
+
+function hasRealOutputFileWithSameName(
+  expectedFile: TemplatePanelFile,
+  files: TemplatePanelFile[]
+): boolean {
+  if (!expectedFile.expected || templatePanelFileKind(expectedFile) !== "file") {
+    return false;
+  }
+
+  const expectedPath = normalizeTemplateFilePath(expectedFile.workspacePath ?? "");
+  const expectedName = expectedFile.name.trim().toLowerCase();
+  if (!expectedPath || !expectedName) {
+    return false;
+  }
+
+  return files.some((file) => {
+    if (
+      file === expectedFile ||
+      file.expected ||
+      file.role !== expectedFile.role ||
+      templatePanelFileKind(file) !== "file" ||
+      file.name.trim().toLowerCase() !== expectedName
+    ) {
+      return false;
+    }
+
+    if (expectedFile.agentId && file.agentId && expectedFile.agentId !== file.agentId) {
+      return false;
+    }
+
+    return !templateFilePathEquals(file.workspacePath, expectedPath);
+  });
+}
+
+function removeExpectedOutputFilesResolvedElsewhere(
+  files: TemplatePanelFile[]
+): TemplatePanelFile[] {
+  return files.filter((file) => !hasRealOutputFileWithSameName(file, files));
+}
+
+function isContextFileShadowedByWorkspaceSearch(
+  file: TemplatePanelFile,
+  workspaceFiles: TemplatePanelFile[]
+): boolean {
+  if (file.expected || templatePanelFileKind(file) !== "file") {
+    return false;
+  }
+
+  const fileName = file.name.trim().toLocaleLowerCase();
+  if (!fileName) {
+    return false;
+  }
+
+  return workspaceFiles.some((workspaceFile) => {
+    if (
+      workspaceFile.expected ||
+      workspaceFile.role !== file.role ||
+      templatePanelFileKind(workspaceFile) !== "file" ||
+      workspaceFile.name.trim().toLocaleLowerCase() !== fileName
+    ) {
+      return false;
+    }
+
+    if (
+      file.agentId &&
+      workspaceFile.agentId &&
+      file.agentId !== workspaceFile.agentId
+    ) {
+      return false;
+    }
+
+    return !templateFilePathEquals(workspaceFile.workspacePath, file.workspacePath);
+  });
+}
+
+function removeContextFilesShadowedByWorkspaceSearch(
+  contextFiles: TemplatePanelFile[],
+  workspaceFiles: TemplatePanelFile[]
+): TemplatePanelFile[] {
+  if (workspaceFiles.length === 0) {
+    return contextFiles;
+  }
+
+  return contextFiles.filter(
+    (file) => !isContextFileShadowedByWorkspaceSearch(file, workspaceFiles)
+  );
 }
 
 function isUserOutputArtifact(artifact: AgentSessionArtifactManifestEntry): boolean {
@@ -585,7 +971,7 @@ function isUserOutputArtifact(artifact: AgentSessionArtifactManifestEntry): bool
     return true;
   }
 
-  if (workspacePath.startsWith("outputs/")) {
+  if (isTemplateOutputDirectoryPath(workspacePath)) {
     return true;
   }
 
@@ -640,6 +1026,68 @@ function nativeFolderPathForTemplateFile(file: TemplatePanelFile): string | null
   }
 
   return file.artifact ? `${file.artifact.downloadUrl}/open-folder-native` : null;
+}
+
+function outputDirectoryAncestors(
+  workspacePath: string | null | undefined,
+  outputRootPath = TEMPLATE_OUTPUTS_ROOT
+): string[] {
+  if (!workspacePath) {
+    return [];
+  }
+
+  const normalized = normalizeTemplateFilePath(workspacePath);
+  if (!isTemplateOutputDirectoryPath(normalized)) {
+    return [];
+  }
+
+  const rootParts = templateFilePathParts(outputRootPath);
+  const parts = normalized.split("/").filter(Boolean);
+  const rootDepth = templatePathIsUnderRoot(normalized, outputRootPath)
+    ? rootParts.length
+    : 1;
+  if (parts.length <= rootDepth + 1) {
+    return [];
+  }
+
+  const directories: string[] = [];
+  for (let index = rootDepth + 1; index < parts.length; index += 1) {
+    directories.push(parts.slice(0, index).join("/"));
+  }
+
+  return directories;
+}
+
+function rememberOutputDirectory(input: {
+  outputMap: Map<string, TemplatePanelFile>;
+  directoryPath: string;
+  agentId: string | null;
+  createdAt: string;
+  expected?: boolean;
+}): void {
+  const directoryPath = normalizeTemplateFilePath(input.directoryPath);
+  if (!directoryPath || templatePathKind(directoryPath) !== "directory") {
+    return;
+  }
+
+  const key = `output:${templateFileKey(directoryPath)}`;
+  const existing = input.outputMap.get(key);
+  input.outputMap.set(key, {
+    key,
+    kind: "directory",
+    role: "output",
+    name: existing?.name ?? templateFileName(directoryPath),
+    detail: directoryPath,
+    contentType: null,
+    size: null,
+    agentId: existing?.agentId ?? input.agentId,
+    workspacePath: directoryPath,
+    artifact: existing?.artifact ?? null,
+    createdAt: existing
+      ? latestCreatedAt(existing.createdAt, input.createdAt)
+      : input.createdAt,
+    expected: input.expected ?? false,
+  });
 }
 
 function templateFilePanelFiles(
@@ -793,7 +1241,7 @@ function buildConversationFileSelectionError(
   return {
     title: conversationFileTargetName(target),
     detail: conversationFileTargetDetail(target),
-    message: "이 파일은 현재 Input/Output 목록에 없어 미리볼 수 없습니다.",
+    message: "이 파일은 현재 파일 관리 목록에 없어 미리볼 수 없습니다.",
   };
 }
 
@@ -913,7 +1361,7 @@ async function listSkillInputDirectoryFiles(input: {
         });
       }
 
-      if (IGNORED_PANEL_INPUT_FILE_NAMES.has(entry.name)) {
+      if (isIgnoredPanelFileName(entry.name)) {
         return [];
       }
 
@@ -1002,20 +1450,26 @@ function isTemplateOutputPath(
   outputKind: TemplateOutputKind
 ): boolean {
   const normalized = normalizeTemplateFilePath(value);
-  if (!normalized.startsWith("outputs/")) {
+  if (!isTemplateOutputDirectoryPath(normalized)) {
     return false;
   }
 
-  const filename = templateFileName(normalized);
-  if (!/\.[^/.]+$/u.test(filename)) {
-    return false;
+  const pathKind = templatePathKind(normalized);
+  if (pathKind === "directory") {
+    return true;
   }
 
   if (outputKind === "powerpoint") {
+    const filename = templateFileName(normalized);
     return /\.pptx?$/iu.test(filename);
   }
 
   return true;
+}
+
+function isTemplateOutputDirectoryPath(value: string): boolean {
+  const normalized = normalizeTemplateFilePath(value).toLowerCase();
+  return normalized.startsWith("outputs/");
 }
 
 function extractTemplateOutputPathsFromText(
@@ -1377,6 +1831,9 @@ function matchExplicitTemplateOutputPath(
   return (
     outputPaths.find((outputPath) => {
       const normalized = normalizeTemplateFilePath(outputPath);
+      if (templatePathKind(normalized) === "directory") {
+        return false;
+      }
       return (
         normalized === workspacePath ||
         templateFileName(normalized).toLowerCase() === artifactName
@@ -1385,17 +1842,41 @@ function matchExplicitTemplateOutputPath(
   );
 }
 
+function isUnderTemplateOutputDirectory(
+  workspacePath: string | null,
+  outputPaths: string[]
+): boolean {
+  if (!workspacePath) {
+    return false;
+  }
+
+  const normalizedWorkspacePath = normalizeTemplateFilePath(workspacePath);
+  return outputPaths.some((outputPath) => {
+    const normalizedOutputPath = normalizeTemplateFilePath(outputPath);
+    return (
+      templatePathKind(normalizedOutputPath) === "directory" &&
+      normalizedWorkspacePath.startsWith(`${normalizedOutputPath}/`)
+    );
+  });
+}
+
 function outputArtifactKey(input: {
   artifact: AgentSessionArtifactManifestEntry;
   explicitOutputPath: string | null;
   workspacePath: string | null;
 }): string {
-  if (input.explicitOutputPath) {
-    return `output:${templateFileKey(input.explicitOutputPath)}`;
+  const workspacePath = normalizeTemplateFilePath(input.workspacePath ?? "");
+  if (workspacePath) {
+    return `output:${templateFileKey(workspacePath)}`;
+  }
+
+  const explicitOutputPath = normalizeTemplateFilePath(input.explicitOutputPath ?? "");
+  if (explicitOutputPath) {
+    return `output:${templateFileKey(explicitOutputPath)}`;
   }
 
   return `output:${templateFileName(
-    input.workspacePath ?? input.artifact.name
+    input.artifact.name
   ).toLowerCase()}`;
 }
 
@@ -1434,12 +1915,15 @@ function compareCreatedAtAscending(
 
 function buildTemplateFilePanelContext(input: {
   chat: RockyChatRecord | null;
+  outputRootPath: string;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
   userTemplates: MdTemplateDefinition[];
 }): TemplateFilePanelContext | null {
   if (!input.chat) {
     return null;
   }
+  const outputRootPath =
+    normalizeTemplateFilePath(input.outputRootPath) || TEMPLATE_OUTPUTS_ROOT;
 
   let templateMessage: RockyMessageRecord | null = null;
   let parsedTemplate: ReturnType<typeof parseTemplateRunMessage> = null;
@@ -1491,11 +1975,14 @@ function buildTemplateFilePanelContext(input: {
     null;
   const explicitInputPaths = (template?.inputFiles ?? [])
     .map(normalizeTemplateFilePath)
+    .filter((inputPath) => !isIgnoredPanelWorkspacePath(inputPath))
     .filter(Boolean);
   const explicitOutputPaths = [
     ...new Set(
       [...(template?.outputFiles ?? []), ...parsedTemplate.outputFiles]
         .map(normalizeTemplateFilePath)
+        .map((outputPath) => scopeOutputPathToRoot(outputPath, outputRootPath))
+        .filter((outputPath) => !isIgnoredPanelWorkspacePath(outputPath))
         .filter(Boolean)
     ),
   ];
@@ -1512,9 +1999,13 @@ function buildTemplateFilePanelContext(input: {
       message.text,
       expectedOutputKind
     )) {
+      if (isIgnoredPanelWorkspacePath(outputPath)) {
+        continue;
+      }
+
       rememberObservedOutputPath(
         observedOutputPathMap,
-        outputPath,
+        scopeOutputPathToRoot(outputPath, outputRootPath),
         message.createdAt
       );
     }
@@ -1524,9 +2015,13 @@ function buildTemplateFilePanelContext(input: {
       dispatch.orchestration?.output,
       expectedOutputKind
     )) {
+      if (isIgnoredPanelWorkspacePath(outputPath)) {
+        continue;
+      }
+
       rememberObservedOutputPath(
         observedOutputPathMap,
-        outputPath,
+        scopeOutputPathToRoot(outputPath, outputRootPath),
         dispatch.orchestration?.endedAt ??
           dispatch.orchestration?.updatedAt ??
           dispatch.createdAt
@@ -1547,9 +2042,13 @@ function buildTemplateFilePanelContext(input: {
       transcriptMessage?.content,
       expectedOutputKind
     )) {
+      if (isIgnoredPanelWorkspacePath(outputPath)) {
+        continue;
+      }
+
       rememberObservedOutputPath(
         observedOutputPathMap,
-        outputPath,
+        scopeOutputPathToRoot(outputPath, outputRootPath),
         transcriptMessage?.createdAt ?? dispatch.createdAt
       );
     }
@@ -1589,9 +2088,17 @@ function buildTemplateFilePanelContext(input: {
       continue;
     }
 
+    if (isIgnoredPanelFileName(attachment.name)) {
+      continue;
+    }
+
     const workspacePath = attachment.workspacePath
       ? normalizeTemplateFilePath(attachment.workspacePath)
       : null;
+    if (isIgnoredPanelWorkspacePath(workspacePath)) {
+      continue;
+    }
+
     const key = `input:${workspacePath ?? attachment.id}`;
     inputMap.set(key, {
       key,
@@ -1613,6 +2120,7 @@ function buildTemplateFilePanelContext(input: {
     const key = `output:${templateFileKey(outputPath)}`;
     outputMap.set(key, {
       key,
+      kind: templatePathKind(outputPath),
       role: "output",
       name: templateFileName(outputPath),
       detail: outputPath,
@@ -1626,10 +2134,15 @@ function buildTemplateFilePanelContext(input: {
     });
   }
   for (const observed of observedOutputPaths) {
+    if (isIgnoredPanelWorkspacePath(observed.path)) {
+      continue;
+    }
+
     const key = `output:${templateFileKey(observed.path)}`;
     const existing = outputMap.get(key);
     outputMap.set(key, {
       key,
+      kind: templatePathKind(observed.path),
       role: "output",
       name: existing?.name ?? templateFileName(observed.path),
       detail: observed.path,
@@ -1661,13 +2174,28 @@ function buildTemplateFilePanelContext(input: {
       const workspacePath = artifact.workspaceRelativePath
         ? normalizeTemplateFilePath(artifact.workspaceRelativePath)
         : null;
+      if (
+        isIgnoredPanelFileName(artifact.name) ||
+        isIgnoredPanelWorkspacePath(workspacePath)
+      ) {
+        continue;
+      }
+
       const explicitOutputPath = matchExplicitTemplateOutputPath(
         artifact,
         workspacePath,
         outputPathsForMatching
       );
+      const matchesOutputDirectory = isUnderTemplateOutputDirectory(
+        workspacePath,
+        outputPathsForMatching
+      );
 
-      if (outputPathsForMatching.length > 0 && !explicitOutputPath) {
+      if (
+        outputPathsForMatching.length > 0 &&
+        !explicitOutputPath &&
+        !matchesOutputDirectory
+      ) {
         continue;
       }
 
@@ -1683,8 +2211,20 @@ function buildTemplateFilePanelContext(input: {
       });
       const existing = outputMap.get(key);
       const createdAt = transcriptMessage?.createdAt ?? dispatch.createdAt;
+      for (const directoryPath of outputDirectoryAncestors(
+        resolvedWorkspacePath,
+        outputRootPath
+      )) {
+        rememberOutputDirectory({
+          outputMap,
+          directoryPath,
+          agentId: orchestration.agentId ?? agentId,
+          createdAt,
+        });
+      }
       outputMap.set(key, {
         key,
+        kind: "file",
         role: "output",
         name: existing?.name ?? artifact.name,
         detail: resolvedWorkspacePath ?? artifact.role,
@@ -1704,6 +2244,7 @@ function buildTemplateFilePanelContext(input: {
   return {
     title: parsedTemplate.title,
     outputFormatLabel: parsedTemplate.outputFormatLabel,
+    outputRootPath,
     inputFiles: [...inputMap.values()],
     outputFiles: [...outputMap.values()].sort(sortTemplateFilesByFreshness),
     hasExplicitOutputFiles: explicitOutputPaths.length > 0,
@@ -1716,20 +2257,32 @@ function buildTemplateFilePanelContext(input: {
 
 function buildGeneralFilePanelContext(input: {
   chat: RockyChatRecord | null;
+  outputRootPath: string;
   packagedInputFiles: TemplatePanelFile[];
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
+  workspaceOutputFiles: TemplatePanelFile[];
 }): TemplateFilePanelContext | null {
   if (!input.chat) {
     return null;
   }
+  const outputRootPath =
+    normalizeTemplateFilePath(input.outputRootPath) || TEMPLATE_OUTPUTS_ROOT;
 
   const inputMap = new Map<string, TemplatePanelFile>();
   const outputMap = new Map<string, TemplatePanelFile>();
 
   for (const attachment of input.chat.attachments) {
+    if (isIgnoredPanelFileName(attachment.name)) {
+      continue;
+    }
+
     const workspacePath = attachment.workspacePath
       ? normalizeTemplateFilePath(attachment.workspacePath)
       : null;
+    if (isIgnoredPanelWorkspacePath(workspacePath)) {
+      continue;
+    }
+
     const key = `input:${workspacePath ?? attachment.id}`;
     inputMap.set(key, {
       key,
@@ -1774,11 +2327,30 @@ function buildGeneralFilePanelContext(input: {
         const workspacePath = artifact.workspaceRelativePath
           ? normalizeTemplateFilePath(artifact.workspaceRelativePath)
           : null;
+        if (
+          isIgnoredPanelFileName(artifact.name) ||
+          isIgnoredPanelWorkspacePath(workspacePath)
+        ) {
+          continue;
+        }
+
         const key = `output:${templateFileKey(workspacePath ?? artifact.role)}`;
         const existing = outputMap.get(key);
         const createdAt = message.createdAt ?? dispatch.createdAt;
+        for (const directoryPath of outputDirectoryAncestors(
+          workspacePath,
+          outputRootPath
+        )) {
+          rememberOutputDirectory({
+            outputMap,
+            directoryPath,
+            agentId: orchestration.agentId,
+            createdAt,
+          });
+        }
         outputMap.set(key, {
           key,
+          kind: "file",
           role: "output",
           name: existing?.name ?? artifact.name,
           detail: workspacePath ?? artifact.role,
@@ -1797,7 +2369,10 @@ function buildGeneralFilePanelContext(input: {
   }
 
   const inputFiles = [...inputMap.values()].sort(sortTemplateFilesByFreshness);
-  const outputFiles = [...outputMap.values()].sort(sortTemplateFilesByFreshness);
+  const outputFiles = mergeTemplatePanelFiles(
+    input.workspaceOutputFiles,
+    [...outputMap.values()]
+  );
 
   if (inputFiles.length === 0 && outputFiles.length === 0) {
     return null;
@@ -1813,7 +2388,8 @@ function buildGeneralFilePanelContext(input: {
 
   return {
     title: usedSkillNames.length > 0 ? usedSkillNames.join(", ") : input.chat.title,
-    outputFormatLabel: "Input / Output",
+    outputFormatLabel: "파일 관리",
+    outputRootPath,
     inputFiles,
     outputFiles,
     hasExplicitOutputFiles: false,
@@ -2116,6 +2692,71 @@ function ChatReplyAvatar({ chatId }: { chatId: string }) {
   return <RockyReplyMark />;
 }
 
+function formatRockyAnswerSeconds(
+  startedAt: string | null | undefined,
+  endedAt: string | null | undefined
+): string | null {
+  if (!startedAt || !endedAt) {
+    return null;
+  }
+
+  const start = new Date(startedAt).getTime();
+  const end = new Date(endedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return null;
+  }
+
+  return formatDurationLabel(Math.max(1, Math.round((end - start) / 1000)));
+}
+
+function formatDurationLabel(totalSeconds: number): string {
+  if (totalSeconds < 60) {
+    return `${totalSeconds}초`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return seconds > 0 ? `${totalMinutes}분 ${seconds}초` : `${totalMinutes}분`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}시간 ${minutes}분` : `${hours}시간`;
+}
+
+function formatRockyElapsedSeconds(
+  startedAt: string | null | undefined,
+  now: number
+): string | null {
+  if (!startedAt) {
+    return null;
+  }
+
+  const start = new Date(startedAt).getTime();
+  if (!Number.isFinite(start) || now < start) {
+    return null;
+  }
+
+  return formatDurationLabel(Math.floor((now - start) / 1000));
+}
+
+function useElapsedNow(enabled: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  return now;
+}
+
 function MessageAttachmentList({
   attachments,
   isRocky,
@@ -2183,6 +2824,7 @@ function MessageBubble({
   message,
   onOpenConversationFile,
   runProgressByRunId,
+  showAnswerDuration,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
@@ -2190,6 +2832,7 @@ function MessageBubble({
   message: RockyMessageRecord;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   runProgressByRunId: Record<string, string>;
+  showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   const isRocky = message.role === "rocky";
@@ -2217,12 +2860,14 @@ function MessageBubble({
     message,
     transcriptMessage
   );
+  const isPendingReply = isRocky && rockyMessageState.kind === "pending";
+  const pendingNow = useElapsedNow(isPendingReply);
   const attachments = chat.attachments.filter((attachment) =>
     message.attachmentIds.includes(attachment.id)
   );
   const usedSkills = isRocky ? message.usedSkills : [];
 
-  if (isRocky && rockyMessageState.kind === "pending") {
+  if (isPendingReply) {
     const runId = dispatch?.orchestration?.runId ?? null;
     const progressLabel =
       (runId ? runProgressByRunId[runId] : null) ??
@@ -2231,6 +2876,10 @@ function MessageBubble({
         skillId: dispatch?.skillId ?? null,
         status: dispatch?.orchestration?.status ?? null,
       });
+    const elapsedLabel = formatRockyElapsedSeconds(
+      dispatch?.orchestration?.startedAt ?? dispatch?.createdAt ?? message.createdAt,
+      pendingNow
+    );
 
     return (
       <div className="flex w-full items-start justify-start gap-2.5">
@@ -2247,7 +2896,7 @@ function MessageBubble({
           role="status"
         >
           <div className="inline-flex items-center gap-2">
-            <span>답변중</span>
+            <span>{elapsedLabel ? `답변중 · ${elapsedLabel}` : "답변중"}</span>
             <span className="ia-streaming-dots" aria-label="Rocky가 답변을 작성하고 있습니다">
               <span className="ia-streaming-dot" />
               <span className="ia-streaming-dot" />
@@ -2274,6 +2923,12 @@ function MessageBubble({
     isRocky && rockyMessageState.kind === "error"
       ? "text-destructive"
       : "text-foreground";
+  const answerSeconds = isRocky && showAnswerDuration
+    ? formatRockyAnswerSeconds(
+        dispatch?.orchestration?.startedAt ?? dispatch?.createdAt,
+        dispatch?.orchestration?.endedAt ?? message.createdAt
+      )
+    : null;
 
   return (
     <div
@@ -2325,6 +2980,11 @@ function MessageBubble({
             onOpenConversationFile={onOpenConversationFile}
           />
         ) : null}
+        {answerSeconds ? (
+          <div className="mt-3 text-[11px] font-medium leading-4 text-muted-foreground">
+            답변 {answerSeconds}
+          </div>
+        ) : null}
       </article>
     </div>
   );
@@ -2336,6 +2996,7 @@ function MessageList({
   endRef,
   onOpenConversationFile,
   runProgressByRunId,
+  showAnswerDuration,
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
@@ -2343,6 +3004,7 @@ function MessageList({
   endRef: RefObject<HTMLDivElement | null>;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   runProgressByRunId: Record<string, string>;
+  showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
   return (
@@ -2355,6 +3017,7 @@ function MessageList({
           message={message}
           onOpenConversationFile={onOpenConversationFile}
           runProgressByRunId={runProgressByRunId}
+          showAnswerDuration={showAnswerDuration}
           transcriptsBySessionId={transcriptsBySessionId}
         />
       ))}
@@ -2406,31 +3069,167 @@ function SelectedFileList({
   );
 }
 
+type ActiveFileMention = FileMentionRange & {
+  query: string;
+};
+
+function activeFileMentionAt(value: string, caretIndex: number): ActiveFileMention | null {
+  const beforeCaret = value.slice(0, caretIndex);
+  const match = /(^|\s)@([^\s@]*)$/.exec(beforeCaret);
+
+  if (!match) {
+    return null;
+  }
+
+  const leadingSpace = match[1] ?? "";
+  const query = match[2] ?? "";
+  const start = beforeCaret.length - match[0].length + leadingSpace.length;
+
+  return {
+    start,
+    end: caretIndex,
+    query,
+  };
+}
+
+function fileMentionMatches(file: TemplatePanelFile, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return [file.name, file.detail, templatePanelRoleLabel(file.role)]
+    .join(" ")
+    .toLowerCase()
+    .includes(normalizedQuery);
+}
+
+function FileMentionMenu({
+  activeIndex,
+  files,
+  onHover,
+  onSelect,
+}: {
+  activeIndex: number;
+  files: TemplatePanelFile[];
+  onHover: (index: number) => void;
+  onSelect: (file: TemplatePanelFile) => void;
+}) {
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-2 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 shadow-lg">
+      <div className="px-2 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+        파일 지정
+      </div>
+      {files.map((file, index) => {
+        const Icon = file.role === "input" ? FileInput : FileOutput;
+
+        return (
+          <button
+            key={file.key}
+            type="button"
+            onMouseEnter={() => onHover(index)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelect(file);
+            }}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition",
+              index === activeIndex
+                ? "bg-accent text-accent-foreground"
+                : "hover:bg-secondary"
+            )}
+          >
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
+              <Icon className="size-3.5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{fileMentionToken(file)}</span>
+              <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                {panelFileDisplayDetail(file)}
+              </span>
+            </span>
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {templatePanelRoleLabel(file.role)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ChatComposer({
   canSend,
   canStop,
   errorMessage,
   files,
+  mentionableFiles,
   message,
   onFilesChange,
   onFileRemove,
+  onInsertFileMention,
   onStop,
   onMessageChange,
   onSubmit,
+  textareaRef,
   stopPending,
 }: {
   canSend: boolean;
   canStop: boolean;
   errorMessage: string | undefined;
   files: File[];
+  mentionableFiles: TemplatePanelFile[];
   message: string;
   onFilesChange: (files: File[]) => void;
   onFileRemove: (file: File) => void;
+  onInsertFileMention: (file: TemplatePanelFile, range?: FileMentionRange) => void;
   onStop: () => void;
   onMessageChange: (message: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   stopPending: boolean;
 }) {
+  const [activeMention, setActiveMention] = useState<ActiveFileMention | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const mentionOptions = useMemo(() => {
+    if (!activeMention) {
+      return [];
+    }
+
+    return mentionableFiles
+      .filter((file) => fileMentionMatches(file, activeMention.query))
+      .slice(0, 8);
+  }, [activeMention, mentionableFiles]);
+
+  useEffect(() => {
+    setActiveMentionIndex(0);
+  }, [activeMention?.query, mentionOptions.length]);
+
+  function updateActiveMention(value: string, caretIndex: number) {
+    setActiveMention(
+      mentionableFiles.length > 0
+        ? activeFileMentionAt(value, caretIndex)
+        : null
+    );
+  }
+
+  function insertMention(file: TemplatePanelFile) {
+    if (!activeMention) {
+      onInsertFileMention(file);
+      return;
+    }
+
+    onInsertFileMention(file, {
+      start: activeMention.start,
+      end: activeMention.end,
+    });
+    setActiveMention(null);
+  }
+
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
       <form
@@ -2438,6 +3237,13 @@ function ChatComposer({
         onSubmit={onSubmit}
       >
         <SelectedFileList files={files} onRemove={onFileRemove} />
+
+        <FileMentionMenu
+          activeIndex={activeMentionIndex}
+          files={mentionOptions}
+          onHover={setActiveMentionIndex}
+          onSelect={insertMention}
+        />
 
         <div className="flex min-h-12 items-center gap-1">
           <Button
@@ -2461,12 +3267,51 @@ function ChatComposer({
             />
           </Button>
           <Textarea
+            ref={textareaRef}
             value={message}
-            onChange={(event) => onMessageChange(event.target.value)}
+            onBlur={() => {
+              window.setTimeout(() => setActiveMention(null), 120);
+            }}
+            onChange={(event) => {
+              onMessageChange(event.target.value);
+              updateActiveMention(
+                event.target.value,
+                event.target.selectionStart ?? event.target.value.length
+              );
+            }}
+            onClick={(event) => {
+              updateActiveMention(
+                event.currentTarget.value,
+                event.currentTarget.selectionStart ?? event.currentTarget.value.length
+              );
+            }}
             placeholder="PPT나 자료를 넣고 원하는 일을 말해보세요."
             aria-label="Rocky에게 말하기"
             className="max-h-36 min-h-10 flex-1 border-0 bg-transparent px-2 py-2.5 text-sm leading-5 shadow-none focus-visible:ring-0"
             onKeyDown={(event) => {
+              if (activeMention && mentionOptions.length > 0) {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveMentionIndex((current) => {
+                    const offset = event.key === "ArrowDown" ? 1 : -1;
+                    return (current + offset + mentionOptions.length) % mentionOptions.length;
+                  });
+                  return;
+                }
+
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  insertMention(mentionOptions[activeMentionIndex] ?? mentionOptions[0]);
+                  return;
+                }
+
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setActiveMention(null);
+                  return;
+                }
+              }
+
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
@@ -3320,36 +4165,55 @@ function EmbeddedArtifactPreviewPanel({
 }
 
 function templatePanelRoleLabel(role: TemplatePanelFileRole): string {
-  return role === "input" ? "Input" : "Output";
+  return role === "input" ? "입력" : "산출물";
+}
+
+function fileMentionToken(file: TemplatePanelFile): string {
+  return `@${file.name}`;
 }
 
 function TemplateFileRow({
   file,
+  onDelete,
+  onMention,
   selected,
   onSelect,
 }: {
   file: TemplatePanelFile;
+  onDelete?: (file: TemplatePanelFile) => void;
+  onMention?: (file: TemplatePanelFile) => void;
   selected: boolean;
   onSelect: () => void;
 }) {
-  const Icon = file.role === "input" ? FileInput : FileOutput;
+  const Icon =
+    templatePanelFileKind(file) === "directory"
+      ? FolderOpen
+      : file.role === "input"
+        ? FileInput
+        : FileOutput;
+  const showDeleteAction = Boolean(onDelete && canDeleteTemplatePanelFile(file));
   const tone =
     file.role === "input"
       ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-700"
       : "border-sky-500/25 bg-sky-500/8 text-sky-700";
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       className={cn(
-        "w-full rounded-lg border px-3 py-2.5 text-left transition",
+        "group relative flex w-full rounded-lg border text-left transition",
         selected
           ? "border-primary/45 bg-primary/5 shadow-sm"
           : "border-border bg-background hover:bg-secondary/60"
       )}
     >
-      <div className="flex min-w-0 items-start gap-2.5">
+      <button
+        type="button"
+        onClick={onSelect}
+        className={cn(
+          "flex min-w-0 flex-1 items-start gap-2.5 rounded-lg px-3 py-2.5 text-left outline-hidden focus-visible:ring-2 focus-visible:ring-ring/50",
+          showDeleteAction && onMention ? "pr-24" : "pr-12"
+        )}
+      >
         <span
           className={cn(
             "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md border",
@@ -3375,20 +4239,52 @@ function TemplateFileRow({
             {typeof file.size === "number" ? <span>{formatFileSize(file.size)}</span> : null}
           </span>
         </span>
-      </div>
-    </button>
+      </button>
+      {showDeleteAction ? (
+        <button
+          type="button"
+          aria-label={`${file.name} 삭제`}
+          title="삭제"
+          onClick={() => onDelete?.(file)}
+          className={cn(
+            "absolute top-2 inline-flex size-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground opacity-0 shadow-sm transition hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100",
+            onMention ? "right-16" : "right-2"
+          )}
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      ) : null}
+      {onMention ? (
+        <button
+          type="button"
+          aria-label={`${file.name} 채팅에 지정`}
+          title="채팅에 지정"
+          onClick={() => onMention(file)}
+          className="absolute right-2 top-2 inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground opacity-0 shadow-sm transition hover:bg-secondary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100"
+        >
+          <AtSign className="size-3" />
+          지정
+        </button>
+      ) : null}
+    </div>
   );
 }
 
 function TemplateFileSection({
   emptyText,
   files,
+  leadingContent,
+  onDelete,
+  onMention,
   onSelect,
   selectedKey,
   title,
 }: {
   emptyText: string;
   files: TemplatePanelFile[];
+  leadingContent?: ReactNode;
+  onDelete?: (file: TemplatePanelFile) => void;
+  onMention?: (file: TemplatePanelFile) => void;
   onSelect: (file: TemplatePanelFile) => void;
   selectedKey: string | null;
   title: string;
@@ -3401,12 +4297,15 @@ function TemplateFileSection({
         </h3>
         <span className="text-[11px] text-muted-foreground">{files.length}</span>
       </div>
+      {leadingContent}
       {files.length > 0 ? (
         <div className="space-y-2">
           {files.map((file) => (
             <TemplateFileRow
               key={file.key}
               file={file}
+              onDelete={onDelete}
+              onMention={onMention}
               selected={selectedKey === file.key}
               onSelect={() => onSelect(file)}
             />
@@ -3418,6 +4317,50 @@ function TemplateFileSection({
         </div>
       )}
     </section>
+  );
+}
+
+function BrowsedDirectoryControlCard({
+  directory,
+  onClose,
+  onGoUp,
+}: {
+  directory: TemplatePanelFile;
+  onClose: () => void;
+  onGoUp: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2">
+      <button
+        type="button"
+        onClick={onGoUp}
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        aria-label="상위 폴더로 이동"
+        title="상위 폴더로 이동"
+      >
+        <ArrowLeft className="size-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">{directory.name}</span>
+        </div>
+        <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+          {directory.workspacePath}
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="전체 파일 목록으로 돌아가기"
+        title="전체 파일 목록으로 돌아가기"
+        className="shrink-0 text-muted-foreground"
+        onClick={onClose}
+      >
+        <X className="size-4" />
+      </Button>
+    </div>
   );
 }
 
@@ -3442,6 +4385,149 @@ function TemplateFilePanelSelectionErrorView({
           {error.message}
         </p>
       </div>
+    </div>
+  );
+}
+
+function DirectoryPreviewBody({
+  agentId,
+  directory,
+  onDeleteEntry,
+  onOpenEntry,
+  role,
+  searchTerm,
+}: {
+  agentId: string | null;
+  directory: AgentWorkspaceDirectoryRecord;
+  onDeleteEntry?: (file: TemplatePanelFile) => void;
+  onOpenEntry?: (file: TemplatePanelFile) => void;
+  role: TemplatePanelFileRole;
+  searchTerm: string;
+}) {
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const entries = [...directory.entries]
+    .filter((entry) => {
+      if (!normalizedSearchTerm) {
+        return true;
+      }
+
+      return [entry.name, entry.path, entry.kind === "directory" ? "폴더 folder" : "파일 file"]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedSearchTerm);
+    })
+    .sort((left, right) => {
+      if (left.kind !== right.kind) {
+        return left.kind === "directory" ? -1 : 1;
+      }
+
+      return left.name.localeCompare(right.name, "ko");
+    });
+  const parentEntry =
+    agentId && directory.parentPath !== null
+      ? templatePanelFileFromWorkspaceEntry({
+          agentId,
+          role,
+          entry: {
+            kind: "directory",
+            name: directory.parentPath ? templateFileName(directory.parentPath) : ".",
+            path: directory.parentPath || ".",
+            contentType: null,
+            size: null,
+            updatedAt: new Date().toISOString(),
+            previewKind: null,
+          },
+        })
+      : null;
+
+  return (
+    <div className="h-full min-h-full bg-background">
+      {entries.length > 0 || parentEntry ? (
+        <div className="divide-y divide-border">
+          {parentEntry ? (
+            <button
+              type="button"
+              onClick={() => onOpenEntry?.(parentEntry)}
+              className="flex w-full min-w-0 items-center gap-2 px-4 py-2.5 text-left text-sm transition hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-foreground">
+                  상위 폴더
+                </div>
+                <div className="truncate font-mono text-[11px] text-muted-foreground">
+                  {parentEntry.workspacePath}
+                </div>
+              </div>
+              <div className="shrink-0 text-[11px] text-muted-foreground">
+                폴더
+              </div>
+            </button>
+          ) : null}
+          {entries.map((entry) => {
+            const Icon = entry.kind === "directory" ? FolderOpen : FileText;
+            const file =
+              agentId
+                ? templatePanelFileFromWorkspaceEntry({
+                    agentId,
+                    role,
+                    entry,
+                  })
+                : null;
+            return (
+              <div
+                key={entry.path}
+                className="group flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm"
+              >
+                <button
+                  type="button"
+                  disabled={!file}
+                  onClick={() => {
+                    if (file) {
+                      onOpenEntry?.(file);
+                    }
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default disabled:hover:bg-transparent"
+                >
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium text-foreground">
+                      {entry.name}
+                    </div>
+                    <div className="truncate font-mono text-[11px] text-muted-foreground">
+                      {entry.path}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-[11px] text-muted-foreground">
+                    {entry.kind === "directory"
+                      ? "폴더"
+                      : typeof entry.size === "number"
+                        ? formatFileSize(entry.size)
+                        : "파일"}
+                  </div>
+                </button>
+                {file && onDeleteEntry && canDeleteTemplatePanelFile(file) ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`${entry.name} 삭제`}
+                    title="삭제"
+                    className="shrink-0 text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                    onClick={() => onDeleteEntry(file)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+          {normalizedSearchTerm ? "검색 결과가 없습니다." : "폴더가 비어 있습니다."}
+        </div>
+      )}
     </div>
   );
 }
@@ -3586,16 +4672,69 @@ function ArtifactFallbackPreview({
   );
 }
 
+function findCurrentWorkspaceFileMatch(
+  search: AgentWorkspaceSearchRecord | null | undefined,
+  file: TemplatePanelFile | null
+): AgentWorkspaceEntryRecord | null {
+  if (!search || !file) {
+    return null;
+  }
+
+  const normalizedName = file.name.trim().toLowerCase();
+  const normalizedWorkspacePath = normalizeTemplateFilePath(file.workspacePath ?? "");
+  const exactMatches = search.matches.filter(
+    (entry) =>
+      entry.kind === "file" &&
+      entry.name.trim().toLowerCase() === normalizedName
+  );
+
+  if (exactMatches.length === 0) {
+    return null;
+  }
+
+  const stillSamePath = exactMatches.find((entry) =>
+    templateFilePathEquals(entry.path, normalizedWorkspacePath)
+  );
+  if (stillSamePath) {
+    return stillSamePath;
+  }
+
+  return exactMatches
+    .sort((left, right) => {
+      const leftInOutputs = isTemplateOutputDirectoryPath(left.path) ? 1 : 0;
+      const rightInOutputs = isTemplateOutputDirectoryPath(right.path) ? 1 : 0;
+      if (leftInOutputs !== rightInOutputs) {
+        return rightInOutputs - leftInOutputs;
+      }
+
+      const leftTime = new Date(left.updatedAt).getTime();
+      const rightTime = new Date(right.updatedAt).getTime();
+      return (
+        (Number.isFinite(rightTime) ? rightTime : 0) -
+        (Number.isFinite(leftTime) ? leftTime : 0)
+      );
+    })[0] ?? null;
+}
+
 function TemplateSelectedFilePreview({
   active,
   file,
+  onClose,
+  onDeleteFile,
+  onOpenWorkspaceEntry,
+  searchTerm,
 }: {
   active: boolean;
   file: TemplatePanelFile | null;
+  onClose: () => void;
+  onDeleteFile: (file: TemplatePanelFile) => void;
+  onOpenWorkspaceEntry: (file: TemplatePanelFile) => void;
+  searchTerm: string;
 }) {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("viewer");
   const [folderOpenPending, setFolderOpenPending] = useState(false);
   const wasActiveRef = useRef(active);
+  const fileKind = templatePanelFileKind(file);
   const workspacePreviewQuery = useQuery({
     queryKey: [
       "rocky-template-file-preview",
@@ -3607,13 +4746,58 @@ function TemplateSelectedFilePreview({
         file!.agentId!,
         file!.workspacePath!
       ),
-    enabled: Boolean(file?.agentId && file.workspacePath),
+    enabled: Boolean(file?.agentId && file.workspacePath && fileKind === "file"),
+  });
+  const workspaceResolveQuery = useQuery({
+    queryKey: [
+      "rocky-template-file-resolve",
+      file?.agentId ?? "unknown",
+      file?.name ?? "",
+      file?.workspacePath ?? "",
+    ],
+    queryFn: () =>
+      agentEngineClient.searchAgentWorkspace(
+        file!.agentId!,
+        file!.name
+      ),
+    enabled: Boolean(
+      file?.agentId &&
+        file.name &&
+        file.workspacePath &&
+        fileKind === "file" &&
+        !file.expected &&
+        workspacePreviewQuery.isError
+    ),
+  });
+  const resolvedWorkspaceEntry = findCurrentWorkspaceFileMatch(
+    workspaceResolveQuery.data,
+    file
+  );
+  const resolvedWorkspacePreviewQuery = useQuery({
+    queryKey: [
+      "rocky-template-file-preview",
+      file?.agentId ?? "unknown",
+      resolvedWorkspaceEntry?.path ?? "",
+    ],
+    queryFn: () =>
+      agentEngineClient.getAgentWorkspaceFilePreview(
+        file!.agentId!,
+        resolvedWorkspaceEntry!.path
+      ),
+    enabled: Boolean(
+      file?.agentId &&
+        fileKind === "file" &&
+        workspacePreviewQuery.isError &&
+        resolvedWorkspaceEntry?.path
+    ),
   });
   const artifactPreviewSource = file?.artifact
     ? buildArtifactPreviewPanelSource(file.artifact)
     : null;
-  const canUseOriginalMode = workspacePreviewQuery.data
-    ? workspaceRecordHasOriginalMode(workspacePreviewQuery.data)
+  const workspacePreviewRecord =
+    workspacePreviewQuery.data ?? resolvedWorkspacePreviewQuery.data ?? null;
+  const canUseOriginalMode = workspacePreviewRecord
+    ? workspaceRecordHasOriginalMode(workspacePreviewRecord)
     : artifactPreviewSource
       ? previewSourceHasOriginalMode(artifactPreviewSource)
       : false;
@@ -3634,7 +4818,13 @@ function TemplateSelectedFilePreview({
     }
 
     void workspacePreviewQuery.refetch();
-  }, [active, file?.agentId, file?.workspacePath, workspacePreviewQuery.refetch]);
+  }, [
+    active,
+    file?.agentId,
+    file?.workspacePath,
+    fileKind,
+    workspacePreviewQuery.refetch,
+  ]);
 
   if (!file) {
     return (
@@ -3644,20 +4834,38 @@ function TemplateSelectedFilePreview({
     );
   }
 
+  const effectiveWorkspacePath =
+    workspacePreviewRecord?.path ??
+    resolvedWorkspaceEntry?.path ??
+    file.workspacePath ??
+    null;
   const downloadHref =
-    file.agentId && file.workspacePath
-      ? agentEngineClient.agentWorkspaceFileDownloadUrl(file.agentId, file.workspacePath)
+    fileKind === "file" && file.agentId && effectiveWorkspacePath
+      ? agentEngineClient.agentWorkspaceFileDownloadUrl(
+          file.agentId,
+          effectiveWorkspacePath
+        )
       : file.artifact
         ? agentEngineClient.resolveApiPath(file.artifact.downloadUrl)
         : null;
   const openHref =
-    file.agentId && file.workspacePath
-      ? workspacePreviewPageHref(file.agentId, file.workspacePath)
+    fileKind === "file" && file.agentId && effectiveWorkspacePath
+      ? workspacePreviewPageHref(file.agentId, effectiveWorkspacePath)
       : file.artifact?.previewUrl
         ? agentEngineClient.resolveApiPath(file.artifact.previewUrl)
         : null;
-  const folderOpenPath = nativeFolderPathForTemplateFile(file);
+  const folderOpenPath =
+    file.agentId && effectiveWorkspacePath
+      ? agentEngineClient.agentWorkspaceFolderNativeOpenPath(
+          file.agentId,
+          effectiveWorkspacePath
+        )
+      : nativeFolderPathForTemplateFile(file);
   const fileRoleLabel = templatePanelRoleLabel(file.role);
+  const displayDetail =
+    workspacePreviewRecord && workspacePreviewRecord.path !== file.workspacePath
+      ? workspacePreviewRecord.path
+      : panelFileDisplayDetail(file);
 
   function openActualFolder(): void {
     if (!folderOpenPath || folderOpenPending) {
@@ -3694,7 +4902,7 @@ function TemplateSelectedFilePreview({
             {file.name}
           </div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-            {panelFileDisplayDetail(file)}
+            {displayDetail}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -3710,6 +4918,10 @@ function TemplateSelectedFilePreview({
               title="파일 새로고침"
               onClick={() => {
                 void workspacePreviewQuery.refetch();
+                void workspaceResolveQuery.refetch();
+                if (resolvedWorkspaceEntry) {
+                  void resolvedWorkspacePreviewQuery.refetch();
+                }
               }}
             >
               <RefreshCw className="size-4" />
@@ -3752,19 +4964,53 @@ function TemplateSelectedFilePreview({
               <Download className="size-4" />
             </Button>
           ) : null}
+          {canDeleteTemplatePanelFile(file) ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`${fileRoleLabel} 삭제`}
+              title={`${fileRoleLabel} 삭제`}
+              className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => onDeleteFile(file)}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="미리보기 닫기"
+            title="미리보기 닫기"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
         </div>
       </div>
       <div className="custom-scrollbar min-h-0 flex-1 overflow-auto">
-        {workspacePreviewQuery.isLoading ? (
+        {fileKind === "directory" ? (
+          <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            폴더는 파일 목록에서 탐색합니다.
+          </div>
+        ) : workspacePreviewQuery.isLoading ? (
           <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
             파일을 불러오는 중입니다.
           </div>
+        ) : workspacePreviewRecord ? (
+          <WorkspacePreviewBody mode={effectivePreviewMode} record={workspacePreviewRecord} />
+        ) : workspacePreviewQuery.isError &&
+          (workspaceResolveQuery.isLoading || resolvedWorkspacePreviewQuery.isLoading) ? (
+          <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            이동된 파일 위치를 확인하는 중입니다.
+          </div>
+        ) : workspacePreviewQuery.isError && artifactPreviewSource ? (
+          <ArtifactFallbackPreview artifact={file.artifact!} mode={effectivePreviewMode} />
         ) : workspacePreviewQuery.isError ? (
           <div className="flex min-h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
             {file.expected ? "아직 생성되지 않았습니다." : "파일 내용을 불러오지 못했습니다."}
           </div>
-        ) : workspacePreviewQuery.data ? (
-          <WorkspacePreviewBody mode={effectivePreviewMode} record={workspacePreviewQuery.data} />
         ) : file.artifact ? (
           <ArtifactFallbackPreview artifact={file.artifact} mode={effectivePreviewMode} />
         ) : (
@@ -3781,19 +5027,34 @@ function TemplateFilePanel({
   context,
   onWidthChange,
   onClose,
+  onMentionFile,
   panelWidth,
   selectionRequest,
 }: {
   context: TemplateFilePanelContext;
   onWidthChange: (width: number) => void;
   onClose: () => void;
+  onMentionFile: (file: TemplatePanelFile) => void;
   panelWidth: number;
   selectionRequest: TemplateFilePanelSelectionRequest | null;
 }) {
-  const allFiles = [...context.outputFiles, ...context.inputFiles];
-  const defaultSelectedKey =
-    context.outputFiles[0]?.key ?? context.inputFiles[0]?.key ?? null;
-  const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelectedKey);
+  const queryClient = useQueryClient();
+  const [deletedTargets, setDeletedTargets] = useState<DeletedWorkspaceTarget[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [browsedFile, setBrowsedFile] = useState<TemplatePanelFile | null>(null);
+  const [browsedDirectory, setBrowsedDirectory] =
+    useState<TemplatePanelFile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TemplatePanelFile | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const allFiles = [...context.outputFiles, ...context.inputFiles].filter(
+    (file) => !isTemplateFileDeleted(file, deletedTargets)
+  );
+  const outputAgentId =
+    allFiles.find((file) => file.role === "output" && file.agentId)?.agentId ??
+    allFiles.find((file) => file.agentId)?.agentId ??
+    null;
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectionError, setSelectionError] =
     useState<TemplateFilePanelSelectionError | null>(null);
   const [fileListHeight, setFileListHeight] = useState(
@@ -3802,29 +5063,153 @@ function TemplateFilePanel({
   const fileSplitContainerRef = useRef<HTMLDivElement | null>(null);
   const appliedSelectionRequestIdRef = useRef<number | null>(null);
   const fileKeySignature = allFiles.map((file) => file.key).join("\n");
+  const normalizedSearchTerm = searchTerm.trim();
+  const outputRootPath =
+    normalizeTemplateFilePath(context.outputRootPath) || TEMPLATE_OUTPUTS_ROOT;
+  const outputRootQuery = useQuery({
+    queryKey: [
+      "rocky-template-directory-preview",
+      outputAgentId ?? "unknown",
+      outputRootPath,
+    ],
+    queryFn: () =>
+      agentEngineClient.listAgentWorkspace(outputAgentId!, outputRootPath),
+    enabled: Boolean(outputAgentId),
+  });
+  const workspaceSearchAgentId = browsedDirectory?.agentId ?? outputAgentId;
+  const workspaceSearchPath = browsedDirectory?.workspacePath ?? outputRootPath;
+  const workspaceSearchQuery = useQuery({
+    queryKey: [
+      "rocky-template-directory-search",
+      workspaceSearchAgentId ?? "unknown",
+      workspaceSearchPath,
+      normalizedSearchTerm,
+    ],
+    queryFn: () =>
+      agentEngineClient.searchAgentWorkspace(
+        workspaceSearchAgentId!,
+        normalizedSearchTerm,
+        workspaceSearchPath
+      ),
+    enabled: Boolean(
+      workspaceSearchAgentId && workspaceSearchPath && normalizedSearchTerm
+    ),
+  });
+  const contextOutputFiles = context.outputFiles.filter(
+    (file) => !isTemplateFileDeleted(file, deletedTargets)
+  );
+  const shallowContextOutputFiles = collapseOutputFilesToOutputsRootChildren(
+    removeExpectedOutputFilesResolvedElsewhere(contextOutputFiles),
+    outputRootPath
+  );
+  const outputRootFiles =
+    outputRootQuery.data && outputAgentId
+      ? templatePanelFilesFromWorkspaceEntries({
+          entries: outputRootQuery.data.entries,
+          role: "output",
+          agentId: outputAgentId,
+        }).filter((file) => !isTemplateFileDeleted(file, deletedTargets))
+      : [];
+  const contextFallbackOutputFiles = outputRootQuery.data
+    ? shallowContextOutputFiles.filter(
+        (file) =>
+          file.expected ||
+          !templatePathIsUnderRoot(file.workspacePath ?? file.detail, outputRootPath)
+      )
+    : shallowContextOutputFiles;
+  const initialOutputFiles = mergeTemplatePanelFiles(
+    outputRootFiles,
+    contextFallbackOutputFiles
+  );
+  const searchedOutputFiles =
+    normalizedSearchTerm && workspaceSearchQuery.data && outputAgentId && !browsedDirectory
+      ? templatePanelFilesFromWorkspaceEntries({
+          entries: workspaceSearchQuery.data.matches,
+          role: "output",
+          agentId: outputAgentId,
+        }).filter((file) => !isTemplateFileDeleted(file, deletedTargets))
+      : [];
+  const searchedContextOutputFiles = contextOutputFiles.filter((file) =>
+    panelFileMatchesSearch(file, normalizedSearchTerm)
+  );
+  const visibleOutputFiles = normalizedSearchTerm
+    ? mergeTemplatePanelFiles(
+        searchedOutputFiles,
+        removeContextFilesShadowedByWorkspaceSearch(
+          searchedContextOutputFiles,
+          searchedOutputFiles
+        )
+      )
+    : initialOutputFiles;
+  const visibleInputFiles = context.inputFiles
+    .filter((file) => !isTemplateFileDeleted(file, deletedTargets))
+    .filter((file) => panelFileMatchesSearch(file, normalizedSearchTerm));
+  const selectedBrowsedFile =
+    browsedFile &&
+    selectedKey === browsedFile.key &&
+    !isTemplateFileDeleted(browsedFile, deletedTargets)
+      ? browsedFile
+      : null;
   const selectedFile =
     selectionError
       ? null
-      : allFiles.find((file) => file.key === selectedKey) ??
-        allFiles.find((file) => file.key === defaultSelectedKey) ??
+      : selectedBrowsedFile ??
+        allFiles.find((file) => file.key === selectedKey) ??
         null;
+  const browsedDirectoryQuery = useQuery({
+    queryKey: [
+      "rocky-template-directory-preview",
+      browsedDirectory?.agentId ?? "unknown",
+      browsedDirectory?.workspacePath ?? "",
+    ],
+    queryFn: () =>
+      agentEngineClient.listAgentWorkspace(
+        browsedDirectory!.agentId!,
+        browsedDirectory!.workspacePath!
+      ),
+    enabled: Boolean(browsedDirectory?.agentId && browsedDirectory.workspacePath),
+  });
+  const browsedDirectoryFiles =
+    browsedDirectory && normalizedSearchTerm && workspaceSearchQuery.data
+      ? templatePanelFilesFromWorkspaceEntries({
+          entries: workspaceSearchQuery.data.matches,
+          role: browsedDirectory.role,
+          agentId: browsedDirectory.agentId!,
+        }).filter((file) => !isTemplateFileDeleted(file, deletedTargets))
+      : browsedDirectoryQuery.data && browsedDirectory?.agentId
+        ? templatePanelFilesFromWorkspaceEntries({
+            entries: browsedDirectoryQuery.data.entries,
+            role: browsedDirectory.role,
+            agentId: browsedDirectory.agentId,
+          }).filter((file) => !isTemplateFileDeleted(file, deletedTargets))
+        : [];
+  const browsedDirectoryEmptyText = normalizedSearchTerm
+    ? workspaceSearchQuery.isLoading
+      ? "검색 중입니다."
+      : workspaceSearchQuery.isError
+        ? "검색 결과를 불러오지 못했습니다."
+        : "검색 결과가 없습니다."
+    : browsedDirectoryQuery.isLoading
+      ? "폴더를 불러오는 중입니다."
+      : browsedDirectoryQuery.isError
+        ? "폴더 내용을 불러오지 못했습니다."
+        : "폴더가 비어 있습니다.";
 
   useEffect(() => {
     if (selectionError) {
       return;
     }
 
-    if (!defaultSelectedKey) {
-      setSelectedKey(null);
+    if (selectedBrowsedFile) {
       return;
     }
 
     setSelectedKey((current) =>
       current && allFiles.some((file) => file.key === current)
         ? current
-        : defaultSelectedKey
+        : null
     );
-  }, [defaultSelectedKey, fileKeySignature, selectionError]);
+  }, [fileKeySignature, selectionError]);
 
   useEffect(() => {
     if (
@@ -3839,6 +5224,8 @@ function TemplateFilePanel({
     if (selectionRequest.error) {
       setSelectionError(selectionRequest.error);
       setSelectedKey(null);
+      setBrowsedFile(null);
+      setPreviewOpen(true);
       return;
     }
 
@@ -3847,9 +5234,150 @@ function TemplateFilePanel({
       allFiles.some((file) => file.key === selectionRequest.selectedKey)
     ) {
       setSelectionError(null);
+      setBrowsedFile(null);
+      setBrowsedDirectory(null);
       setSelectedKey(selectionRequest.selectedKey);
+      setPreviewOpen(true);
     }
   }, [allFiles, selectionRequest]);
+
+  function openDirectory(file: TemplatePanelFile): void {
+    const normalizedPath = normalizeTemplateFilePath(file.workspacePath ?? "");
+    if (
+      file.role === "output" &&
+      (!normalizedPath || normalizedPath === outputRootPath)
+    ) {
+      setBrowsedDirectory(null);
+      return;
+    }
+
+    setBrowsedDirectory(file);
+  }
+
+  function handleSelectFile(file: TemplatePanelFile): void {
+    setSelectionError(null);
+    if (templatePanelFileKind(file) === "directory") {
+      openDirectory(file);
+      setBrowsedFile(null);
+      setSelectedKey(null);
+      setPreviewOpen(false);
+      return;
+    }
+
+    setBrowsedFile(
+      allFiles.some((candidate) => candidate.key === file.key) ? null : file
+    );
+    setSelectedKey(file.key);
+    setPreviewOpen(true);
+  }
+
+  function handleOpenWorkspaceEntry(file: TemplatePanelFile): void {
+    setSelectionError(null);
+    if (templatePanelFileKind(file) === "directory") {
+      openDirectory(file);
+      setBrowsedFile(null);
+      setSelectedKey(null);
+      setPreviewOpen(false);
+      return;
+    }
+
+    setBrowsedFile(file);
+    setSelectedKey(file.key);
+    setPreviewOpen(true);
+  }
+
+  function handleGoUpFromBrowsedDirectory(): void {
+    if (!browsedDirectory?.agentId) {
+      setBrowsedDirectory(null);
+      return;
+    }
+
+    const parentPath = browsedDirectoryQuery.data?.parentPath ?? null;
+    const normalizedParentPath = normalizeTemplateFilePath(parentPath ?? "");
+    if (
+      !normalizedParentPath ||
+      normalizedParentPath === "." ||
+      (browsedDirectory.role === "output" &&
+        normalizedParentPath === outputRootPath)
+    ) {
+      setBrowsedDirectory(null);
+      return;
+    }
+
+    setBrowsedDirectory(
+      templatePanelFileFromDirectoryPath({
+        agentId: browsedDirectory.agentId,
+        role: browsedDirectory.role,
+        path: normalizedParentPath,
+      })
+    );
+    setBrowsedFile(null);
+    setSelectedKey(null);
+    setPreviewOpen(false);
+  }
+
+  async function confirmDeleteFile(): Promise<void> {
+    if (!deleteTarget?.agentId || !deleteTarget.workspacePath) {
+      setDeleteTarget(null);
+      return;
+    }
+
+    const target = deleteTarget;
+    const targetAgentId = target.agentId!;
+    const targetWorkspacePath = target.workspacePath!;
+    setDeletePending(true);
+
+    try {
+      await agentEngineClient.deleteAgentWorkspacePath(
+        targetAgentId,
+        targetWorkspacePath
+      );
+      setDeletedTargets((current) => [
+        ...current,
+        {
+          agentId: targetAgentId,
+          path: targetWorkspacePath,
+        },
+      ]);
+      if (
+        selectedFile?.agentId === targetAgentId &&
+        selectedFile.workspacePath &&
+        workspacePathContains(targetWorkspacePath, selectedFile.workspacePath)
+      ) {
+        setBrowsedFile(null);
+        setSelectedKey(null);
+        setPreviewOpen(false);
+      }
+      if (
+        browsedDirectory?.agentId === targetAgentId &&
+        browsedDirectory.workspacePath &&
+        workspacePathContains(targetWorkspacePath, browsedDirectory.workspacePath)
+      ) {
+        setBrowsedDirectory(null);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["rocky-template-file-preview"] }),
+        queryClient.invalidateQueries({ queryKey: ["rocky-template-file-resolve"] }),
+        queryClient.invalidateQueries({ queryKey: ["rocky-template-directory-preview"] }),
+        queryClient.invalidateQueries({ queryKey: ["rocky-template-directory-search"] }),
+      ]);
+      setDeleteTarget(null);
+      toast.success(
+        templatePanelFileKind(target) === "directory"
+        ? "폴더를 삭제했습니다."
+        : "파일을 삭제했습니다.",
+        {
+          description: targetWorkspacePath,
+        }
+      );
+    } catch (error) {
+      toast.error("삭제에 실패했습니다.", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setDeletePending(false);
+    }
+  }
 
   useEffect(() => {
     const container = fileSplitContainerRef.current;
@@ -4011,6 +5539,8 @@ function TemplateFilePanel({
   const panelStyle = {
     "--rocky-template-file-panel-width": `${panelWidth}px`,
   } as CSSProperties;
+  const selectedKeyForList = selectionError ? null : selectedFile?.key ?? selectedKey;
+  const fileListStyle = previewOpen ? { height: fileListHeight } : undefined;
 
   return (
     <aside
@@ -4035,15 +5565,12 @@ function TemplateFilePanel({
       <header className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase text-muted-foreground">
-              <LayoutTemplate className="size-3.5" />
-              Input / Output
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+              <LayoutTemplate className="size-4 text-muted-foreground" />
+              파일 관리
             </div>
-            <div className="mt-1 truncate text-sm font-semibold text-foreground">
-              {context.title}
-            </div>
-            <div className="mt-0.5 truncate text-xs text-muted-foreground">
-              {context.outputFormatLabel}
+            <div className="mt-1 truncate text-xs text-muted-foreground">
+              산출물 {context.outputFiles.length}개 · 입력 {context.inputFiles.length}개
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -4064,6 +5591,30 @@ function TemplateFilePanel({
             </Button>
           </div>
         </div>
+        <div className="mt-3 flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3">
+          <Search className="size-3.5 shrink-0 text-muted-foreground" />
+          <Input
+            type="search"
+            aria-label="파일 관리 검색"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="파일/폴더 검색"
+            className="h-7 flex-1 border-0 bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0"
+          />
+          {searchTerm ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="검색어 지우기"
+              title="검색어 지우기"
+              className="shrink-0 text-muted-foreground"
+              onClick={() => setSearchTerm("")}
+            >
+              <X className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       <div
@@ -4071,56 +5622,179 @@ function TemplateFilePanel({
         className="flex min-h-0 flex-1 flex-col"
       >
         <div
-          className="custom-scrollbar min-h-0 shrink-0 space-y-5 overflow-y-auto px-4 py-4"
-          style={{ height: fileListHeight }}
+          className={cn(
+            "custom-scrollbar min-h-0 space-y-5 overflow-y-auto px-4 py-4",
+            previewOpen ? "shrink-0" : "flex-1"
+          )}
+          style={fileListStyle}
         >
-          <TemplateFileSection
-            title="Output"
-            files={context.outputFiles}
-            selectedKey={selectionError ? null : selectedFile?.key ?? selectedKey}
-            emptyText={
-              context.hasExplicitOutputFiles
-                ? "지정된 output 파일이 아직 생성되지 않았습니다."
-                : "아직 생성된 output 파일이 없습니다."
-            }
-            onSelect={(file) => {
-              setSelectionError(null);
-              setSelectedKey(file.key);
-            }}
-          />
-          <TemplateFileSection
-            title="Input"
-            files={context.inputFiles}
-            selectedKey={selectionError ? null : selectedFile?.key ?? selectedKey}
-            emptyText="연결된 input 파일이 없습니다."
-            onSelect={(file) => {
-              setSelectionError(null);
-              setSelectedKey(file.key);
-            }}
-          />
-        </div>
-        <div
-          role="separator"
-          aria-label="Input/Output 목록과 미리보기 높이 조절"
-          aria-orientation="horizontal"
-          tabIndex={0}
-          onPointerDown={handleFileSplitPointerDown}
-          onKeyDown={handleFileSplitKeyDown}
-          className="group relative h-2 shrink-0 cursor-row-resize touch-none border-y border-border bg-card outline-hidden"
-        >
-          <span className="absolute left-1/2 top-1/2 h-1 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden p-4">
-          {selectionError ? (
-            <TemplateFilePanelSelectionErrorView error={selectionError} />
+          {browsedDirectory ? (
+            <div className="space-y-3">
+              {browsedDirectory.role === "output" ? (
+                <>
+                  <TemplateFileSection
+                    title="산출물"
+                    files={browsedDirectoryFiles}
+                    leadingContent={
+                      <BrowsedDirectoryControlCard
+                        directory={browsedDirectory}
+                        onClose={() => setBrowsedDirectory(null)}
+                        onGoUp={handleGoUpFromBrowsedDirectory}
+                      />
+                    }
+                    selectedKey={selectedKeyForList}
+                    onDelete={setDeleteTarget}
+                    onMention={onMentionFile}
+                    emptyText={browsedDirectoryEmptyText}
+                    onSelect={handleOpenWorkspaceEntry}
+                  />
+                  <TemplateFileSection
+                    title="입력"
+                    files={visibleInputFiles}
+                    selectedKey={selectedKeyForList}
+                    onDelete={setDeleteTarget}
+                    onMention={onMentionFile}
+                    emptyText={
+                      normalizedSearchTerm
+                        ? "검색 결과가 없습니다."
+                        : "연결된 입력 파일이 없습니다."
+                    }
+                    onSelect={handleSelectFile}
+                  />
+                </>
+              ) : (
+                <>
+                  <TemplateFileSection
+                    title="산출물"
+                    files={visibleOutputFiles}
+                    selectedKey={selectedKeyForList}
+                    onDelete={setDeleteTarget}
+                    onMention={onMentionFile}
+                    emptyText={
+                      normalizedSearchTerm
+                        ? workspaceSearchQuery.isLoading && visibleOutputFiles.length === 0
+                          ? "검색 중입니다."
+                          : workspaceSearchQuery.isError && visibleOutputFiles.length === 0
+                            ? "검색 결과를 불러오지 못했습니다."
+                            : "검색 결과가 없습니다."
+                        : context.hasExplicitOutputFiles
+                        ? "지정된 산출물 파일이 아직 생성되지 않았습니다."
+                        : "아직 생성된 산출물 파일이 없습니다."
+                    }
+                    onSelect={handleSelectFile}
+                  />
+                  <TemplateFileSection
+                    title="입력"
+                    files={browsedDirectoryFiles}
+                    leadingContent={
+                      <BrowsedDirectoryControlCard
+                        directory={browsedDirectory}
+                        onClose={() => setBrowsedDirectory(null)}
+                        onGoUp={handleGoUpFromBrowsedDirectory}
+                      />
+                    }
+                    selectedKey={selectedKeyForList}
+                    onDelete={setDeleteTarget}
+                    onMention={onMentionFile}
+                    emptyText={browsedDirectoryEmptyText}
+                    onSelect={handleOpenWorkspaceEntry}
+                  />
+                </>
+              )}
+            </div>
           ) : (
-            <TemplateSelectedFilePreview
-              active={context.active}
-              file={selectedFile}
-            />
+            <>
+              <TemplateFileSection
+                title="산출물"
+                files={visibleOutputFiles}
+                selectedKey={selectedKeyForList}
+                onDelete={setDeleteTarget}
+                onMention={onMentionFile}
+                emptyText={
+                  normalizedSearchTerm
+                    ? workspaceSearchQuery.isLoading && visibleOutputFiles.length === 0
+                      ? "검색 중입니다."
+                      : workspaceSearchQuery.isError && visibleOutputFiles.length === 0
+                        ? "검색 결과를 불러오지 못했습니다."
+                        : "검색 결과가 없습니다."
+                    : context.hasExplicitOutputFiles
+                    ? "지정된 산출물 파일이 아직 생성되지 않았습니다."
+                    : "아직 생성된 산출물 파일이 없습니다."
+                }
+                onSelect={handleSelectFile}
+              />
+              <TemplateFileSection
+                title="입력"
+                files={visibleInputFiles}
+                selectedKey={selectedKeyForList}
+                onDelete={setDeleteTarget}
+                onMention={onMentionFile}
+                emptyText={
+                  normalizedSearchTerm
+                    ? "검색 결과가 없습니다."
+                    : "연결된 입력 파일이 없습니다."
+                }
+                onSelect={handleSelectFile}
+              />
+            </>
           )}
         </div>
+        {previewOpen ? (
+          <>
+            <div
+              role="separator"
+              aria-label="파일 목록과 미리보기 높이 조절"
+              aria-orientation="horizontal"
+              tabIndex={0}
+              onPointerDown={handleFileSplitPointerDown}
+              onKeyDown={handleFileSplitKeyDown}
+              className="group relative h-2 shrink-0 cursor-row-resize touch-none border-y border-border bg-card outline-hidden"
+            >
+              <span className="absolute left-1/2 top-1/2 h-1 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border transition group-hover:bg-primary group-focus-visible:bg-primary" />
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden p-4">
+              {selectionError ? (
+                <TemplateFilePanelSelectionErrorView error={selectionError} />
+              ) : (
+                <TemplateSelectedFilePreview
+                  active={context.active}
+                  file={selectedFile}
+                  onClose={() => setPreviewOpen(false)}
+                  onDeleteFile={setDeleteTarget}
+                  onOpenWorkspaceEntry={handleOpenWorkspaceEntry}
+                  searchTerm={normalizedSearchTerm}
+                />
+              )}
+            </div>
+          </>
+        ) : null}
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletePending) {
+            setDeleteTarget(null);
+          }
+        }}
+        title={
+          templatePanelFileKind(deleteTarget) === "directory"
+            ? "폴더를 삭제할까요?"
+            : "파일을 삭제할까요?"
+        }
+        description={
+          deleteTarget?.workspacePath
+            ? templatePanelFileKind(deleteTarget) === "directory"
+              ? `${deleteTarget.workspacePath} 폴더와 하위 항목이 삭제됩니다.`
+              : `${deleteTarget.workspacePath} 파일이 삭제됩니다.`
+            : undefined
+        }
+        confirmLabel="삭제"
+        destructive
+        pending={deletePending}
+        onConfirm={() => {
+          void confirmDeleteFile();
+        }}
+      />
     </aside>
   );
 }
@@ -4149,6 +5823,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     {}
   );
   const submitInFlightRef = useRef(false);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const filePanelSignatureRef = useRef<string | null>(null);
   const filePanelSelectionRequestIdRef = useRef(0);
@@ -4161,6 +5836,12 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     isTaskDetail ? routeTaskId : chat?.id ?? null
   );
   const { data: refreshedChat, refetch: refetchRockyChat } = rockyChatQuery;
+  const messageCount = chat?.messages.length ?? 0;
+  const hasActiveOrchestration =
+    chat?.dispatches.some((dispatch) => {
+      const status = dispatch.orchestration?.status;
+      return status === "running" || status === "planned";
+    }) ?? false;
   const transcriptSessionIds =
     chat?.dispatches.flatMap((dispatch) =>
       dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
@@ -4171,6 +5852,14 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     ) ?? [];
   const uniqueTranscriptSessionIds = [...new Set(transcriptSessionIds)];
   const uniqueTranscriptAgentIds = [...new Set(transcriptAgentIds)];
+  const outputAgentIds = [
+    ...new Set(
+      [...uniqueTranscriptAgentIds, chat?.worker?.agentId ?? null].filter(
+        (agentId): agentId is string => Boolean(agentId)
+      )
+    ),
+  ];
+  const taskOutputRootPath = rockyTaskOutputRootPath(chat?.id);
   const activeTranscriptSessionIds = new Set(
     chat?.dispatches.flatMap((dispatch) => {
       const orchestration = dispatch.orchestration;
@@ -4201,6 +5890,23 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       queryFn: () => agentEngineClient.getAgent(agentId),
       enabled: Boolean(agentId),
       staleTime: 60_000,
+    })),
+  });
+  const outputRootQueries = useQueries({
+    queries: outputAgentIds.map((agentId) => ({
+      queryKey: [
+        "rocky-template-directory-preview",
+        agentId,
+        taskOutputRootPath,
+      ],
+      queryFn: () =>
+        agentEngineClient.listAgentWorkspace(agentId, taskOutputRootPath),
+      enabled: Boolean(chat?.id && agentId),
+      refetchInterval: hasActiveOrchestration
+        ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS
+        : false,
+      refetchIntervalInBackground: hasActiveOrchestration,
+      retry: false,
     })),
   });
   const skillInputSources = useMemo<SkillInputSource[]>(() => {
@@ -4250,6 +5956,18 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const packagedInputFiles = packagedInputQueries.flatMap(
     (query) => query.data ?? []
   );
+  const workspaceOutputFiles = outputRootQueries.flatMap((query, index) => {
+    const agentId = outputAgentIds[index];
+    if (!agentId || !query.data) {
+      return [];
+    }
+
+    return templatePanelFilesFromWorkspaceEntries({
+      entries: query.data.entries,
+      role: "output",
+      agentId,
+    });
+  });
   const transcriptsBySessionId: Record<string, AgentSessionMessage[]> = {};
   const agentWorkspaceRootsByAgentId: Record<string, string> = {};
   uniqueTranscriptSessionIds.forEach((sessionId, index) => {
@@ -4270,12 +5988,21 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const packagedInputRefreshMarker = packagedInputQueries
     .map((query) => `${query.dataUpdatedAt ?? 0}:${query.data?.length ?? 0}`)
     .join(":");
+  const workspaceOutputRefreshMarker = outputRootQueries
+    .map(
+      (query, index) =>
+        `${outputAgentIds[index] ?? ""}:${query.dataUpdatedAt ?? 0}:${
+          query.data?.entries.length ?? 0
+        }`
+    )
+    .join(":");
   const filePanelContext = useMemo(() => {
     const templateContext = buildTemplateFilePanelContext({
-        chat,
-        transcriptsBySessionId,
-        userTemplates,
-      });
+      chat,
+      outputRootPath: taskOutputRootPath,
+      transcriptsBySessionId,
+      userTemplates,
+    });
 
     if (templateContext) {
       return mergePanelInputFiles(templateContext, packagedInputFiles);
@@ -4283,13 +6010,23 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
 
     return buildGeneralFilePanelContext({
       chat,
+      outputRootPath: taskOutputRootPath,
       packagedInputFiles,
       transcriptsBySessionId,
+      workspaceOutputFiles,
     });
-  }, [chat, transcriptRefreshMarker, packagedInputRefreshMarker, userTemplates]);
+  }, [
+    chat,
+    transcriptRefreshMarker,
+    packagedInputRefreshMarker,
+    workspaceOutputRefreshMarker,
+    taskOutputRootPath,
+    userTemplates,
+  ]);
   const filePanelSignature = filePanelContext
     ? [
         chat?.id ?? "no-chat",
+        filePanelContext.outputRootPath,
         ...filePanelContext.inputFiles.map((file) => file.key),
         ...filePanelContext.outputFiles.map((file) => file.key),
       ].join("\n")
@@ -4307,12 +6044,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   }, [filePanelSignature]);
 
-  const messageCount = chat?.messages.length ?? 0;
-  const hasActiveOrchestration =
-    chat?.dispatches.some((dispatch) => {
-      const status = dispatch.orchestration?.status;
-      return status === "running" || status === "planned";
-    }) ?? false;
   const activeRunIds = useMemo(
     () => [
       ...new Set(
@@ -4572,7 +6303,8 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     filePanelSelectionRequest?.error && !filePanelContext
       ? {
           title: "파일 미리보기",
-          outputFormatLabel: "Input / Output",
+          outputFormatLabel: "파일 관리",
+          outputRootPath: taskOutputRootPath,
           inputFiles: [],
           outputFiles: [],
           hasExplicitOutputFiles: false,
@@ -4580,9 +6312,45 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         }
       : null;
   const visibleFilePanelContext = filePanelContext ?? fallbackFilePanelContext;
+  const mentionablePanelFiles = visibleFilePanelContext
+    ? [...visibleFilePanelContext.outputFiles, ...visibleFilePanelContext.inputFiles]
+    : [];
   const closeFilePanel = () => {
     setFilePanelOpen(false);
     setFilePanelSelectionRequest(null);
+  };
+
+  const insertFileMention = (
+    file: TemplatePanelFile,
+    range?: FileMentionRange
+  ) => {
+    let nextCursor = 0;
+
+    setMessage((current) => {
+      const textarea = composerTextareaRef.current;
+      const fallbackStart = textarea?.selectionStart ?? current.length;
+      const fallbackEnd = textarea?.selectionEnd ?? fallbackStart;
+      const start = Math.max(0, Math.min(range?.start ?? fallbackStart, current.length));
+      const end = Math.max(start, Math.min(range?.end ?? fallbackEnd, current.length));
+      const prefix = current.slice(0, start);
+      const suffix = current.slice(end);
+      const leadingSpace = prefix.length > 0 && !/\s$/.test(prefix) ? " " : "";
+      const trailingSpace = suffix.length === 0 || !/^\s/.test(suffix) ? " " : "";
+      const mention = `${leadingSpace}${fileMentionToken(file)}${trailingSpace}`;
+      nextCursor = prefix.length + mention.length;
+
+      return `${prefix}${mention}${suffix}`;
+    });
+
+    window.requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
   };
 
   return (
@@ -4595,7 +6363,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               variant="outline"
               size="sm"
               className="pointer-events-auto bg-background/95 shadow-sm backdrop-blur"
-              aria-label={filePanelOpen ? "파일 패널 닫기" : "파일 패널 열기"}
+              aria-label={filePanelOpen ? "파일 관리 패널 닫기" : "파일 관리 패널 열기"}
               onClick={() => {
                 if (filePanelOpen) {
                   closeFilePanel();
@@ -4609,7 +6377,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               ) : (
                 <PanelRightOpen className="size-4" />
               )}
-              파일
+              파일 관리
             </Button>
           </div>
         ) : null}
@@ -4639,6 +6407,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               endRef={messagesEndRef}
               onOpenConversationFile={openConversationFile}
               runProgressByRunId={runProgressByRunId}
+              showAnswerDuration={isTaskDetail}
               transcriptsBySessionId={transcriptsBySessionId}
             />
           ) : (
@@ -4657,16 +6426,19 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
           canStop={canStop}
           errorMessage={errorMessage}
           files={files}
+          mentionableFiles={mentionablePanelFiles}
           message={message}
           onFilesChange={setFiles}
           onFileRemove={(file) =>
             setFiles((current) => current.filter((item) => item !== file))
           }
+          onInsertFileMention={insertFileMention}
           onStop={() => {
             void stopActiveResponse();
           }}
           onMessageChange={setMessage}
           onSubmit={submit}
+          textareaRef={composerTextareaRef}
           stopPending={cancelRockyChatMutation.isPending}
         />
       </section>
@@ -4697,6 +6469,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
             setFilePanelWidth(clampTemplateFilePanelWidth(width))
           }
           onClose={closeFilePanel}
+          onMentionFile={insertFileMention}
           panelWidth={filePanelWidth}
           selectionRequest={filePanelSelectionRequest}
         />

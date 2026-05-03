@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import { AgentLocalSkillService } from "../agents/agent-local-skill-service.js";
+import type { AgentLocalSkillRecord } from "../agents/agent-local-skill-service.js";
 import {
   ensureWorkspaceSkillBridge,
   WORKSPACE_LOCAL_SKILL_AUTHORING_DIR,
@@ -36,6 +37,9 @@ import {
 import {
   buildAgentTurnSystemInstructions,
   buildRockyTurnSystemInstructions,
+  rockyTaskAttachmentDirectory,
+  rockyTaskInputDirectory,
+  rockyTaskOutputDirectory,
   syncRockyAgentSkillWorkspace,
   writeAgentTurnContextFile,
   writeRockyTurnContextFile,
@@ -78,6 +82,8 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { AgentSessionRecord } from "../sessions/session-types.js";
+import { SkillTemplateStore } from "../skills/skill-template-store.js";
+import type { RuntimeSkillTemplateRecord } from "../skills/skill-template-store.js";
 
 export interface RockyChatServiceOptions {
   stateRoot?: string;
@@ -85,6 +91,7 @@ export interface RockyChatServiceOptions {
   idGenerator?: () => string;
   agentService?: RockyAgentServiceLike;
   sessionService?: RockySessionServiceLike;
+  skillTemplateStore?: SkillTemplateStore;
 }
 
 type RockyAttachmentDraft = RockyAttachmentRecord & {
@@ -198,7 +205,6 @@ function skillInvocationMessage(message: string, skillId: string | null | undefi
 }
 
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
-const ROCKY_UPLOADS_DIRECTORY = "uploads/rocky";
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
 const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
@@ -222,6 +228,68 @@ function isActiveOrchestrationStatus(
   status: RockyOrchestrationRecord["status"]
 ): boolean {
   return status === "planned" || status === "running";
+}
+
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function latestTimestamp(values: Array<string | null | undefined>): string | null {
+  let latest: { value: string; ms: number } | null = null;
+  for (const value of values) {
+    const ms = timestampMs(value);
+    if (ms === null || !value) {
+      continue;
+    }
+    if (!latest || ms > latest.ms) {
+      latest = { value, ms };
+    }
+  }
+
+  return latest?.value ?? null;
+}
+
+function orchestrationActivityUpdatedAt(
+  orchestration: RockyOrchestrationRecord | null,
+  fallback: string | null | undefined = null
+): string | null {
+  if (!orchestration) {
+    return fallback ?? null;
+  }
+
+  if (isActiveOrchestrationStatus(orchestration.status)) {
+    return latestTimestamp([
+      orchestration.updatedAt,
+      orchestration.startedAt,
+      fallback,
+    ]);
+  }
+
+  return latestTimestamp([
+    orchestration.endedAt,
+    orchestration.startedAt,
+    fallback,
+  ]);
+}
+
+function rockyChatActivityUpdatedAt(chat: RockyChatRecord): string {
+  const dispatchTimes = chat.dispatches.flatMap((dispatch) => [
+    dispatch.createdAt,
+    orchestrationActivityUpdatedAt(dispatch.orchestration, dispatch.createdAt),
+  ]);
+  const latest = latestTimestamp([
+    chat.createdAt,
+    ...chat.messages.map((message) => message.createdAt),
+    ...dispatchTimes,
+    orchestrationActivityUpdatedAt(chat.orchestration),
+  ]);
+
+  return latest ?? chat.updatedAt;
 }
 
 function sanitizeUploadedFilename(filename: string): string {
@@ -251,6 +319,10 @@ function isRuntimeKind(value: unknown): value is RuntimeKind {
 
 function compactText(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
+}
+
+function requiresPdfOutputLabel(value: string): boolean {
+  return value.toLowerCase().includes("pdf");
 }
 
 function hasSkillDeleteSignal(message: string): boolean {
@@ -383,6 +455,7 @@ export class RockyChatService {
   private readonly sessionService: RockySessionServiceLike | undefined;
   private readonly orchestrator: RockyOrchestratorService;
   private readonly agentLocalSkillService = new AgentLocalSkillService();
+  private readonly skillTemplateStore: SkillTemplateStore;
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
@@ -390,6 +463,13 @@ export class RockyChatService {
     this.idGenerator = options.idGenerator ?? randomUUID;
     this.agentService = options.agentService;
     this.sessionService = options.sessionService;
+    this.skillTemplateStore =
+      options.skillTemplateStore ??
+      new SkillTemplateStore({
+        stateRoot: options.stateRoot,
+        now: this.now,
+        idGenerator: this.idGenerator,
+      });
     this.orchestrator = new RockyOrchestratorService({
       sessionService: options.sessionService,
       now: this.now,
@@ -643,7 +723,9 @@ export class RockyChatService {
 
     return refreshed.sort(
       (left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt) ||
+        rockyChatActivityUpdatedAt(right).localeCompare(
+          rockyChatActivityUpdatedAt(left)
+        ) ||
         right.createdAt.localeCompare(left.createdAt) ||
         left.id.localeCompare(right.id)
     );
@@ -986,6 +1068,90 @@ export class RockyChatService {
     return agents.find((agent) => agent.id === agentId) ?? null;
   }
 
+  private async listSavedSkillTemplates(): Promise<RuntimeSkillTemplateRecord[]> {
+    try {
+      return await this.skillTemplateStore.listSkills();
+    } catch {
+      return [];
+    }
+  }
+
+  private savedTemplateDisplayName(
+    template: RuntimeSkillTemplateRecord
+  ): string {
+    return template.skill.displayName.trim() || template.title;
+  }
+
+  private async savedSkillTemplateBySkillId(): Promise<
+    Map<string, RuntimeSkillTemplateRecord>
+  > {
+    const templates = await this.listSavedSkillTemplates();
+    return new Map(templates.map((template) => [template.skill.id, template]));
+  }
+
+  private async shouldSyncInstalledTemplateSkill(
+    installed: AgentLocalSkillRecord,
+    template: RuntimeSkillTemplateRecord
+  ): Promise<boolean> {
+    const displayName = this.savedTemplateDisplayName(template);
+    if (
+      installed.displayName !== displayName ||
+      installed.description !== template.skill.description
+    ) {
+      return true;
+    }
+
+    try {
+      const markdown = await readFile(installed.skillPath, "utf8");
+      if (!markdown.includes("## Output Directory Rules")) {
+        return true;
+      }
+      if (!markdown.includes("`outputs/`")) {
+        return true;
+      }
+      if (
+        requiresPdfOutputLabel(template.outputFormatLabel) &&
+        !markdown.includes("browser rendering engine")
+      ) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+
+    return false;
+  }
+
+  private async syncAgentTemplateSkills(agent: AgentRecord): Promise<void> {
+    const templatesBySkillId = await this.savedSkillTemplateBySkillId();
+    if (templatesBySkillId.size === 0) {
+      return;
+    }
+
+    const installedSkills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+    for (const installed of installedSkills) {
+      const template = templatesBySkillId.get(installed.id);
+      if (!template) {
+        continue;
+      }
+
+      if (!(await this.shouldSyncInstalledTemplateSkill(installed, template))) {
+        continue;
+      }
+
+      try {
+        await this.agentLocalSkillService.upsertAgentLocalSkill(
+          agent,
+          template.skill.id,
+          await this.skillTemplateStore.getSkillFiles(template.id),
+          { replace: true }
+        );
+      } catch {
+        // Keep the request runnable even if a stale local skill cannot be refreshed.
+      }
+    }
+  }
+
   private async resolveUsedSkills(
     agent: AgentRecord,
     refs: string[]
@@ -995,15 +1161,21 @@ export class RockyChatService {
     }
 
     const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+    const templatesBySkillId = await this.savedSkillTemplateBySkillId();
     const byRef = new Map<string, RockyUsedSkillRecord>();
     for (const skill of skills) {
+      const template = templatesBySkillId.get(skill.id);
+      const displayName = template
+        ? this.savedTemplateDisplayName(template)
+        : skill.displayName;
       const usedSkill = {
         id: skill.id,
-        displayName: skill.displayName,
+        displayName,
       } satisfies RockyUsedSkillRecord;
       byRef.set(normalizeSkillRef(skill.id), usedSkill);
       byRef.set(normalizeSkillRef(skill.invocation), usedSkill);
       byRef.set(normalizeSkillRef(skill.displayName), usedSkill);
+      byRef.set(normalizeSkillRef(displayName), usedSkill);
     }
 
     const resolved: RockyUsedSkillRecord[] = [];
@@ -1067,6 +1239,7 @@ export class RockyChatService {
     reuseSessionId: string | null;
     timestamp: string;
   }): Promise<RockyMessageRouteResult> {
+    await this.syncAgentTemplateSkills(input.agent);
     await ensureWorkspaceSkillBridge(input.agent.workspaceRoot);
     const { skill, worker } = await this.ensureAgentWorker({
       agent: input.agent,
@@ -1074,8 +1247,10 @@ export class RockyChatService {
     });
     const attachments = await this.materializeAttachmentUploads({
       agent: input.agent,
+      chatId: input.chatId,
       attachments: input.attachments,
     });
+    await this.ensureTaskFileWorkspace(input.agent, input.chatId);
     const selectedUsedSkills = await this.resolveUsedSkills(
       input.agent,
       input.selectedSkillId ? [input.selectedSkillId] : []
@@ -1115,6 +1290,7 @@ export class RockyChatService {
       extraSystemInstructions: buildAgentTurnSystemInstructions({
         agent: input.agent,
         contextRelativePath,
+        chatId: input.chatId,
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);
@@ -1167,6 +1343,7 @@ export class RockyChatService {
     });
     const attachments = await this.materializeAttachmentUploads({
       agent,
+      chatId: input.chatId,
       attachments: input.attachments,
     });
     const localSkillManagementMessage =
@@ -1188,6 +1365,9 @@ export class RockyChatService {
         dispatch: null,
         rockyMessage: localSkillManagementMessage,
       };
+    }
+    if (agent) {
+      await this.ensureTaskFileWorkspace(agent, input.chatId);
     }
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
@@ -1258,6 +1438,7 @@ export class RockyChatService {
 
   private async materializeAttachmentUploads(input: {
     agent: AgentRecord | null;
+    chatId: string;
     attachments: Array<RockyAttachmentRecord | RockyAttachmentDraft>;
   }): Promise<RockyAttachmentRecord[]> {
     return Promise.all(
@@ -1280,8 +1461,7 @@ export class RockyChatService {
         const body = Buffer.from(contentBase64, "base64");
         const safeName = sanitizeUploadedFilename(existingRecord.name);
         const workspacePath = path.posix.join(
-          ROCKY_UPLOADS_DIRECTORY,
-          this.idGenerator(),
+          rockyTaskAttachmentDirectory(input.chatId, existingRecord.id),
           safeName
         );
         const absolutePath = path.join(
@@ -1298,6 +1478,22 @@ export class RockyChatService {
           workspacePath,
         };
       })
+    );
+  }
+
+  private async ensureTaskFileWorkspace(
+    agent: AgentRecord,
+    chatId: string
+  ): Promise<void> {
+    await Promise.all(
+      [rockyTaskInputDirectory(chatId), rockyTaskOutputDirectory(chatId)].map(
+        async (relativePath) => {
+          await mkdir(
+            path.join(agent.workspaceRoot, ...relativePath.split("/")),
+            { recursive: true }
+          );
+        }
+      )
     );
   }
 
@@ -1318,6 +1514,7 @@ export class RockyChatService {
 
     const extraSystemInstructions = buildRockyTurnSystemInstructions({
       skill: input.skill,
+      chatId: input.chatId,
       contextRelativePath: await writeRockyTurnContextFile({
         agent: input.agent,
         chatId: input.chatId,
@@ -1892,6 +2089,90 @@ export class RockyChatService {
     };
   }
 
+  private chatAgentIds(chat: RockyChatRecord): string[] {
+    const ids = new Set<string>();
+    if (chat.worker?.agentId) {
+      ids.add(chat.worker.agentId);
+    }
+    for (const dispatch of chat.dispatches) {
+      if (dispatch.orchestration?.agentId) {
+        ids.add(dispatch.orchestration.agentId);
+      }
+    }
+    return [...ids];
+  }
+
+  private async currentUsedSkillDisplayNames(
+    chat: RockyChatRecord
+  ): Promise<Map<string, string>> {
+    const displayNames = new Map<string, string>();
+
+    for (const agentId of this.chatAgentIds(chat)) {
+      const agent = await this.findAgentById(agentId);
+      if (!agent) {
+        continue;
+      }
+      try {
+        const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+        for (const skill of skills) {
+          displayNames.set(skill.id, skill.displayName);
+        }
+      } catch {
+        // Use saved templates below when workspace skill metadata is unavailable.
+      }
+    }
+
+    const templatesBySkillId = await this.savedSkillTemplateBySkillId();
+    for (const [skillId, template] of templatesBySkillId) {
+      displayNames.set(skillId, this.savedTemplateDisplayName(template));
+    }
+
+    return displayNames;
+  }
+
+  private async refreshUsedSkillDisplayNames(
+    chat: RockyChatRecord
+  ): Promise<{ messages: RockyMessageRecord[]; changed: boolean }> {
+    if (!chat.messages.some((message) => message.usedSkills.length > 0)) {
+      return { messages: chat.messages, changed: false };
+    }
+
+    const currentDisplayNames = await this.currentUsedSkillDisplayNames(chat);
+    if (currentDisplayNames.size === 0) {
+      return { messages: chat.messages, changed: false };
+    }
+
+    let changed = false;
+    const messages = chat.messages.map((message) => {
+      if (message.usedSkills.length === 0) {
+        return message;
+      }
+
+      let messageChanged = false;
+      const usedSkills = message.usedSkills.map((skill) => {
+        const displayName = currentDisplayNames.get(skill.id);
+        if (!displayName || displayName === skill.displayName) {
+          return skill;
+        }
+        changed = true;
+        messageChanged = true;
+        return {
+          ...skill,
+          displayName,
+        };
+      });
+
+      return !messageChanged
+        ? message
+        : {
+            ...message,
+            usedSkills,
+          };
+    });
+
+    return { messages, changed };
+  }
+
   private async refreshChat(
     chat: RockyChatRecord,
     options: { persist?: boolean } = {}
@@ -1932,7 +2213,7 @@ export class RockyChatService {
         };
       })
     );
-    const messages =
+    const refreshedMessages =
       messageUpdates.size > 0 || usedSkillUpdates.size > 0
         ? hydrated.messages.map((message) => {
             if (!message.dispatchId) {
@@ -1959,16 +2240,29 @@ export class RockyChatService {
     const orchestration =
       [...dispatches].reverse().find((dispatch) => dispatch.orchestration)
         ?.orchestration ?? null;
-    const refreshed: RockyChatRecord = {
+    const displayNameRefresh = await this.refreshUsedSkillDisplayNames({
       ...hydrated,
-      messages,
+      messages: refreshedMessages,
+      dispatches,
+      orchestration,
+    });
+    const metadataChanged = displayNameRefresh.changed;
+    const refreshedActivity: RockyChatRecord = {
+      ...hydrated,
+      messages: displayNameRefresh.messages,
       dispatches,
       orchestration,
       executionStarted: dispatches.some((dispatch) => dispatch.executionStarted),
-      updatedAt: changed ? this.now() : hydrated.updatedAt,
+      updatedAt: hydrated.updatedAt,
+    };
+    const refreshed: RockyChatRecord = {
+      ...refreshedActivity,
+      updatedAt: changed
+        ? rockyChatActivityUpdatedAt(refreshedActivity)
+        : hydrated.updatedAt,
     };
 
-    if (changed && options.persist) {
+    if ((changed || metadataChanged) && options.persist) {
       await this.writeChat(refreshed);
     }
 

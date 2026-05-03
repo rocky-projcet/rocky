@@ -204,6 +204,56 @@ function withPackagedInputFilesSection(
   };
 }
 
+function requiresPdfOutput(value: string): boolean {
+  return value.toLowerCase().includes("pdf");
+}
+
+function formatOutputDirectorySection(outputFormatLabel: string): string {
+  const lines = [
+    "## Output Directory Rules",
+    "- Create every final deliverable file under `outputs/` in the current workspace. Do not place final deliverables in the workspace root or other folders.",
+    "- Create `outputs/` before writing files, and verify the expected files exist there before the final response.",
+    "- In the final response, list each deliverable with its `outputs/...` path.",
+  ];
+
+  if (requiresPdfOutput(outputFormatLabel)) {
+    lines.push(
+      "- For PDF deliverables, first create a self-contained HTML source file in `outputs/`, then generate the PDF from that exact HTML source. Keep both files in `outputs/`.",
+      "- Use a browser rendering engine for HTML-to-PDF whenever available, such as Playwright, Puppeteer, or Chromium with `printBackground: true` and `preferCSSPageSize: true`, so CSS, fonts, backgrounds, tables, and page breaks are preserved.",
+      "- Do not replace browser rendering with text-only or manual PDF libraries such as PyMuPDF, ReportLab, or fpdf when the HTML styling matters. If no browser-capable renderer is available, leave the HTML source, explain the blocker, and do not claim the PDF preserves the HTML styling."
+    );
+  }
+
+  return `${lines.join("\n")}\n\n`;
+}
+
+function withOutputDirectorySection(
+  record: RuntimeSkillTemplateRecord
+): RuntimeSkillTemplateRecord {
+  const markdownWithoutExistingSection = record.skill.skillMarkdown
+    .replace(
+      /\n## Output Directory Rules\n[\s\S]*?(?=\n## |\s*$)/u,
+      "\n"
+    )
+    .replace(/\n{3,}/gu, "\n\n");
+  const qualityHeading = "\n## Quality Rules\n";
+  const section = formatOutputDirectorySection(record.outputFormatLabel);
+  const skillMarkdown = markdownWithoutExistingSection.includes(qualityHeading)
+    ? markdownWithoutExistingSection.replace(
+        qualityHeading,
+        `\n${section}## Quality Rules\n`
+      )
+    : `${markdownWithoutExistingSection.trimEnd()}\n\n${section}`;
+
+  return {
+    ...record,
+    skill: {
+      ...record.skill,
+      skillMarkdown,
+    },
+  };
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
@@ -398,7 +448,7 @@ export class SkillTemplateStore {
   ): Promise<RuntimeSkillTemplateRecord> {
     await mkdir(path.join(skillRoot, "files", "agents"), { recursive: true });
     const packagedRecord = withPackagedInputFilesSection(
-      await this.packageInputArtifacts(record, skillRoot)
+      await this.packageInputArtifacts(withOutputDirectorySection(record), skillRoot)
     );
 
     await writeFile(path.join(skillRoot, "skill.json"), serializeJson(packagedRecord), "utf8");

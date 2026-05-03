@@ -5,6 +5,7 @@ import {
   open,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -14,9 +15,11 @@ import type { FastifyReply } from "fastify";
 import type { AgentRecord } from "../../agents/agent-types.js";
 import type {
   AgentWorkspaceDirectoryRecord,
+  AgentWorkspaceDeleteResult,
   AgentWorkspaceEntryRecord,
   AgentWorkspaceFilePreviewRecord,
   AgentWorkspacePreviewKind,
+  AgentWorkspaceSearchRecord,
 } from "../api-types.js";
 import {
   baseContentType,
@@ -36,7 +39,10 @@ import { contentDispositionHeader } from "./content-disposition.js";
 import { convertPresentationToPdfPreview } from "./office-preview.js";
 
 const MAX_TEXT_PREVIEW_BYTES = 64 * 1024;
+const MAX_WORKSPACE_SEARCH_RESULTS = 200;
+const MAX_WORKSPACE_SEARCH_VISITED = 10_000;
 const WORKSPACE_UPLOADS_DIRECTORY = "uploads";
+const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store"]);
 const CODE_PREVIEW_EXTENSIONS = new Set([
   ".bash",
   ".cjs",
@@ -391,6 +397,10 @@ async function buildWorkspaceEntryRecord(
   directoryPath: string,
   entryName: string
 ): Promise<AgentWorkspaceEntryRecord | null> {
+  if (HIDDEN_WORKSPACE_ENTRY_NAMES.has(entryName)) {
+    return null;
+  }
+
   const targetPath = path.join(directoryPath, entryName);
   const metadata = await stat(targetPath);
   const relativePath = toWorkspaceRelativePath(agent.workspaceRoot, targetPath);
@@ -455,6 +465,129 @@ export async function buildWorkspaceDirectoryRecord(
     path: relativePath,
     parentPath: relativePath ? path.posix.dirname(relativePath).replace(/^\.$/, "") : null,
     entries: records,
+  };
+}
+
+function sortWorkspaceEntries(
+  left: AgentWorkspaceEntryRecord,
+  right: AgentWorkspaceEntryRecord
+): number {
+  if (left.kind !== right.kind) {
+    return left.kind === "directory" ? -1 : 1;
+  }
+
+  return left.path.localeCompare(right.path);
+}
+
+export async function searchWorkspaceEntries({
+  agent,
+  query,
+  requestedPath,
+}: {
+  agent: AgentRecord;
+  query: string;
+  requestedPath?: string | null;
+}): Promise<AgentWorkspaceSearchRecord> {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    throw badRequest("Workspace search requires a non-empty query.");
+  }
+
+  const { absolutePath, relativePath, metadata } = await statWorkspacePath(
+    agent,
+    requestedPath
+  );
+
+  if (!metadata.isDirectory()) {
+    throw badRequest(`Workspace search path is not a directory: ${relativePath || "."}`);
+  }
+
+  const lowerQuery = normalizedQuery.toLocaleLowerCase();
+  const matches: AgentWorkspaceEntryRecord[] = [];
+  let visited = 0;
+  let truncated = false;
+
+  async function walk(directoryPath: string): Promise<void> {
+    if (truncated) {
+      return;
+    }
+
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (truncated) {
+        return;
+      }
+
+      if (HIDDEN_WORKSPACE_ENTRY_NAMES.has(entry.name)) {
+        continue;
+      }
+
+      visited += 1;
+      if (visited > MAX_WORKSPACE_SEARCH_VISITED) {
+        truncated = true;
+        return;
+      }
+
+      const targetPath = path.join(directoryPath, entry.name);
+      const searchableText = entry.name.toLocaleLowerCase();
+
+      if (searchableText.includes(lowerQuery)) {
+        const record = await buildWorkspaceEntryRecord(agent, directoryPath, entry.name);
+        if (record) {
+          matches.push(record);
+          if (matches.length >= MAX_WORKSPACE_SEARCH_RESULTS) {
+            truncated = true;
+            return;
+          }
+        }
+      }
+
+      if (entry.isDirectory()) {
+        await walk(targetPath);
+      }
+    }
+  }
+
+  await walk(absolutePath);
+
+  return {
+    agentId: agent.id,
+    workspaceRoot: agent.workspaceRoot,
+    path: relativePath,
+    query: normalizedQuery,
+    matches: matches.sort(sortWorkspaceEntries),
+    truncated,
+  };
+}
+
+export async function deleteWorkspacePath(
+  agent: AgentRecord,
+  requestedPath: string
+): Promise<AgentWorkspaceDeleteResult> {
+  const { absolutePath, relativePath, metadata } = await statWorkspacePath(
+    agent,
+    requestedPath
+  );
+
+  if (!relativePath) {
+    throw badRequest("Workspace root cannot be deleted.");
+  }
+
+  if (!metadata.isDirectory() && !metadata.isFile()) {
+    throw badRequest(`Workspace path cannot be deleted: ${relativePath}`);
+  }
+
+  await rm(absolutePath, {
+    recursive: metadata.isDirectory(),
+    force: false,
+  });
+
+  return {
+    agentId: agent.id,
+    path: relativePath,
+    name: path.basename(absolutePath),
+    kind: metadata.isDirectory() ? "directory" : "file",
+    deleted: true,
   };
 }
 

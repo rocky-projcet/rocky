@@ -19,6 +19,7 @@ import {
   getRockyTaskEndedAt,
   getRockyTaskExpectedOutputFiles,
   getRockyTaskInputFiles,
+  getRockyTaskLastActivityAt,
   getRockyTaskRequest,
   getRockyTaskStartedAt,
   getRockyTaskStatus,
@@ -107,7 +108,10 @@ export function TasksPage() {
 
   const chats = rockyChatsQuery.data ?? [];
   const sortedChats = useMemo(
-    () => [...chats].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    () =>
+      [...chats].sort((left, right) =>
+        getRockyTaskLastActivityAt(right).localeCompare(getRockyTaskLastActivityAt(left)),
+      ),
     [chats],
   );
   const taskAgentMap = useMemo(() => readAllTaskAgentMap(), [chats]);
@@ -513,8 +517,8 @@ function TaskCard({
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <TaskMetric
             icon={<Clock3 className="size-3.5" />}
-            label="최근 업데이트"
-            value={formatRockyTaskDateTime(chat.updatedAt)}
+            label="최근 작업"
+            value={formatRockyTaskDateTime(getRockyTaskLastActivityAt(chat))}
           />
           <TaskMetric
             icon={<Clock3 className="size-3.5" />}

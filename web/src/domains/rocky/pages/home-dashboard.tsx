@@ -1,6 +1,16 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Clock, FileText, Plus, Sparkles, Trophy } from "lucide-react";
+import { useQueries } from "@tanstack/react-query";
+import {
+  ArrowRight,
+  Clock,
+  Download,
+  ExternalLink,
+  FileText,
+  Plus,
+  Sparkles,
+  Trophy,
+} from "lucide-react";
 
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import {
@@ -15,19 +25,28 @@ import {
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { useAgentsQuery } from "@/domains/agent/hooks";
+import { runQueryKeys } from "@/domains/run/hooks";
 import type { AgentRecord } from "@/domains/agent/types";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
+import { formatFileSize } from "@/domains/session/lib/attachment-files";
+import {
+  buildRecentSavedFiles,
+  collectRecentSavedFileRunContexts,
+  type RecentSavedFile,
+} from "@/domains/rocky/lib/home-recent-files";
 import type { MdTemplateDefinition } from "@/domains/template/types";
 import type { RockyChatRecord, RockyMessageRecord } from "@/domains/rocky/types";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { agentEngineClient } from "@/shared/lib/api-client";
 import { cn } from "@/shared/lib/utils";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 
 const MAX_COUNT = 3;
+const MAX_RECENT_FILE_RUNS = 20;
 
 function SkillCard({ template }: { template: MdTemplateDefinition }) {
   const theme = skillKindTheme(template);
@@ -405,7 +424,118 @@ function TopAgentCard({
   );
 }
 
+function recentFileOpenHref(file: RecentSavedFile): string {
+  const artifact = file.artifact;
+  const target =
+    artifact.preferredAction === "preview" && artifact.previewUrl
+      ? artifact.previewUrl
+      : artifact.downloadUrl;
+
+  return agentEngineClient.resolveApiPath(target);
+}
+
+function RecentFileCard({ file }: { file: RecentSavedFile }) {
+  const sizeLabel =
+    typeof file.artifact.size === "number" ? formatFileSize(file.artifact.size) : null;
+  const detail = [file.displayPath, sizeLabel].filter(Boolean).join(" · ");
+
+  return (
+    <li className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-muted text-muted-foreground">
+            <FileText className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold text-foreground">
+              {file.artifact.name}
+            </h3>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {detail || file.artifact.contentType}
+            </p>
+            <p className="mt-2 truncate text-[11px] text-muted-foreground">
+              {file.chatTitle}
+            </p>
+          </div>
+        </div>
+        <Badge
+          variant="outline"
+          className="h-5 shrink-0 border-border bg-muted px-2 text-[10px] text-muted-foreground"
+        >
+          저장됨
+        </Badge>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+          {formatRockyTaskDateTime(file.savedAt)}
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="xs"
+            variant="outline"
+            render={<Link to={`/tasks/${encodeURIComponent(file.chatId)}`} />}
+          >
+            작업
+            <ArrowRight className="size-3" />
+          </Button>
+          <Button
+            size="xs"
+            render={
+              <a
+                href={recentFileOpenHref(file)}
+                target="_blank"
+                rel="noreferrer"
+              />
+            }
+          >
+            {file.artifact.preferredAction === "preview" && file.artifact.previewUrl ? (
+              <ExternalLink className="size-3" />
+            ) : (
+              <Download className="size-3" />
+            )}
+            열기
+          </Button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function RecentFilesSection() {
+  const chatsQuery = useRockyChatsQuery();
+  const runContexts = useMemo(
+    () =>
+      collectRecentSavedFileRunContexts(
+        chatsQuery.data ?? [],
+        MAX_RECENT_FILE_RUNS
+      ),
+    [chatsQuery.data],
+  );
+  const artifactQueries = useQueries({
+    queries: runContexts.map((context) => ({
+      queryKey: runQueryKeys.runArtifacts(context.runId),
+      queryFn: () => agentEngineClient.listRunArtifacts(context.runId),
+      staleTime: 30_000,
+    })),
+  });
+
+  const artifactsByRunId = new Map(
+    runContexts.map((context, index) => [
+      context.runId,
+      artifactQueries[index]?.data ?? [],
+    ])
+  );
+  const files = buildRecentSavedFiles(
+    runContexts,
+    artifactsByRunId,
+    MAX_COUNT
+  );
+  const isLoading =
+    chatsQuery.isLoading || artifactQueries.some((query) => query.isLoading);
+  const isError =
+    chatsQuery.isError || artifactQueries.some((query) => query.isError);
+
   return (
     <section>
       <header className="mb-3 flex items-center justify-between gap-3">
@@ -415,11 +545,29 @@ function RecentFilesSection() {
         </div>
       </header>
 
-      <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">
-          작업이 끝나면 결과 파일 최대 {MAX_COUNT}개가 여기에 모입니다.
-        </p>
-      </div>
+      {isLoading && files.length === 0 ? (
+        <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
+          최근 저장된 파일을 불러오는 중입니다.
+        </div>
+      ) : isError && files.length === 0 ? (
+        <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center">
+          <p className="text-sm text-destructive">
+            최근 저장된 파일을 불러오지 못했습니다.
+          </p>
+        </div>
+      ) : files.length === 0 ? (
+        <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-10 text-center">
+          <p className="text-sm text-muted-foreground">
+            작업이 끝나면 결과 파일 최대 {MAX_COUNT}개가 여기에 모입니다.
+          </p>
+        </div>
+      ) : (
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {files.map((file) => (
+            <RecentFileCard key={file.id} file={file} />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

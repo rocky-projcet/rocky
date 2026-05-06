@@ -105,6 +105,19 @@ function normalizeCommandOutput(stdout: string, stderr: string): string {
   return [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").trim();
 }
 
+function waitForChildClose(
+  child: RuntimeChildProcess,
+  timeoutMs: number
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(() => resolve(), timeoutMs);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 function sanitizeTerminalOutput(output: string): string {
   return output.replace(ANSI_ESCAPE_PATTERN, "").replace(/\r/g, "");
 }
@@ -686,6 +699,9 @@ export class CodexAccountService implements CodexAccountServiceLike {
       stale.child.stdout.removeAllListeners("data");
       stale.child.stderr.removeAllListeners("data");
       stale.child.kill("SIGTERM");
+      await waitForChildClose(stale.child, 2000);
+      stale.child.kill("SIGKILL");
+      await waitForChildClose(stale.child, 500);
     }
 
     const current = await this.refreshStatus();

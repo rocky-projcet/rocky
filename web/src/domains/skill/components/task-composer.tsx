@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -18,6 +19,8 @@ import {
   SelectValue,
 } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { cn } from "@/shared/lib/utils";
 
 const AUTO_VALUE = "__auto__";
 const AUTO_LABEL = "스킬 자동 선택";
@@ -46,9 +49,17 @@ export function TaskComposer({
   const [message, setMessage] = useState(initialMessage);
   const [files, setFiles] = useState<File[]>([]);
   const [pinnedSkillId, setPinnedSkillId] = useState<string | null>(initialPinnedSkillId);
+  const [isFocused, setIsFocused] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const pinnedSkill = equippedSkills.find((skill) => skill.id === pinnedSkillId) ?? null;
+
+  useEffect(() => {
+    if (initialPinnedSkillId) {
+      textareaRef.current?.focus();
+    }
+  }, [initialPinnedSkillId]);
 
   function handleFilesChange(event: ChangeEvent<HTMLInputElement>) {
     const next = Array.from(event.target.files ?? []);
@@ -76,17 +87,22 @@ export function TaskComposer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      const form = event.currentTarget.closest("form");
-      form?.requestSubmit();
-    }
+    if (event.key !== "Enter" || event.shiftKey) return;
+    if (event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    const form = event.currentTarget.closest("form");
+    form?.requestSubmit();
   }
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="shrink-0 rounded-2xl border border-border/70 bg-card p-3 shadow-sm"
+      className={cn(
+        "shrink-0 rounded-2xl border bg-card p-3 shadow-sm transition",
+        isFocused
+          ? "border-foreground/15 ring-2 ring-ring/10"
+          : "border-border/70",
+      )}
     >
       {pinnedSkill ? (
         <div className="mb-2 flex items-center gap-2 rounded-xl bg-muted/40 px-3 py-1.5 text-xs text-foreground">
@@ -127,9 +143,12 @@ export function TaskComposer({
       ) : null}
 
       <Textarea
+        ref={textareaRef}
         value={message}
         onChange={(event) => setMessage(event.target.value)}
         onKeyDown={handleKeyDown}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
         placeholder={
           pinnedSkill
             ? `${pinnedSkill.title}로 ${recipientName}에게 부탁할 내용을 적어주세요`
@@ -164,14 +183,21 @@ export function TaskComposer({
           />
         ) : null}
 
-        <Button
-          type="submit"
-          className="ml-auto"
-          disabled={pending || (!message.trim() && !pinnedSkill)}
-        >
-          <Send className="size-4" />
-          보내기
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="submit"
+                className="ml-auto"
+                disabled={pending || (!message.trim() && !pinnedSkill)}
+              >
+                <Send className="size-4" />
+                실행하기
+              </Button>
+            }
+          />
+          <TooltipContent>Enter를 누르면 바로 실행됩니다 (Shift + Enter는 줄바꿈)</TooltipContent>
+        </Tooltip>
       </div>
     </form>
   );

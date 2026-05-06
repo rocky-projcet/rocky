@@ -7,24 +7,32 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Archive,
   Bot,
+  Check,
   Download,
   Eye,
   FileText,
   ListTodo,
+  Loader2,
   Paperclip,
+  Plus,
   Search,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
-import { useAgentsQuery } from "@/domains/agent/hooks";
+import { agentQueryKeys, useAgentsQuery } from "@/domains/agent/hooks";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
+import {
+  ensureTemplateSkillDefinition,
+} from "@/domains/template/lib/md-template-definitions";
+import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime-template-files";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
@@ -68,12 +76,15 @@ import { cn } from "@/shared/lib/utils";
 export function SkillDetailPage() {
   const navigate = useNavigate();
   const { skillId } = useParams<{ skillId: string }>();
+  const queryClient = useQueryClient();
   const { userTemplates, archiveTemplate, updateTemplate } = useMdTemplates();
   const skill = useMemo(
     () => userTemplates.find((entry) => entry.id === skillId) ?? null,
     [skillId, userTemplates],
   );
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [useDialogOpen, setUseDialogOpen] = useState(false);
+  const [pendingAgentId, setPendingAgentId] = useState<string | null>(null);
 
   const chatsQuery = useRockyChatsQuery();
   const agentsQuery = useAgentsQuery({ includeArchived: true });
@@ -81,10 +92,63 @@ export function SkillDetailPage() {
     () => filterUserManagedAgents(agentsQuery.data ?? []),
     [agentsQuery.data],
   );
+  const pickableAgents = useMemo(
+    () => agents.filter((agent) => !agent.archivedAt),
+    [agents],
+  );
+  const agentSkillsQueries = useQueries({
+    queries: pickableAgents.map((agent) => ({
+      queryKey: agentQueryKeys.agentLocalSkills(agent.id),
+      queryFn: () => agentEngineClient.listAgentLocalSkills(agent.id),
+    })),
+  });
+  const equippedAgentIdSet = useMemo(() => {
+    if (!skill) return new Set<string>();
+    const ids = new Set<string>();
+    pickableAgents.forEach((agent, index) => {
+      const records = agentSkillsQueries[index]?.data;
+      if (records?.some((record) => record.id === skill.skill.id)) {
+        ids.add(agent.id);
+      }
+    });
+    return ids;
+  }, [pickableAgents, agentSkillsQueries, skill]);
+  const equippedAgents = useMemo(
+    () => pickableAgents.filter((agent) => equippedAgentIdSet.has(agent.id)),
+    [pickableAgents, equippedAgentIdSet],
+  );
+  const availableAgents = useMemo(
+    () => pickableAgents.filter((agent) => !equippedAgentIdSet.has(agent.id)),
+    [pickableAgents, equippedAgentIdSet],
+  );
   const taskAgentMap = useMemo(
     () => readAllTaskAgentMap(),
     [chatsQuery.data],
   );
+
+  const attachMutation = useMutation({
+    mutationFn: async (agentId: string) => {
+      if (!skill) {
+        throw new Error("스킬 정보를 찾을 수 없습니다.");
+      }
+      const normalized = ensureTemplateSkillDefinition(skill);
+      const result = await agentEngineClient.upsertAgentLocalSkill(
+        agentId,
+        normalized.skill.id,
+        {
+          replace: true,
+          files: await resolveTemplateSkillInstallFiles(normalized),
+        },
+      );
+      return { agentId, skills: result.skills };
+    },
+    onSuccess: ({ agentId, skills }) => {
+      queryClient.setQueryData(
+        agentQueryKeys.agentLocalSkills(agentId),
+        skills,
+      );
+    },
+  });
 
   const tasks = useMemo(() => {
     if (!skill) return [];
@@ -152,7 +216,7 @@ export function SkillDetailPage() {
           theme.chip,
         )}
       >
-        <div className="flex items-start gap-3">
+        <div className="flex items-center gap-3">
           <div
             className={cn(
               "flex size-9 shrink-0 items-center justify-center rounded-xl",
@@ -161,18 +225,51 @@ export function SkillDetailPage() {
           >
             <Bot className="size-4" />
           </div>
-          <p>
-            스킬은{" "}
-            <Link
-              to="/agents"
-              className="font-semibold underline underline-offset-2"
-            >
-              내 에이전트
-            </Link>
-            가 발사할 능력입니다. 작업을 시작하려면 이 스킬을 장착한 에이전트로 가서 발사해주세요.
-          </p>
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-foreground">이 스킬을 바로 사용해보세요</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              에이전트를 골라 즉시 작업을 시작할 수 있어요.
+            </p>
+          </div>
+          <Button onClick={() => setUseDialogOpen(true)}>
+            <Sparkles className="size-4" />
+            이 스킬 사용하기
+          </Button>
         </div>
       </section>
+
+      <UseSkillDialog
+        open={useDialogOpen}
+        onOpenChange={(next) => {
+          setUseDialogOpen(next);
+          if (!next) setPendingAgentId(null);
+        }}
+        skill={skill}
+        equippedAgents={equippedAgents}
+        availableAgents={availableAgents}
+        agentsLoading={
+          agentsQuery.isLoading || agentSkillsQueries.some((q) => q.isLoading)
+        }
+        pendingAgentId={pendingAgentId}
+        onSelect={async (agentId, needsAttach) => {
+          try {
+            if (needsAttach) {
+              setPendingAgentId(agentId);
+              await attachMutation.mutateAsync(agentId);
+            }
+            setUseDialogOpen(false);
+            setPendingAgentId(null);
+            navigate(
+              `/agents/${encodeURIComponent(agentId)}?skill=${encodeURIComponent(skill.id)}`,
+            );
+          } catch (error) {
+            setPendingAgentId(null);
+            toast.error("스킬을 장착하지 못했습니다.", {
+              description: error instanceof Error ? error.message : undefined,
+            });
+          }
+        }}
+      />
 
       <SkillSummary skill={skill} />
 
@@ -234,6 +331,147 @@ export function SkillDetailPage() {
 }
 
 type TaskAgentMap = Record<string, string>;
+
+function UseSkillDialog({
+  open,
+  onOpenChange,
+  skill,
+  equippedAgents,
+  availableAgents,
+  agentsLoading,
+  pendingAgentId,
+  onSelect,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  skill: MdTemplateDefinition;
+  equippedAgents: AgentRecord[];
+  availableAgents: AgentRecord[];
+  agentsLoading: boolean;
+  pendingAgentId: string | null;
+  onSelect: (agentId: string, needsAttach: boolean) => void | Promise<void>;
+}) {
+  const totalAgents = equippedAgents.length + availableAgents.length;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>이 스킬을 사용할 에이전트 선택</DialogTitle>
+          <DialogDescription>
+            {`"${skill.title}"으로 작업을 시작할 에이전트를 골라주세요.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {agentsLoading ? (
+          <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+            <Loader2 className="mr-2 size-4 animate-spin" />
+            에이전트를 불러오는 중입니다.
+          </div>
+        ) : totalAgents === 0 ? (
+          <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+            <p>아직 사용할 수 있는 에이전트가 없어요.</p>
+            <Link
+              to="/agents"
+              className={cn(
+                buttonVariants({ size: "sm", variant: "outline" }),
+                "mt-3 inline-flex",
+              )}
+              onClick={() => onOpenChange(false)}
+            >
+              <Plus className="size-4" />
+              에이전트 만들기
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {equippedAgents.length > 0 ? (
+              <section>
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <Check className="size-3.5" />
+                  이 스킬이 장착된 에이전트
+                </p>
+                <ul className="space-y-1.5">
+                  {equippedAgents.map((agent) => (
+                    <li key={agent.id}>
+                      <AgentChoiceRow
+                        agent={agent}
+                        kind="equipped"
+                        pending={pendingAgentId === agent.id}
+                        onSelect={() => onSelect(agent.id, false)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {availableAgents.length > 0 ? (
+              <section>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  {equippedAgents.length > 0
+                    ? "다른 에이전트에 장착해서 사용"
+                    : "에이전트에 장착해서 사용"}
+                </p>
+                <ul className="space-y-1.5">
+                  {availableAgents.map((agent) => (
+                    <li key={agent.id}>
+                      <AgentChoiceRow
+                        agent={agent}
+                        kind="available"
+                        pending={pendingAgentId === agent.id}
+                        onSelect={() => onSelect(agent.id, true)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AgentChoiceRow({
+  agent,
+  kind,
+  pending,
+  onSelect,
+}: {
+  agent: AgentRecord;
+  kind: "equipped" | "available";
+  pending: boolean;
+  onSelect: () => void;
+}) {
+  const { emoji } = useAgentEmoji(agent.id);
+  const helper = kind === "equipped" ? "이미 장착됨 · 바로 사용" : "장착 후 사용";
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={pending}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-card px-3 py-2.5 text-left transition",
+        "hover:border-foreground/40 hover:bg-muted/40",
+        "disabled:cursor-not-allowed disabled:opacity-70",
+      )}
+    >
+      <AgentAvatar emoji={emoji} color={agent.color} size="sm" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{agent.name}</p>
+        <p className="truncate text-[11px] text-muted-foreground">{helper}</p>
+      </div>
+      {pending ? (
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      ) : (
+        <ArrowRight className="size-4 text-muted-foreground" />
+      )}
+    </button>
+  );
+}
 
 function normalizeSearchValue(value: string): string {
   return value.trim().toLowerCase();

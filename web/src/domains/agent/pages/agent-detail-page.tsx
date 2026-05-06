@@ -6,7 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Archive,
   ArchiveRestore,
@@ -79,6 +79,8 @@ type EquippedSkillItem = {
 export function AgentDetailPage() {
   const navigate = useNavigate();
   const { agentId } = useParams<{ agentId: string }>();
+  const [searchParams] = useSearchParams();
+  const initialPinnedSkillId = searchParams.get("skill");
   const agentQuery = useAgentQuery(agentId);
   const updateMutation = useUpdateAgentMutation(agentId);
   const createChatMutation = useCreateRockyChatMutation();
@@ -433,6 +435,7 @@ export function AgentDetailPage() {
           recipientName={agent.name}
           equippedSkills={equippedTemplateSkills}
           pending={createChatMutation.isPending}
+          initialPinnedSkillId={initialPinnedSkillId}
           onSubmit={async ({ message, files, skill }) => {
             const fileNames = files.map((file) => file.name);
             const composedMessage = composeFreeFormPrompt(

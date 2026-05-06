@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { LogIn, Loader2 } from "lucide-react";
+import { LogIn, Loader2, RefreshCw, TerminalSquare } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import {
@@ -33,6 +33,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (hasAuthenticated) {
     return <>{children}</>;
+  }
+
+  const missingInstall = providers.find(
+    (provider) => provider.diagnostics.installStatus !== "installed",
+  );
+  if (missingInstall) {
+    return (
+      <FullScreenInstallRequired
+        provider={missingInstall}
+        onRefresh={() => {
+          void accountsQuery.refetch();
+        }}
+        isRefreshing={accountsQuery.isFetching}
+      />
+    );
   }
 
   return <FullScreenLogin providers={providers} />;
@@ -69,6 +84,102 @@ function FullScreenLogin({ providers }: { providers: ProviderAccountRecord[] }) 
           로그인 버튼을 누르면 외부 브라우저 또는 CLI 인증 창이 열립니다.
         </p>
       </div>
+    </div>
+  );
+}
+
+function FullScreenInstallRequired({
+  provider,
+  onRefresh,
+  isRefreshing,
+}: {
+  provider: ProviderAccountRecord;
+  onRefresh: () => void;
+  isRefreshing: boolean;
+}) {
+  const label = providerLabel(provider.provider);
+  const detectedCommand = provider.diagnostics.command;
+  const preferredMethod = provider.diagnostics.installMethod;
+  const npmCommand = "npm install -g @openai/codex";
+  const brewCommand = "brew install codex";
+
+  return (
+    <div className="flex min-h-svh w-full items-center justify-center bg-muted/30 p-6">
+      <div className="w-full max-w-md rounded-3xl border border-border/70 bg-card p-8 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-2xl border border-border/70 bg-muted text-muted-foreground">
+            <TerminalSquare className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold text-foreground">
+              {label} 설치가 필요해요
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              Rocky를 사용하려면 먼저 {label}를 설치해 주세요.
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-5 text-xs leading-5 text-muted-foreground">
+          아래 명령어 중 환경에 맞는 것을 터미널에서 실행한 뒤,{" "}
+          <span className="font-medium text-foreground">다시 확인</span>{" "}
+          버튼을 눌러 주세요.
+        </p>
+
+        <div className="mt-4 space-y-3">
+          <InstallCommandBlock
+            label="npm (권장)"
+            command={npmCommand}
+            highlight={preferredMethod === "npm-global"}
+          />
+          <InstallCommandBlock
+            label="Homebrew"
+            command={brewCommand}
+            highlight={preferredMethod === "homebrew-cask"}
+          />
+        </div>
+
+        <div className="mt-5 rounded-xl border border-dashed border-border/70 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+          탐지한 명령어: <code className="font-mono">{detectedCommand}</code>
+          <br />
+          상태: {provider.diagnostics.statusText}
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <Button size="sm" onClick={onRefresh} disabled={isRefreshing}>
+            {isRefreshing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            다시 확인
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InstallCommandBlock({
+  label,
+  command,
+  highlight,
+}: {
+  label: string;
+  command: string;
+  highlight: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border bg-muted/40 px-3 py-2",
+        highlight ? "border-foreground/40" : "border-border/70",
+      )}
+    >
+      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-foreground">
+        {command}
+      </pre>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import type { MdTemplateDefinition } from "@/domains/template/types";
 import { useCreateAgentMutation } from "../hooks";
+import { fireMilestone } from "@/domains/onboarding/milestones";
 import { AgentAvatar } from "../components/agent-avatar";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -109,13 +110,32 @@ export function AgentNewPage() {
         }
       }
 
-      toast.success("에이전트를 만들었습니다.", {
+      const navigateToAgent = () =>
+        navigate(`/agents/${encodeURIComponent(created.id)}`, { replace: true });
+
+      const milestoneFired = fireMilestone("first-agent", {
+        title: `첫 직원 완성! 🎉 ${created.name}`,
         description:
           attachedSkillCount > 0
-            ? `${created.name}에 스킬 ${attachedSkillCount}개를 장착했습니다.`
-            : created.name,
+            ? `스킬 ${attachedSkillCount}개를 장착했어요. 이제 작업을 보내볼까요?`
+            : "이제 직원에게 줄 능력(스킬)을 만들어볼까요?",
+        action:
+          attachedSkillCount > 0
+            ? undefined
+            : {
+                label: "스킬 만들기",
+                onClick: () => navigate("/templates"),
+              },
       });
-      navigate(`/agents/${encodeURIComponent(created.id)}`, { replace: true });
+      if (!milestoneFired) {
+        toast.success("에이전트를 만들었습니다.", {
+          description:
+            attachedSkillCount > 0
+              ? `${created.name}에 스킬 ${attachedSkillCount}개를 장착했습니다.`
+              : created.name,
+        });
+      }
+      navigateToAgent();
     } catch (error) {
       toast.error("에이전트를 만들지 못했습니다.", {
         description: error instanceof Error ? error.message : undefined,

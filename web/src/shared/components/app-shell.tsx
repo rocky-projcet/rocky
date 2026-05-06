@@ -13,6 +13,8 @@ import {
 
 import { cn } from "@/shared/lib/utils";
 import { AuthGate } from "@/domains/codex/components/auth-gate";
+import { MilestoneHost } from "@/domains/onboarding/milestone-host";
+import { ProductTourOrchestrator } from "@/domains/onboarding/product-tour-orchestrator";
 import { SidebarIdentity } from "@/domains/codex/components/sidebar-identity";
 import { SidebarLogo } from "./sidebar-logo";
 import { SiteHeader } from "./site-header";
@@ -96,6 +98,8 @@ export function AppShell() {
     <AuthGate>
       <SidebarProvider className="h-svh max-h-svh">
         <AppShellInner />
+        <ProductTourOrchestrator />
+        <MilestoneHost />
       </SidebarProvider>
     </AuthGate>
   );
@@ -175,7 +179,7 @@ function AppShellInner() {
                     <span>검색</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                <SidebarMenuItem data-tour="nav-tasks">
                   <SidebarMenuButton
                     tooltip="작업"
                     isActive={tasksListRoute}
@@ -185,7 +189,7 @@ function AppShellInner() {
                     <span>작업</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                <SidebarMenuItem data-tour="nav-skills">
                   <SidebarMenuButton
                     tooltip="스킬"
                     isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
@@ -195,7 +199,7 @@ function AppShellInner() {
                     <span>스킬</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                <SidebarMenuItem data-tour="nav-agents">
                   <SidebarMenuButton
                     tooltip="내 에이전트"
                     isActive={agentsRoute}
@@ -205,7 +209,7 @@ function AppShellInner() {
                     <span>내 에이전트</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                <SidebarMenuItem data-tour="nav-skill-templates">
                   <SidebarMenuButton
                     tooltip="스킬 템플릿"
                     isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}

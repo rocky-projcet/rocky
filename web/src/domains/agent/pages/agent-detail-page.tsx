@@ -26,6 +26,7 @@ import {
   useUpdateAgentMutation,
 } from "../hooks";
 import { useMdTemplates } from "@/domains/template/hooks";
+import { fireMilestone } from "@/domains/onboarding/milestones";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import {
   formatRockyTaskDateTime,
@@ -431,7 +432,8 @@ export function AgentDetailPage() {
           보관된 에이전트는 작업을 받을 수 없어요. 다시 사용하려면 위에서 복원해주세요.
         </div>
       ) : (
-        <TaskComposer
+        <div data-tour="task-composer" className="shrink-0">
+          <TaskComposer
           recipientName={agent.name}
           equippedSkills={equippedTemplateSkills}
           pending={createChatMutation.isPending}
@@ -449,7 +451,13 @@ export function AgentDetailPage() {
                 skillId: skill?.skill.id ?? null,
               });
               rememberTaskAgent(chat.id, agent.id);
-              toast.success(`${agent.name}이(가) 작업을 시작했어요.`);
+              const milestoneFired = fireMilestone("first-task", {
+                title: "첫 작업 시작! 🚀",
+                description: `${agent.name}이(가) 일을 시작했어요. 결과는 잠시 뒤 홈 '최근 파일'과 작업 화면에서 볼 수 있어요.`,
+              });
+              if (!milestoneFired) {
+                toast.success(`${agent.name}이(가) 작업을 시작했어요.`);
+              }
               navigate(`/tasks/${encodeURIComponent(chat.id)}`);
             } catch (error) {
               toast.error("작업을 시작하지 못했습니다.", {
@@ -457,7 +465,8 @@ export function AgentDetailPage() {
               });
             }
           }}
-        />
+          />
+        </div>
       )}
 
       <ConfirmDialog

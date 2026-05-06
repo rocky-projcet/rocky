@@ -580,10 +580,18 @@ export function HomeDashboard() {
         title="오늘 어떤 일을 부탁해볼까요?"
         description="가장 최근 작업과 자주 쓰는 스킬을 한눈에 보고, 내 에이전트로 새 일을 부탁해보세요."
       />
-      <RecentTasksSection />
-      <FrequentSkillsSection />
-      <TopAgentsSection />
-      <RecentFilesSection />
+      <div data-tour="recent-tasks">
+        <RecentTasksSection />
+      </div>
+      <div data-tour="frequent-skills">
+        <FrequentSkillsSection />
+      </div>
+      <div data-tour="top-agents">
+        <TopAgentsSection />
+      </div>
+      <div data-tour="recent-files">
+        <RecentFilesSection />
+      </div>
     </PageContainer>
   );
 }

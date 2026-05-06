@@ -16,6 +16,7 @@ import { cn } from "@/shared/lib/utils";
 import { SkillWizard, type SkillWizardAnswers } from "../components/skill-wizard";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import { useAgentsQuery } from "@/domains/agent/hooks";
+import { fireMilestone } from "@/domains/onboarding/milestones";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import {
   AGENT_AVATAR_COLORS,
@@ -152,7 +153,13 @@ export function SkillNewPage() {
       const installFiles = await resolveTemplateSkillInstallFiles(normalized);
 
       if (choice.kind === "skip") {
-        toast.success("새 스킬을 만들었습니다.", { description: saved.title });
+        const milestoneFired = fireMilestone("first-skill", {
+          title: `첫 스킬 완성! ✨ ${saved.title}`,
+          description: "이제 직원에게 장착해서 작업을 보내볼까요?",
+        });
+        if (!milestoneFired) {
+          toast.success("새 스킬을 만들었습니다.", { description: saved.title });
+        }
         navigate(`/skills/${encodeURIComponent(saved.id)}`, { replace: true });
         return;
       }
@@ -166,9 +173,15 @@ export function SkillNewPage() {
             files: installFiles,
           },
         );
-        toast.success("스킬을 만들고 에이전트에 장착했어요.", {
-          description: saved.title,
+        const milestoneFired = fireMilestone("first-skill", {
+          title: `첫 스킬 완성! ✨ ${saved.title}`,
+          description: "직원에게 장착했어요. 이제 첫 작업을 보내볼까요?",
         });
+        if (!milestoneFired) {
+          toast.success("스킬을 만들고 에이전트에 장착했어요.", {
+            description: saved.title,
+          });
+        }
         navigate(
           `/agents/${encodeURIComponent(choice.agentId)}?skill=${encodeURIComponent(saved.id)}`,
           { replace: true },
@@ -196,9 +209,15 @@ export function SkillNewPage() {
           files: installFiles,
         },
       );
-      toast.success(`${created.name}이(가) 새로 만들어졌어요.`, {
-        description: `${saved.title} 스킬을 장착했어요.`,
+      const milestoneFired = fireMilestone("first-skill", {
+        title: `첫 스킬 완성! ✨ ${saved.title}`,
+        description: `${created.name}에 장착했어요. 이제 첫 작업을 보내볼까요?`,
       });
+      if (!milestoneFired) {
+        toast.success(`${created.name}이(가) 새로 만들어졌어요.`, {
+          description: `${saved.title} 스킬을 장착했어요.`,
+        });
+      }
       navigate(
         `/agents/${encodeURIComponent(created.id)}?skill=${encodeURIComponent(saved.id)}`,
         { replace: true },
@@ -417,7 +436,7 @@ function AgentChoiceStep({
         </p>
       </div>
 
-      <ul className="grid gap-2 sm:grid-cols-2">
+      <ul data-tour="agent-step-grid" className="grid gap-2 sm:grid-cols-2">
         {agents.map((agent) => (
           <li key={agent.id}>
             <ExistingAgentCard

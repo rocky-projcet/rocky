@@ -7,6 +7,7 @@ import type { AgentRecord } from "@/domains/agent/types";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
+import { resolveRockyChatAgentId } from "@/domains/agent/lib/agent-task-summary";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { useRockyChatsQuery } from "@/domains/rocky/hooks";
@@ -253,7 +254,7 @@ function TaskResults({
   return (
     <ul className="grid gap-2">
       {chats.map((chat) => {
-        const agentId = taskAgentMap[chat.id] ?? null;
+        const agentId = resolveRockyChatAgentId(chat, taskAgentMap);
         const agent = agentId ? agents.find((entry) => entry.id === agentId) ?? null : null;
         return (
           <li key={chat.id}>

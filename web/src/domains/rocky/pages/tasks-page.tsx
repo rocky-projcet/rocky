@@ -37,6 +37,7 @@ import type { MdTemplateDefinition } from "@/domains/template/types";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
+import { resolveRockyChatAgentId } from "@/domains/agent/lib/agent-task-summary";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import { ConfirmDialog } from "@/shared/components/confirm-dialog";
@@ -115,28 +116,36 @@ export function TasksPage() {
     [chats],
   );
   const taskAgentMap = useMemo(() => readAllTaskAgentMap(), [chats]);
+  const chatAgentMap = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const chat of sortedChats) {
+      const resolved = resolveRockyChatAgentId(chat, taskAgentMap);
+      if (resolved) next[chat.id] = resolved;
+    }
+    return next;
+  }, [sortedChats, taskAgentMap]);
   const agents = useMemo(
     () => filterUserManagedAgents(agentsQuery.data ?? []),
     [agentsQuery.data],
   );
 
   const agentsWithTasks = useMemo(() => {
-    const ids = new Set(sortedChats.map((chat) => taskAgentMap[chat.id]).filter(Boolean));
+    const ids = new Set(sortedChats.map((chat) => chatAgentMap[chat.id]).filter(Boolean));
     return agents.filter((agent) => ids.has(agent.id));
-  }, [sortedChats, agents, taskAgentMap]);
+  }, [sortedChats, agents, chatAgentMap]);
 
   const hasUnmapped = useMemo(
-    () => sortedChats.some((chat) => !taskAgentMap[chat.id]),
-    [sortedChats, taskAgentMap],
+    () => sortedChats.some((chat) => !chatAgentMap[chat.id]),
+    [sortedChats, chatAgentMap],
   );
 
   const visibleChats = useMemo(() => {
     if (selectedTab === ALL_TAB) return sortedChats;
     if (selectedTab === NO_AGENT_TAB) {
-      return sortedChats.filter((chat) => !taskAgentMap[chat.id]);
+      return sortedChats.filter((chat) => !chatAgentMap[chat.id]);
     }
-    return sortedChats.filter((chat) => taskAgentMap[chat.id] === selectedTab);
-  }, [selectedTab, sortedChats, taskAgentMap]);
+    return sortedChats.filter((chat) => chatAgentMap[chat.id] === selectedTab);
+  }, [selectedTab, sortedChats, chatAgentMap]);
 
   const activeChats = sortedChats.filter(isRockyTaskActive);
 
@@ -171,11 +180,11 @@ export function TasksPage() {
         agents={agentsWithTasks}
         selected={selectedTab}
         totalCount={sortedChats.length}
-        unmappedCount={hasUnmapped ? sortedChats.filter((chat) => !taskAgentMap[chat.id]).length : 0}
+        unmappedCount={hasUnmapped ? sortedChats.filter((chat) => !chatAgentMap[chat.id]).length : 0}
         countByAgent={Object.fromEntries(
           agentsWithTasks.map((agent) => [
             agent.id,
-            sortedChats.filter((chat) => taskAgentMap[chat.id] === agent.id).length,
+            sortedChats.filter((chat) => chatAgentMap[chat.id] === agent.id).length,
           ]),
         )}
         onSelect={setTab}
@@ -219,8 +228,8 @@ export function TasksPage() {
               key={chat.id}
               chat={chat}
               agent={
-                taskAgentMap[chat.id]
-                  ? agents.find((a) => a.id === taskAgentMap[chat.id]) ?? null
+                chatAgentMap[chat.id]
+                  ? agents.find((a) => a.id === chatAgentMap[chat.id]) ?? null
                   : null
               }
               templates={userTemplates}

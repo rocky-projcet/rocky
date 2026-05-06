@@ -43,6 +43,29 @@ export function getRockyChatStatusForAgent(
   return getRockyTaskStatus(chat);
 }
 
+export function resolveRockyChatAgentId(
+  chat: RockyChatRecord,
+  taskAgentMap: TaskAgentMap = {},
+): string | null {
+  if (chat.orchestration?.agentId) {
+    return chat.orchestration.agentId;
+  }
+  if (chat.worker?.agentId) {
+    return chat.worker.agentId;
+  }
+  for (const dispatch of chat.dispatches) {
+    if (dispatch.orchestration?.agentId) {
+      return dispatch.orchestration.agentId;
+    }
+  }
+  for (const dispatch of chat.dispatches) {
+    if (dispatch.skillId?.startsWith("agent.")) {
+      return dispatch.skillId.slice("agent.".length);
+    }
+  }
+  return taskAgentMap[chat.id] ?? null;
+}
+
 export function countCompletedRockyTasksForAgent(
   chats: RockyChatRecord[],
   agentId: string,

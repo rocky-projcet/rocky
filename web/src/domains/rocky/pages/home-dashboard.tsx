@@ -30,6 +30,7 @@ import type { AgentRecord } from "@/domains/agent/types";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
+import { resolveRockyChatAgentId } from "@/domains/agent/lib/agent-task-summary";
 import { formatFileSize } from "@/domains/session/lib/attachment-files";
 import {
   buildRecentSavedFiles,
@@ -189,7 +190,7 @@ function RecentTaskCard({
   const group = getRockyTaskTemplateGroup(chat, templates);
   const skill = templates.find((entry) => entry.id === group.id) ?? null;
   const skillTheme = skill ? skillKindTheme(skill) : null;
-  const agentId = taskAgentMap[chat.id] ?? null;
+  const agentId = resolveRockyChatAgentId(chat, taskAgentMap);
   const agent = agentId ? agents.find((entry) => entry.id === agentId) ?? null : null;
   const { emoji } = useAgentEmoji(agent?.id);
 

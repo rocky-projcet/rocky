@@ -2676,8 +2676,15 @@ function RockyReplyMark() {
   );
 }
 
-function ChatReplyAvatar({ chatId }: { chatId: string }) {
-  const agentId = useTaskAgentId(chatId);
+function ChatReplyAvatar({
+  chatId,
+  agentId: explicitAgentId,
+}: {
+  chatId: string;
+  agentId?: string | null;
+}) {
+  const localAgentId = useTaskAgentId(chatId);
+  const agentId = explicitAgentId ?? localAgentId;
   const agentQuery = useAgentQuery(agentId ?? undefined);
   const { emoji } = useAgentEmoji(agentId ?? undefined);
 
@@ -2840,7 +2847,8 @@ function MessageBubble({
     chat.dispatches.find((entry) => entry.id === message.dispatchId) ?? null;
   const agentId = dispatch?.orchestration?.agentId ?? null;
   const workspaceRoot = agentId ? agentWorkspaceRootsByAgentId[agentId] ?? null : null;
-  const myAgentId = useTaskAgentId(chat.id);
+  const localAgentId = useTaskAgentId(chat.id);
+  const myAgentId = agentId ?? localAgentId;
   const myAgentQuery = useAgentQuery(myAgentId ?? undefined);
   const myAgentColor = myAgentQuery.data?.color ?? null;
   const replyBubbleStyle = myAgentColor
@@ -2883,7 +2891,7 @@ function MessageBubble({
 
     return (
       <div className="flex w-full items-start justify-start gap-2.5">
-        <ChatReplyAvatar chatId={chat.id} />
+        <ChatReplyAvatar chatId={chat.id} agentId={myAgentId} />
         <article
           className={cn(
             "w-full max-w-[52rem] text-sm leading-6 text-muted-foreground",
@@ -2937,7 +2945,7 @@ function MessageBubble({
         isRocky ? "items-start justify-start gap-2.5" : "justify-end"
       )}
     >
-      {isRocky ? <ChatReplyAvatar chatId={chat.id} /> : null}
+      {isRocky ? <ChatReplyAvatar chatId={chat.id} agentId={myAgentId} /> : null}
       <article
         className={cn(
           "text-sm leading-6",

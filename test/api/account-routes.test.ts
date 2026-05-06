@@ -352,6 +352,15 @@ test("account routes expose global login status, device auth start, and logout",
         model: "gpt-5.4-mini",
       } satisfies TaskRequestTitleSummaryRecord;
     },
+    async suggestAgentForSkill() {
+      calls.push("suggestAgent");
+      return {
+        name: "추천 에이전트",
+        description: "테스트용 에이전트입니다.",
+        emoji: "🤖",
+        model: "gpt-5.4-mini",
+      };
+    },
   };
   const fakeStatusService: CodexStatusServiceLike = {
     async getStatus() {

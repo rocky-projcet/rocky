@@ -308,6 +308,58 @@ function buildTaskRequestTitlePrompt(prompt: string): string {
   ].join("\n");
 }
 
+function buildAgentSuggestionPrompt(input: {
+  title: string;
+  description: string;
+  triggerLabel: string;
+}): string {
+  return [
+    "Suggest one agent persona that would best use the given skill.",
+    "Return ONE JSON object on a single line with exactly these keys: name, description, emoji.",
+    "Rules:",
+    "- Use the SAME language as the skill (Korean if Korean).",
+    "- name: short noun phrase representing the agent persona (e.g., \"영업 도우미\", \"문서 정리 비서\"). Max 12 characters.",
+    "- description: one-sentence role description focused on what this agent helps with. Max 60 characters.",
+    "- emoji: a single emoji character that visually fits the persona.",
+    "- Output JSON ONLY. No markdown, no code fences, no extra commentary.",
+    "<skill>",
+    `title: ${input.title}`,
+    `description: ${input.description}`,
+    `trigger: ${input.triggerLabel}`,
+    "</skill>",
+  ].join("\n");
+}
+
+function parseAgentSuggestion(raw: string): {
+  name: string;
+  description: string;
+  emoji: string | null;
+} | null {
+  const cleaned = raw
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    const name = readNonEmptyString(parsed.name);
+    const description = readNonEmptyString(parsed.description);
+    if (!name || !description) {
+      return null;
+    }
+    const emoji = readNonEmptyString(parsed.emoji);
+    return { name, description, emoji };
+  } catch {
+    return null;
+  }
+}
+
 function isJsonObjectLine(line: string): boolean {
   const trimmed = line.trim();
   return trimmed.startsWith("{") && trimmed.endsWith("}");
@@ -680,6 +732,59 @@ export class CodexAccountService implements CodexAccountServiceLike {
 
     return {
       title,
+      model: TASK_REQUEST_TITLE_MODEL,
+    };
+  }
+
+  async suggestAgentForSkill(input: {
+    title: string;
+    description: string;
+    triggerLabel: string;
+  }): Promise<{
+    name: string;
+    description: string;
+    emoji: string | null;
+    model: string;
+  }> {
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const triggerLabel = input.triggerLabel.trim();
+    if (!title) {
+      throw new Error("Skill title is required.");
+    }
+
+    const result = await this.runCommand([
+      "-C",
+      this.cwd,
+      "--model",
+      TASK_REQUEST_TITLE_MODEL,
+      "--sandbox",
+      "read-only",
+      "--ask-for-approval",
+      "never",
+      "exec",
+      "--json",
+      "--color",
+      "never",
+      "--skip-git-repo-check",
+      buildAgentSuggestionPrompt({ title, description, triggerLabel }),
+    ]);
+
+    if (result.exitCode !== 0) {
+      throw new Error(
+        normalizeCommandOutput(result.stdout, result.stderr) ||
+          `Agent suggestion failed with code ${result.exitCode ?? "unknown"}.`
+      );
+    }
+
+    const message = extractExecAgentMessage(result.stdout) ?? result.stdout;
+    const parsed = parseAgentSuggestion(message);
+    if (!parsed) {
+      throw new Error("Agent suggestion produced an invalid response.");
+    }
+
+    return {
+      ...parsed,
       model: TASK_REQUEST_TITLE_MODEL,
     };
   }

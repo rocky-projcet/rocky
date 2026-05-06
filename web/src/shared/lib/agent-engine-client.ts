@@ -334,6 +334,19 @@ export interface TaskRequestTitleSummaryRecord {
   model: string;
 }
 
+export interface AgentSuggestionInput {
+  title: string;
+  description: string;
+  triggerLabel: string;
+}
+
+export interface AgentSuggestionRecord {
+  name: string;
+  description: string;
+  emoji: string | null;
+  model: string;
+}
+
 export type ProviderStatusDataState = "ok" | "stale" | "unavailable" | "error";
 
 export interface ProviderStatusAccountSummaryRecord {
@@ -1336,6 +1349,15 @@ export class AgentEngineClient {
         }),
       }
     );
+  }
+
+  suggestAgentForSkill(
+    input: AgentSuggestionInput
+  ): Promise<AgentSuggestionRecord> {
+    return this.request<AgentSuggestionRecord>("/account/agent-suggestion", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   }
 
   createAgent(input: AgentCreateInput): Promise<AgentRecord> {

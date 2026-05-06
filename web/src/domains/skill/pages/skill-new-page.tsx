@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useMdTemplates } from "@/domains/template/hooks";
@@ -15,6 +15,30 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { SkillWizard, type SkillWizardAnswers } from "../components/skill-wizard";
 import { agentEngineClient } from "@/shared/lib/api-client";
+import { useAgentsQuery } from "@/domains/agent/hooks";
+import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
+import {
+  AGENT_AVATAR_COLORS,
+  AGENT_EMOJI_PRESETS,
+  useAgentEmoji,
+  writeAgentEmoji,
+} from "@/domains/agent/lib/agent-avatar-store";
+import { useSuggestAgentForSkillMutation } from "@/domains/codex/hooks";
+import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
+import { ensureTemplateSkillDefinition } from "@/domains/template/lib/md-template-definitions";
+import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime-template-files";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
+import type {
+  AgentRecord,
+  AgentSuggestionRecord,
+} from "@/shared/lib/agent-engine-client";
 import {
   LANGUAGE_OPTIONS,
   SKILL_TEMPLATES,
@@ -49,6 +73,7 @@ export function SkillNewPage() {
   const templateRunIdRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingDraft, setPendingDraft] = useState<MdTemplateDraft | null>(null);
+  const [agentStepDraft, setAgentStepDraft] = useState<MdTemplateDraft | null>(null);
 
   useEffect(() => {
     const kindParam = parseKind(searchParams.get("kind"));
@@ -109,15 +134,77 @@ export function SkillNewPage() {
     });
   }
 
-  async function persistDraft(finalDraft: MdTemplateDraft) {
+  async function persistAndAttach(
+    finalDraft: MdTemplateDraft,
+    choice:
+      | { kind: "skip" }
+      | { kind: "existing"; agentId: string }
+      | {
+          kind: "newAgent";
+          input: { name: string; emoji: string; color: string; description: string };
+        },
+  ): Promise<void> {
     if (saving) return;
     setSaving(true);
     try {
       const saved = await saveTemplate(finalDraft, null);
-      toast.success("새 스킬을 만들었습니다.", { description: saved.title });
-      navigate("/skills", { replace: true });
+      const normalized = ensureTemplateSkillDefinition(saved);
+      const installFiles = await resolveTemplateSkillInstallFiles(normalized);
+
+      if (choice.kind === "skip") {
+        toast.success("새 스킬을 만들었습니다.", { description: saved.title });
+        navigate(`/skills/${encodeURIComponent(saved.id)}`, { replace: true });
+        return;
+      }
+
+      if (choice.kind === "existing") {
+        await agentEngineClient.upsertAgentLocalSkill(
+          choice.agentId,
+          normalized.skill.id,
+          {
+            replace: true,
+            files: installFiles,
+          },
+        );
+        toast.success("스킬을 만들고 에이전트에 장착했어요.", {
+          description: saved.title,
+        });
+        navigate(
+          `/agents/${encodeURIComponent(choice.agentId)}?skill=${encodeURIComponent(saved.id)}`,
+          { replace: true },
+        );
+        return;
+      }
+
+      const created = await agentEngineClient.createAgent({
+        name: choice.input.name.trim(),
+        description: choice.input.description.trim() || null,
+      });
+      writeAgentEmoji(created.id, choice.input.emoji);
+      try {
+        await agentEngineClient.updateAgent(created.id, {
+          color: choice.input.color,
+        });
+      } catch {
+        /* color update is optional */
+      }
+      await agentEngineClient.upsertAgentLocalSkill(
+        created.id,
+        normalized.skill.id,
+        {
+          replace: true,
+          files: installFiles,
+        },
+      );
+      toast.success(`${created.name}이(가) 새로 만들어졌어요.`, {
+        description: `${saved.title} 스킬을 장착했어요.`,
+      });
+      navigate(
+        `/agents/${encodeURIComponent(created.id)}?skill=${encodeURIComponent(saved.id)}`,
+        { replace: true },
+      );
     } catch (error) {
-      toast.error("스킬을 저장하지 못했습니다.", {
+      toast.error("작업을 마무리하지 못했어요.", {
         description: error instanceof Error ? error.message : undefined,
       });
     } finally {
@@ -163,12 +250,22 @@ export function SkillNewPage() {
         </Button>
       </header>
 
-      {pendingDraft ? (
+      {agentStepDraft ? (
+        <AgentChoiceStep
+          draft={agentStepDraft}
+          saving={saving}
+          onBack={() => setAgentStepDraft(null)}
+          onChoose={(choice) => persistAndAttach(agentStepDraft, choice)}
+        />
+      ) : pendingDraft ? (
         <SkillReviewForm
           draft={pendingDraft}
           saving={saving}
           onBack={() => setPendingDraft(null)}
-          onSubmit={(next) => persistDraft(next)}
+          onSubmit={(next) => {
+            setPendingDraft(null);
+            setAgentStepDraft(next);
+          }}
         />
       ) : (
         <SkillWizard
@@ -258,11 +355,332 @@ function SkillReviewForm({
           이전
         </Button>
         <Button type="submit" disabled={saving}>
-          스킬 만들기
+          다음
           <ArrowRight className="size-4" />
         </Button>
       </div>
     </form>
+  );
+}
+
+function AgentChoiceStep({
+  draft,
+  saving,
+  onBack,
+  onChoose,
+}: {
+  draft: MdTemplateDraft;
+  saving: boolean;
+  onBack: () => void;
+  onChoose: (
+    choice:
+      | { kind: "skip" }
+      | { kind: "existing"; agentId: string }
+      | {
+          kind: "newAgent";
+          input: { name: string; emoji: string; color: string; description: string };
+        },
+  ) => void;
+}) {
+  const agentsQuery = useAgentsQuery({ includeArchived: false });
+  const agents = filterUserManagedAgents(agentsQuery.data ?? []);
+  const suggestMutation = useSuggestAgentForSkillMutation();
+  const [suggestion, setSuggestion] = useState<AgentSuggestionRecord | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const requestedRef = useRef(false);
+
+  useEffect(() => {
+    if (requestedRef.current) return;
+    requestedRef.current = true;
+    suggestMutation
+      .mutateAsync({
+        title: draft.title,
+        description: draft.description,
+        triggerLabel: draft.triggerLabel,
+      })
+      .then((next) => setSuggestion(next))
+      .catch(() => {
+        // best-effort; user can still pick existing or skip
+      });
+  }, [draft, suggestMutation]);
+
+  const suggestionLoading = suggestMutation.isPending && !suggestion;
+
+  return (
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-normal text-foreground">
+          이 스킬을 누가 쓸까요?
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          에이전트를 골라두면 만들자마자 바로 작업을 시작할 수 있어요.
+        </p>
+      </div>
+
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {agents.map((agent) => (
+          <li key={agent.id}>
+            <ExistingAgentCard
+              agent={agent}
+              disabled={saving}
+              onSelect={() => onChoose({ kind: "existing", agentId: agent.id })}
+            />
+          </li>
+        ))}
+        <li>
+          <NewAgentCard
+            disabled={saving}
+            suggestion={suggestion}
+            suggestionLoading={suggestionLoading}
+            onSelect={() => setCreateOpen(true)}
+          />
+        </li>
+      </ul>
+
+      <div className="flex items-center justify-between gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onBack} disabled={saving}>
+          <ArrowLeft className="size-4" />
+          이전
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => onChoose({ kind: "skip" })}
+          disabled={saving}
+        >
+          나중에 정할게요
+        </Button>
+      </div>
+
+      <QuickCreateAgentDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        suggestion={suggestion}
+        saving={saving}
+        onSubmit={(input) => onChoose({ kind: "newAgent", input })}
+      />
+    </div>
+  );
+}
+
+function ExistingAgentCard({
+  agent,
+  disabled,
+  onSelect,
+}: {
+  agent: AgentRecord;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  const { emoji } = useAgentEmoji(agent.id);
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-card px-3 py-2.5 text-left transition",
+        "hover:border-foreground/40 hover:bg-muted/40",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+      )}
+    >
+      <AgentAvatar emoji={emoji} color={agent.color} size="sm" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{agent.name}</p>
+        {agent.description ? (
+          <p className="truncate text-[11px] text-muted-foreground">
+            {agent.description}
+          </p>
+        ) : (
+          <p className="truncate text-[11px] text-muted-foreground">장착해서 사용</p>
+        )}
+      </div>
+      <ArrowRight className="size-4 text-muted-foreground" />
+    </button>
+  );
+}
+
+function NewAgentCard({
+  disabled,
+  suggestion,
+  suggestionLoading,
+  onSelect,
+}: {
+  disabled: boolean;
+  suggestion: AgentSuggestionRecord | null;
+  suggestionLoading: boolean;
+  onSelect: () => void;
+}) {
+  const previewName = suggestion?.name ?? null;
+  const previewEmoji = suggestion?.emoji ?? "✨";
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-border/80 bg-muted/20 px-3 py-2.5 text-left transition",
+        "hover:border-foreground/40 hover:bg-muted/40",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+      )}
+    >
+      <div className="flex size-9 items-center justify-center rounded-2xl bg-background text-lg">
+        {suggestionLoading ? (
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        ) : (
+          previewEmoji
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">
+          에이전트 새로 만들기
+        </p>
+        <p className="truncate text-[11px] text-muted-foreground">
+          {suggestionLoading
+            ? "추천을 가져오는 중…"
+            : previewName
+              ? `추천: ${previewName}`
+              : "이름과 색상을 정해주세요"}
+        </p>
+      </div>
+      <Plus className="size-4 text-muted-foreground" />
+    </button>
+  );
+}
+
+function QuickCreateAgentDialog({
+  open,
+  onOpenChange,
+  suggestion,
+  saving,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  suggestion: AgentSuggestionRecord | null;
+  saving: boolean;
+  onSubmit: (input: {
+    name: string;
+    emoji: string;
+    color: string;
+    description: string;
+  }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [emoji, setEmoji] = useState<string>(AGENT_EMOJI_PRESETS[0]);
+  const [color, setColor] = useState<string>(AGENT_AVATAR_COLORS[0]);
+  const [description, setDescription] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setName(suggestion?.name ?? "");
+    setDescription(suggestion?.description ?? "");
+    setEmoji(
+      suggestion?.emoji && AGENT_EMOJI_PRESETS.includes(suggestion.emoji)
+        ? suggestion.emoji
+        : suggestion?.emoji ?? AGENT_EMOJI_PRESETS[0],
+    );
+    setColor(AGENT_AVATAR_COLORS[0]);
+  }, [open, suggestion]);
+
+  const trimmedName = name.trim();
+  const canSubmit = trimmedName.length > 0 && !saving;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({ name: trimmedName, emoji, color, description: description.trim() });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>에이전트 새로 만들기</DialogTitle>
+          <DialogDescription>
+            이 스킬을 곧바로 장착할 새 에이전트를 만듭니다.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col items-center gap-3">
+            <AgentAvatar emoji={emoji} color={color} size="xl" />
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="에이전트 이름"
+              className="h-11 max-w-xs text-center text-base"
+              aria-label="에이전트 이름"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">이모지</p>
+            <div className="grid grid-cols-8 gap-1.5 sm:grid-cols-11">
+              {AGENT_EMOJI_PRESETS.map((option) => (
+                <button
+                  type="button"
+                  key={option}
+                  onClick={() => setEmoji(option)}
+                  className={cn(
+                    "flex aspect-square items-center justify-center rounded-xl border text-lg leading-none transition",
+                    option === emoji
+                      ? "border-foreground bg-muted"
+                      : "border-transparent bg-background hover:border-border hover:bg-muted/60",
+                  )}
+                  aria-label={`이모지 ${option}`}
+                >
+                  <span className="block translate-y-px">{option}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">배경색</p>
+            <div className="grid grid-cols-8 gap-2 sm:grid-cols-16">
+              {AGENT_AVATAR_COLORS.map((option) => (
+                <button
+                  type="button"
+                  key={option}
+                  onClick={() => setColor(option)}
+                  className={cn(
+                    "aspect-square rounded-full border-2 transition",
+                    option === color
+                      ? "border-foreground"
+                      : "border-transparent hover:scale-110",
+                  )}
+                  style={{ backgroundColor: option }}
+                  aria-label={`색상 ${option}`}
+                />
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-row items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              disabled={saving}
+            >
+              취소
+            </Button>
+            <Button type="submit" disabled={!canSubmit}>
+              {saving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}
+              만들기
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

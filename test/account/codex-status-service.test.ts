@@ -108,6 +108,14 @@ test("CodexStatusService returns model, reasoning, and fresh usage snapshot", as
           model: "gpt-5.4-mini",
         };
       },
+      async suggestAgentForSkill() {
+        return {
+          name: "추천 에이전트",
+          description: "테스트용 에이전트입니다.",
+          emoji: "🤖",
+          model: "gpt-5.4-mini",
+        };
+      },
     },
     now: () => "2026-03-30T01:10:00.000Z",
     readFile: async (filePath) => {
@@ -160,6 +168,14 @@ test("CodexStatusService marks old usage snapshots as stale", async () => {
       async summarizeTaskRequestTitle() {
         return {
           title: "요약 제목",
+          model: "gpt-5.4-mini",
+        };
+      },
+      async suggestAgentForSkill() {
+        return {
+          name: "추천 에이전트",
+          description: "테스트용 에이전트입니다.",
+          emoji: "🤖",
           model: "gpt-5.4-mini",
         };
       },
@@ -229,6 +245,14 @@ test("CodexStatusService selects the newest token snapshot by event timestamp ac
           model: "gpt-5.4-mini",
         };
       },
+      async suggestAgentForSkill() {
+        return {
+          name: "추천 에이전트",
+          description: "테스트용 에이전트입니다.",
+          emoji: "🤖",
+          model: "gpt-5.4-mini",
+        };
+      },
     },
     now: () => "2026-03-30T02:00:00.000Z",
     readFile: async (filePath) => {
@@ -288,6 +312,14 @@ test("CodexStatusService reports unavailable when no token snapshot exists", asy
       async summarizeTaskRequestTitle() {
         return {
           title: "요약 제목",
+          model: "gpt-5.4-mini",
+        };
+      },
+      async suggestAgentForSkill() {
+        return {
+          name: "추천 에이전트",
+          description: "테스트용 에이전트입니다.",
+          emoji: "🤖",
           model: "gpt-5.4-mini",
         };
       },

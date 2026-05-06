@@ -189,6 +189,16 @@ export function useStartCodexUpdateMutation() {
   });
 }
 
+export function useSuggestAgentForSkillMutation() {
+  return useMutation({
+    mutationFn: async (input: {
+      title: string;
+      description: string;
+      triggerLabel: string;
+    }) => agentEngineClient.suggestAgentForSkill(input),
+  });
+}
+
 export function useStartClaudeLoginMutation() {
   const queryClient = useQueryClient();
 

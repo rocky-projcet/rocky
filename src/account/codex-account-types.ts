@@ -42,6 +42,19 @@ export interface TaskRequestTitleSummaryRecord {
   model: string;
 }
 
+export interface AgentSuggestionInput {
+  title: string;
+  description: string;
+  triggerLabel: string;
+}
+
+export interface AgentSuggestionRecord {
+  name: string;
+  description: string;
+  emoji: string | null;
+  model: string;
+}
+
 export interface CodexAccountServiceLike {
   getState(): Promise<CodexAccountRecord>;
   startLogin(): Promise<CodexAccountRecord>;
@@ -52,4 +65,7 @@ export interface CodexAccountServiceLike {
   summarizeTaskRequestTitle(
     prompt: string
   ): Promise<TaskRequestTitleSummaryRecord>;
+  suggestAgentForSkill(
+    input: AgentSuggestionInput
+  ): Promise<AgentSuggestionRecord>;
 }

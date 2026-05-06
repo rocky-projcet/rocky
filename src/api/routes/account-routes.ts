@@ -39,6 +39,32 @@ function parseTaskRequestTitleBody(body: unknown): {
   };
 }
 
+function parseAgentSuggestionBody(body: unknown): {
+  title: string;
+  description: string;
+  triggerLabel: string;
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("Request body must be a JSON object.");
+  }
+
+  const record = body as Record<string, unknown>;
+  const title = record.title;
+  if (typeof title !== "string" || !title.trim()) {
+    throw badRequest("A non-empty title is required.");
+  }
+
+  const description = typeof record.description === "string" ? record.description : "";
+  const triggerLabel =
+    typeof record.triggerLabel === "string" ? record.triggerLabel : "";
+
+  return {
+    title: title.trim(),
+    description: description.trim(),
+    triggerLabel: triggerLabel.trim(),
+  };
+}
+
 function parseApiKeyBody(body: unknown): {
   apiKey: string;
 } {
@@ -146,6 +172,15 @@ export const registerAccountRoutes: FastifyPluginAsync<
       reply,
       200,
       await options.codexAccountService.summarizeTaskRequestTitle(prompt)
+    );
+  });
+
+  server.post("/account/agent-suggestion", async (request, reply) => {
+    const input = parseAgentSuggestionBody(request.body);
+    sendJson(
+      reply,
+      200,
+      await options.codexAccountService.suggestAgentForSkill(input)
     );
   });
 };

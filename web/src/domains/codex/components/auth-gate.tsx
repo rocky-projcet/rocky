@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { LogIn, Loader2, RefreshCw, TerminalSquare } from "lucide-react";
+import { LogIn, Loader2, RefreshCw, RotateCw, TerminalSquare } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import {
@@ -187,14 +187,14 @@ function InstallCommandBlock({
 function ProviderLoginRow({ provider }: { provider: ProviderAccountRecord }) {
   const codexLogin = useStartCodexLoginMutation();
   const isCodex = provider.provider === "codex";
-  const isPending =
-    provider.status === "pending" || (isCodex && codexLogin.isPending);
+  const isLoginInFlight = isCodex && codexLogin.isPending;
+  const isProviderPending = provider.status === "pending";
 
   const supportsPrimary = provider.loginMethods.some(
     (method) => method.id === provider.primaryLoginMethodId && method.supported,
   );
   const cliInstalled = provider.diagnostics.installStatus === "installed";
-  const disabled = isPending || !supportsPrimary || !cliInstalled;
+  const disabled = isLoginInFlight || !supportsPrimary || !cliInstalled;
 
   function handleLogin() {
     if (isCodex) {
@@ -204,9 +204,16 @@ function ProviderLoginRow({ provider }: { provider: ProviderAccountRecord }) {
 
   const subtitle = !cliInstalled
     ? `${provider.providerLabel} CLI가 설치되어 있지 않습니다.`
-    : isPending
-      ? "로그인 진행 중…"
+    : isProviderPending
+      ? "로그인 진행 중… 다시 시도하려면 버튼을 누르세요."
       : provider.statusText;
+
+  const ButtonIcon = isLoginInFlight
+    ? Loader2
+    : isProviderPending
+      ? RotateCw
+      : LogIn;
+  const buttonLabel = isProviderPending ? "다시 시도" : "로그인";
 
   return (
     <div
@@ -227,14 +234,12 @@ function ProviderLoginRow({ provider }: { provider: ProviderAccountRecord }) {
         size="sm"
         disabled={disabled}
         onClick={handleLogin}
-        aria-label={`${providerLabel(provider.provider)} 로그인`}
+        aria-label={`${providerLabel(provider.provider)} ${buttonLabel}`}
       >
-        {isPending ? (
-          <Loader2 className="size-3.5 animate-spin" />
-        ) : (
-          <LogIn className="size-3.5" />
-        )}
-        로그인
+        <ButtonIcon
+          className={cn("size-3.5", isLoginInFlight && "animate-spin")}
+        />
+        {buttonLabel}
       </Button>
     </div>
   );

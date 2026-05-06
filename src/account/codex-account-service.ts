@@ -677,11 +677,15 @@ export class CodexAccountService implements CodexAccountServiceLike {
     pendingStatusText: string;
     defaultInstructions: string;
   }): Promise<CodexAccountRecord> {
-    if (this.activeLogin) {
-      return this.snapshot();
-    }
     if (this.activeUpdate) {
       throw new Error("Codex CLI update is in progress.");
+    }
+    if (this.activeLogin) {
+      const stale = this.activeLogin;
+      this.activeLogin = null;
+      stale.child.stdout.removeAllListeners("data");
+      stale.child.stderr.removeAllListeners("data");
+      stale.child.kill("SIGTERM");
     }
 
     const current = await this.refreshStatus();

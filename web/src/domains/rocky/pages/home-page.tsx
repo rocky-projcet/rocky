@@ -85,6 +85,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/utils";
 import { DropZoneOverlay, useFileDropZone } from "@/domains/attachment";
+import { FavoriteToggle } from "@/domains/favorite/favorite-toggle";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
 import { useAgentQuery } from "@/domains/agent/hooks";
@@ -2623,9 +2624,13 @@ function RockyMarkdownViewer({
 
 function RockyArtifactGrid({
   artifacts,
+  chatId,
+  runId,
   onOpenConversationFile,
 }: {
   artifacts: AgentSessionArtifactManifestEntry[];
+  chatId: string;
+  runId: string | null;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
 }) {
   if (artifacts.length === 0) {
@@ -2646,18 +2651,33 @@ function RockyArtifactGrid({
         const ArtifactIcon = isPowerPoint ? Presentation : FileText;
 
         return (
-          <button
+          <div
             key={artifact.role}
-            type="button"
-            onClick={() => openRockyArtifact(artifact, onOpenConversationFile)}
-            className="inline-flex h-9 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground shadow-sm transition hover:bg-secondary"
+            className="inline-flex h-9 max-w-full items-center gap-1 rounded-lg border border-border bg-card pr-1 text-xs text-foreground shadow-sm"
           >
-            <ArtifactIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="max-w-56 truncate">{artifact.name}</span>
-            <span className="shrink-0 rounded-md bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-              {artifactLabel}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => openRockyArtifact(artifact, onOpenConversationFile)}
+              className="inline-flex h-full min-w-0 items-center gap-2 rounded-l-lg px-2.5 transition hover:bg-secondary"
+            >
+              <ArtifactIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="max-w-56 truncate">{artifact.name}</span>
+              <span className="shrink-0 rounded-md bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                {artifactLabel}
+              </span>
+            </button>
+            {runId ? (
+              <FavoriteToggle
+                input={{
+                  kind: "output-file",
+                  chatId,
+                  runId,
+                  artifactId: artifact.role,
+                }}
+                className="size-7 border-transparent bg-transparent shadow-none"
+              />
+            ) : null}
+          </div>
         );
       })}
     </div>
@@ -2986,10 +3006,25 @@ function MessageBubble({
         {isRocky ? (
           <RockyArtifactGrid
             artifacts={userFacingArtifacts}
+            chatId={chat.id}
+            runId={dispatch?.orchestration?.runId ?? null}
             onOpenConversationFile={onOpenConversationFile}
           />
         ) : null}
-        {answerSeconds ? (
+        {isRocky && rockyMessageState.kind !== "error" ? (
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium leading-4 text-muted-foreground">
+              {answerSeconds ? `답변 ${answerSeconds}` : ""}
+            </span>
+            <FavoriteToggle
+              input={{
+                kind: "agent-message",
+                chatId: chat.id,
+                messageId: message.id,
+              }}
+            />
+          </div>
+        ) : answerSeconds ? (
           <div className="mt-3 text-[11px] font-medium leading-4 text-muted-foreground">
             답변 {answerSeconds}
           </div>

@@ -145,52 +145,53 @@ export function SearchPage() {
 
   return (
     <PageContainer>
-      <header>
-        <h1 className="text-2xl font-semibold tracking-normal text-foreground">
-          {query ? <>‘{query}’ 검색 결과</> : <>검색</>}
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          에이전트나 스킬, 작업 기록을 검색하세요. 상단 검색창에서 키워드를 입력해 결과를 좁힐 수 있습니다.
-        </p>
-        {query ? (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={clearQuery}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted"
-            >
-              <span>{query}</span>
-              <X className="size-3.5 text-muted-foreground" />
-            </button>
-          </div>
-        ) : null}
-      </header>
-
       <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
-        <TabsList variant="line">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
-            const count =
-              tab.value === "tasks"
-                ? taskResults.length
-                : tab.value === "skills"
-                  ? skillResults.length
-                  : agentResults.length;
-
-            return (
-              <TabsTrigger key={tab.value} value={tab.value}>
-                <Icon className="size-4" />
-                {tab.label}
-                <Badge
-                  variant="outline"
-                  className="ml-1 h-5 border-border bg-muted px-1.5 text-[10px] text-muted-foreground"
+        <header className="sticky top-0 z-20 -mx-8 flex flex-col gap-4 bg-background px-8 pb-4 pt-8 md:-mx-10 md:px-10 md:pb-5 md:pt-10">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+              {query ? <>‘{query}’ 검색 결과</> : <>검색</>}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+              에이전트나 스킬, 작업 기록을 검색하세요. 상단 검색창에서 키워드를 입력해 결과를 좁힐 수 있습니다.
+            </p>
+            {query ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={clearQuery}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/60 px-3 py-1 text-xs text-foreground transition hover:bg-muted"
                 >
-                  {count}
-                </Badge>
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
+                  <span>{query}</span>
+                  <X className="size-3.5 text-muted-foreground" />
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <TabsList variant="line">
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              const count =
+                tab.value === "tasks"
+                  ? taskResults.length
+                  : tab.value === "skills"
+                    ? skillResults.length
+                    : agentResults.length;
+
+              return (
+                <TabsTrigger key={tab.value} value={tab.value}>
+                  <Icon className="size-4" />
+                  {tab.label}
+                  <Badge
+                    variant="outline"
+                    className="ml-1 h-5 border-border bg-muted px-1.5 text-[10px] text-muted-foreground"
+                  >
+                    {count}
+                  </Badge>
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+        </header>
 
         <TabsContent value="tasks">
           <TaskResults

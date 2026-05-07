@@ -19,7 +19,9 @@ import { registerApiErrorHandlers } from "./http/error-handler.js";
 import { registerAgentRoutes } from "./routes/agent-routes.js";
 import { registerAccountRoutes } from "./routes/account-routes.js";
 import { registerConnectorRoutes } from "./routes/connector-routes.js";
+import { registerFavoriteRoutes } from "./routes/favorite-routes.js";
 import { ConnectorService } from "../connectors/connector-service.js";
+import { FavoriteService } from "../favorites/favorite-service.js";
 import { registerAuthProfileRoutes } from "./routes/auth-profile-routes.js";
 import { registerMessengerRoutes } from "./routes/messenger-routes.js";
 import { registerRunRoutes } from "./routes/run-routes.js";
@@ -111,6 +113,11 @@ export function createAgentEngineServer(
     stateRoot: options.stateRoot,
     now: options.now,
   });
+  const favoriteService = new FavoriteService({
+    stateRoot: options.stateRoot,
+    now: options.now,
+    idGenerator: options.idGenerator,
+  });
 
   const server = Fastify({
     logger: false,
@@ -161,6 +168,9 @@ export function createAgentEngineServer(
   });
   server.register(registerConnectorRoutes, {
     connectorService,
+  });
+  server.register(registerFavoriteRoutes, {
+    favoriteService,
   });
   server.addHook("onReady", async () => {
     await agentMessengerService?.start?.();

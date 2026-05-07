@@ -40,6 +40,7 @@ import { readAllTaskAgentMap } from "@/domains/agent/lib/task-agent-store";
 import { resolveRockyChatAgentId } from "@/domains/agent/lib/agent-task-summary";
 import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
+import { FavoriteToggle } from "@/domains/favorite/favorite-toggle";
 import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Badge } from "@/shared/ui/badge";
@@ -174,20 +175,27 @@ export function TasksPage() {
       <PageHeader
         title="작업 목록"
         description="에이전트별로 작업을 모아보세요. 카드를 누르면 상세 화면으로 이동합니다."
-      />
-
-      <AgentTabs
-        agents={agentsWithTasks}
-        selected={selectedTab}
-        totalCount={sortedChats.length}
-        unmappedCount={hasUnmapped ? sortedChats.filter((chat) => !chatAgentMap[chat.id]).length : 0}
-        countByAgent={Object.fromEntries(
-          agentsWithTasks.map((agent) => [
-            agent.id,
-            sortedChats.filter((chat) => chatAgentMap[chat.id] === agent.id).length,
-          ]),
-        )}
-        onSelect={setTab}
+        belowSlot={
+          <AgentTabs
+            agents={agentsWithTasks}
+            selected={selectedTab}
+            totalCount={sortedChats.length}
+            unmappedCount={
+              hasUnmapped
+                ? sortedChats.filter((chat) => !chatAgentMap[chat.id]).length
+                : 0
+            }
+            countByAgent={Object.fromEntries(
+              agentsWithTasks.map((agent) => [
+                agent.id,
+                sortedChats.filter(
+                  (chat) => chatAgentMap[chat.id] === agent.id,
+                ).length,
+              ]),
+            )}
+            onSelect={setTab}
+          />
+        }
       />
 
       {selectedAgent ? <NewTaskForAgentRow agent={selectedAgent} /> : null}
@@ -514,6 +522,7 @@ function TaskCard({
             >
               <Trash2 className="size-4" />
             </Button>
+            <FavoriteToggle input={{ kind: "task", chatId: chat.id }} />
             <Button
               variant="outline"
               size="sm"

@@ -385,6 +385,26 @@ export interface ConnectorDiagnosticsRecord {
   checkedAt: string;
 }
 
+export type FavoriteKind = "output-file" | "agent-message" | "task";
+
+export interface FavoriteRecord {
+  id: string;
+  kind: FavoriteKind;
+  chatId: string;
+  runId: string | null;
+  artifactId: string | null;
+  messageId: string | null;
+  createdAt: string;
+}
+
+export interface FavoriteCreateInput {
+  kind: FavoriteKind;
+  chatId: string;
+  runId?: string | null;
+  artifactId?: string | null;
+  messageId?: string | null;
+}
+
 export type ProviderStatusDataState = "ok" | "stale" | "unavailable" | "error";
 
 export interface ProviderStatusAccountSummaryRecord {
@@ -1432,6 +1452,24 @@ export class AgentEngineClient {
       {
         method: "POST",
       },
+    );
+  }
+
+  listFavorites(): Promise<{ favorites: FavoriteRecord[] }> {
+    return this.request<{ favorites: FavoriteRecord[] }>("/favorites");
+  }
+
+  addFavorite(input: FavoriteCreateInput): Promise<FavoriteRecord> {
+    return this.request<FavoriteRecord>("/favorites", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  removeFavorite(id: string): Promise<{ id: string; deleted: boolean }> {
+    return this.request<{ id: string; deleted: boolean }>(
+      `/favorites/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
     );
   }
 

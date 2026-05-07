@@ -45,6 +45,7 @@ import { Button } from "@/shared/ui/button";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import { cn } from "@/shared/lib/utils";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
+import { FavoriteToggle } from "@/domains/favorite/favorite-toggle";
 
 const MAX_COUNT = 3;
 const MAX_RECENT_FILE_RUNS = 20;
@@ -243,14 +244,17 @@ function RecentTaskCard({
             )}
           </div>
         </div>
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
-            rockyTaskStatusTone(status),
-          )}
-        >
-          {rockyTaskStatusLabel(status)}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
+              rockyTaskStatusTone(status),
+            )}
+          >
+            {rockyTaskStatusLabel(status)}
+          </span>
+          <FavoriteToggle input={{ kind: "task", chatId: chat.id }} />
+        </div>
       </div>
 
       <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-foreground">
@@ -459,12 +463,22 @@ function RecentFileCard({ file }: { file: RecentSavedFile }) {
             </p>
           </div>
         </div>
-        <Badge
-          variant="outline"
-          className="h-5 shrink-0 border-border bg-muted px-2 text-[10px] text-muted-foreground"
-        >
-          저장됨
-        </Badge>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge
+            variant="outline"
+            className="h-5 border-border bg-muted px-2 text-[10px] text-muted-foreground"
+          >
+            저장됨
+          </Badge>
+          <FavoriteToggle
+            input={{
+              kind: "output-file",
+              chatId: file.chatId,
+              runId: file.runId,
+              artifactId: file.artifact.role,
+            }}
+          />
+        </div>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">

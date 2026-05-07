@@ -9,6 +9,7 @@ import {
   ListTodo,
   Search,
   Sparkles,
+  Star,
 } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
@@ -53,11 +54,7 @@ function isTaskDetailRoute(pathname: string): boolean {
 }
 
 function usesBoundedCanvas(pathname: string): boolean {
-  return (
-    pathname === "/agents" ||
-    isTaskDetailRoute(pathname) ||
-    isCompactRoute(pathname)
-  );
+  return isTaskDetailRoute(pathname) || isCompactRoute(pathname);
 }
 
 function isRockyHomeRoute(pathname: string): boolean {
@@ -70,6 +67,10 @@ function isTemplatesRoute(pathname: string): boolean {
 
 function isSearchRoute(pathname: string): boolean {
   return pathname.startsWith("/search");
+}
+
+function isFavoritesRoute(pathname: string): boolean {
+  return pathname.startsWith("/favorites");
 }
 
 function isTasksListRoute(pathname: string): boolean {
@@ -119,6 +120,7 @@ function AppShellInner() {
   const rockyHomeRoute = isRockyHomeRoute(location.pathname);
   const templatesRoute = isTemplatesRoute(location.pathname);
   const searchRoute = isSearchRoute(location.pathname);
+  const favoritesRoute = isFavoritesRoute(location.pathname);
   const skillsRoute = isSkillsRoute(location.pathname) && !fromArchiveContext;
   const agentsRoute = isAgentsRoute(location.pathname) && !fromArchiveContext;
   const tasksListRoute = isTasksListRoute(location.pathname);
@@ -176,6 +178,16 @@ function AppShellInner() {
                   >
                     <Search />
                     <span>검색</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="즐겨찾기"
+                    isActive={favoritesRoute}
+                    render={<NavLink to="/favorites" />}
+                  >
+                    <Star />
+                    <span>즐겨찾기</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem data-tour="nav-tasks">
@@ -251,7 +263,7 @@ function AppShellInner() {
                       ? "p-5 md:p-6"
                       : "p-8 md:p-10",
                 )
-              : "custom-scrollbar overflow-y-auto p-8 md:p-10",
+              : "custom-scrollbar overflow-y-auto",
           )}
         >
           <Outlet />

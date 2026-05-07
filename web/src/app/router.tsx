@@ -20,6 +20,7 @@ import { WorkspaceFilePreviewPage } from "../domains/agent/pages/workspace-file-
 import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
 import { HomePage, RockyTaskDetailPage } from "../domains/rocky/pages/home-page";
 import { SearchPage } from "../domains/rocky/pages/search-page";
+import { FavoritesPage } from "../domains/favorite/favorites-page";
 import { TasksPage } from "../domains/rocky/pages/tasks-page";
 import {
   TemplateBuilderPage,
@@ -45,6 +46,10 @@ export const router = createBrowserRouter([
       {
         path: "search",
         element: <SearchPage />,
+      },
+      {
+        path: "favorites",
+        element: <FavoritesPage />,
       },
       {
         path: "tasks",

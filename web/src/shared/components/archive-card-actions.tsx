@@ -27,6 +27,27 @@ export function ArchiveCardActions({
           render={
             <Button
               variant="outline"
+              size="sm"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onRestore();
+              }}
+              disabled={restoring}
+            />
+          }
+        >
+          <ArchiveRestore className="size-4" />
+          {restoreLabel}
+        </TooltipTrigger>
+        <TooltipContent>{restoreHint} 보관함에서만 영구 삭제도 할 수 있어요.</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="outline"
               size="icon-sm"
               onClick={(event) => {
                 event.preventDefault();
@@ -42,27 +63,6 @@ export function ArchiveCardActions({
           <Trash2 className="size-4" />
         </TooltipTrigger>
         <TooltipContent>영구 삭제</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onRestore();
-              }}
-              disabled={restoring}
-            />
-          }
-        >
-          <ArchiveRestore className="size-4" />
-          {restoreLabel}
-        </TooltipTrigger>
-        <TooltipContent>{restoreHint} 보관함에서만 영구 삭제도 할 수 있어요.</TooltipContent>
       </Tooltip>
     </div>
   );

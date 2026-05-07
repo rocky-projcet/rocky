@@ -313,6 +313,10 @@ export function AgentDetailPage() {
             </Button>
             {archived ? (
               <>
+                <Button variant="outline" onClick={toggleArchive} disabled={updateMutation.isPending}>
+                  <ArchiveRestore className="size-4" />
+                  복원
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -324,10 +328,6 @@ export function AgentDetailPage() {
                   title="에이전트 영구 삭제"
                 >
                   <Trash2 className="size-4" />
-                </Button>
-                <Button variant="outline" onClick={toggleArchive} disabled={updateMutation.isPending}>
-                  <ArchiveRestore className="size-4" />
-                  복원
                 </Button>
               </>
             ) : (

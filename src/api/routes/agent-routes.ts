@@ -82,6 +82,7 @@ function parseCreateAgentBody(body: unknown): {
   id?: string;
   name: string;
   description?: string;
+  soul?: string | null;
   color?: string | null;
   defaultRuntime?: RuntimeKind;
 } {
@@ -99,6 +100,7 @@ function parseCreateAgentBody(body: unknown): {
     id?: string;
     name: string;
     description?: string;
+    soul?: string | null;
     color?: string | null;
     defaultRuntime?: RuntimeKind;
   } = {
@@ -120,6 +122,16 @@ function parseCreateAgentBody(body: unknown): {
       parsed.description = input.description;
     } else {
       throw badRequest("Agent description must be a string when provided.");
+    }
+  }
+
+  if ("soul" in input) {
+    if (input.soul === null || input.soul === undefined) {
+      parsed.soul = null;
+    } else if (typeof input.soul === "string") {
+      parsed.soul = input.soul;
+    } else {
+      throw badRequest("Agent soul must be a string when provided.");
     }
   }
 
@@ -290,6 +302,7 @@ function parseSkillUpsertBody(body: unknown): {
 function parseUpdateAgentBody(body: unknown): {
   name?: string;
   description?: string;
+  soul?: string | null;
   lifecycle?: "active" | "archived";
   stopRunningSessions?: boolean;
   color?: string | null;
@@ -303,6 +316,7 @@ function parseUpdateAgentBody(body: unknown): {
   const parsed: {
     name?: string;
     description?: string;
+    soul?: string | null;
     lifecycle?: "active" | "archived";
     stopRunningSessions?: boolean;
     color?: string | null;
@@ -324,6 +338,16 @@ function parseUpdateAgentBody(body: unknown): {
       parsed.description = input.description;
     } else {
       throw badRequest("Agent description must be a string when provided.");
+    }
+  }
+
+  if ("soul" in input) {
+    if (input.soul === null || input.soul === undefined) {
+      parsed.soul = null;
+    } else if (typeof input.soul === "string") {
+      parsed.soul = input.soul;
+    } else {
+      throw badRequest("Agent soul must be a string when provided.");
     }
   }
 

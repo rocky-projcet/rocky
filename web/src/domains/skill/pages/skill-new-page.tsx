@@ -17,6 +17,7 @@ import { SkillWizard, type SkillWizardAnswers } from "../components/skill-wizard
 import { agentEngineClient } from "@/shared/lib/api-client";
 import { useAgentsQuery } from "@/domains/agent/hooks";
 import { fireMilestone } from "@/domains/onboarding/milestones";
+import { useMiniTour } from "@/domains/onboarding/use-mini-tour";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
 import {
   AGENT_AVATAR_COLORS,
@@ -56,7 +57,8 @@ function parseKind(value: string | null): SkillKind | null {
     value === "translation" ||
     value === "research" ||
     value === "summary" ||
-    value === "message"
+    value === "message" ||
+    value === "erp"
   ) {
     return value;
   }
@@ -67,7 +69,7 @@ export function SkillNewPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialKind = parseKind(searchParams.get("kind"));
-  const { saveTemplate } = useMdTemplates();
+  const { saveTemplate, userTemplates } = useMdTemplates();
   const [chosen, setChosen] = useState<SkillTemplate | null>(
     initialKind ? SKILL_TEMPLATES[initialKind] : null,
   );
@@ -75,6 +77,21 @@ export function SkillNewPage() {
   const [saving, setSaving] = useState(false);
   const [pendingDraft, setPendingDraft] = useState<MdTemplateDraft | null>(null);
   const [agentStepDraft, setAgentStepDraft] = useState<MdTemplateDraft | null>(null);
+
+  const inWizard =
+    chosen !== null && pendingDraft === null && agentStepDraft === null;
+  useMiniTour({
+    key: "skill-wizard",
+    enabled: inWizard && userTemplates.length === 0,
+    spotlight: {
+      element: '[data-tour="skill-wizard-step"]',
+      side: "left",
+      align: "start",
+      title: "위저드 따라오시면 자동으로 정리돼요",
+      description:
+        "각 단계에서 가장 가까운 답을 고르면 충분해요. 마지막에 이름·설명을 다듬고 직원에 장착해서 작업까지 한 번에 이어집니다.",
+    },
+  });
 
   useEffect(() => {
     const kindParam = parseKind(searchParams.get("kind"));
@@ -287,13 +304,15 @@ export function SkillNewPage() {
           }}
         />
       ) : (
-        <SkillWizard
-          template={chosen}
-          onCancel={() => setChosen(null)}
-          onSubmit={handleSubmit}
-          onUploadFile={handleUploadFile}
-          finishLabel="검토하기"
-        />
+        <div data-tour="skill-wizard-step">
+          <SkillWizard
+            template={chosen}
+            onCancel={() => setChosen(null)}
+            onSubmit={handleSubmit}
+            onUploadFile={handleUploadFile}
+            finishLabel="검토하기"
+          />
+        </div>
       )}
     </PageContainer>
   );
@@ -429,10 +448,10 @@ function AgentChoiceStep({
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-normal text-foreground">
-          이 스킬을 누가 쓸까요?
+          이 공용 스킬의 사본을 누구에게 줄까요?
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          에이전트를 골라두면 만들자마자 바로 작업을 시작할 수 있어요.
+          공용본은 그대로 보관하고, 사본을 받은 직원이 안에서 따로 진화시킵니다. 지금 정해두면 바로 작업을 시작할 수 있어요.
         </p>
       </div>
 
@@ -806,6 +825,13 @@ function pickTitle(template: SkillTemplate, answers: SkillWizardAnswers): string
     const channel = answers["channel"];
     return `${describeAnswer(template, "channel", channel)} 작성`;
   }
+  if (template.kind === "erp") {
+    const system = answers["erpSystem"];
+    const action = answers["action"];
+    const systemLabel = describeAnswer(template, "erpSystem", system);
+    const actionLabel = describeAnswer(template, "action", action);
+    return `${systemLabel} ${actionLabel}`.trim() || "ERP 연동";
+  }
   return "새 스킬";
 }
 
@@ -825,6 +851,8 @@ function pickTriggerLabel(template: SkillTemplate): string {
       return "요약 정리";
     case "message":
       return "메시지·이메일 작성";
+    case "erp":
+      return "ERP 연동";
   }
 }
 

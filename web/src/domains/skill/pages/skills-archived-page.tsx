@@ -33,8 +33,8 @@ export function SkillsArchivedPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="스킬 보관함"
-        description="더 이상 사용하지 않는 스킬을 모아둡니다. 여기에서만 영구 삭제할 수 있어요."
+        title="공용 스킬 보관함"
+        description="더 이상 쓰지 않는 공용 스킬을 모아둡니다. 직원의 사본은 그대로 남아 있고, 여기에서만 공용본을 영구 삭제할 수 있어요."
       />
 
       {archivedTemplates.length === 0 ? (

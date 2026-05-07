@@ -9,8 +9,16 @@ import { ensureTemplateSkillDefinition } from "@/domains/template/lib/md-templat
 import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime-template-files";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import type { MdTemplateDefinition } from "@/domains/template/types";
-import { useCreateAgentMutation } from "../hooks";
+import { useAgentsQuery, useCreateAgentMutation } from "../hooks";
+import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
 import { fireMilestone } from "@/domains/onboarding/milestones";
+import { useMiniTour } from "@/domains/onboarding/use-mini-tour";
+import { SoulStep } from "../components/soul-step";
+import {
+  buildSoulMarkdown,
+  emptySoulAnswers,
+  type SoulAnswers,
+} from "../lib/soul-builder";
 import { AgentAvatar } from "../components/agent-avatar";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -24,18 +32,38 @@ import {
   writeAgentEmoji,
 } from "../lib/agent-avatar-store";
 
-const STEPS = ["프로필", "설명", "스킬"] as const;
+const STEPS = ["프로필", "설명", "정체성", "행동 방식", "공용 스킬"] as const;
 
 export function AgentNewPage() {
   const navigate = useNavigate();
   const createAgentMutation = useCreateAgentMutation();
   const { userTemplates } = useMdTemplates();
+  const agentsQuery = useAgentsQuery({ includeArchived: false });
+  const hasNoAgents =
+    !agentsQuery.isLoading &&
+    filterUserManagedAgents(agentsQuery.data ?? []).filter(
+      (agent) => agent.lifecycle === "active",
+    ).length === 0;
+
+  useMiniTour({
+    key: "agent-new",
+    enabled: hasNoAgents,
+    spotlight: {
+      element: '[data-tour="agent-name-input"]',
+      side: "bottom",
+      align: "center",
+      title: "친근한 별명을 적어주세요",
+      description:
+        "직원의 이름이에요. 아래 이모지·색상까지 정한 다음 마지막 단계에서 '에이전트 만들기'를 누르면 끝!",
+    },
+  });
 
   const [stepIndex, setStepIndex] = useState(0);
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState<string>(AGENT_EMOJI_PRESETS[0]);
   const [color, setColor] = useState<string>(AGENT_AVATAR_COLORS[0]);
   const [description, setDescription] = useState("");
+  const [soulAnswers, setSoulAnswers] = useState<SoulAnswers>(() => emptySoulAnswers());
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -68,9 +96,11 @@ export function AgentNewPage() {
     if (submitting) return;
     setSubmitting(true);
     try {
+      const soulMarkdown = buildSoulMarkdown(soulAnswers);
       const created = await createAgentMutation.mutateAsync({
         name: name.trim(),
         description: description.trim() || null,
+        soul: soulMarkdown || null,
       });
 
       writeAgentEmoji(created.id, emoji);
@@ -179,6 +209,20 @@ export function AgentNewPage() {
             />
           ) : null}
           {stepIndex === 2 ? (
+            <SoulStep
+              phase="identity"
+              answers={soulAnswers}
+              onChange={setSoulAnswers}
+            />
+          ) : null}
+          {stepIndex === 3 ? (
+            <SoulStep
+              phase="behavior"
+              answers={soulAnswers}
+              onChange={setSoulAnswers}
+            />
+          ) : null}
+          {stepIndex === 4 ? (
             <SkillPickerStep
               skills={userTemplates}
               selectedIds={selectedSkillIds}
@@ -229,6 +273,7 @@ function ProfileStep({
       <div className="mt-8 flex flex-col items-center gap-4">
         <AgentAvatar emoji={emoji} color={color} size="xl" />
         <Input
+          data-tour="agent-name-input"
           value={name}
           onChange={(event) => onChangeName(event.target.value)}
           placeholder="에이전트 이름 (예: 영업 도우미)"

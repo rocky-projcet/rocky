@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Database,
   FileText,
   Languages,
   Mail,
@@ -83,6 +84,14 @@ export const SKILL_KIND_THEME: Record<SkillKind, SkillKindTheme> = {
     accent: "bg-teal-500",
     Icon: Mail,
   },
+  erp: {
+    icon: "bg-slate-100 text-slate-700",
+    iconText: "text-slate-700",
+    chip: "bg-slate-50 text-slate-800 border-slate-200",
+    hoverRing: "hover:border-slate-300 hover:bg-slate-50/30",
+    accent: "bg-slate-500",
+    Icon: Database,
+  },
 };
 
 /**
@@ -98,6 +107,7 @@ export function inferSkillKind(template: Pick<MdTemplateDefinition, "triggerLabe
   if (trigger === "리서치") return "research";
   if (trigger === "요약 정리") return "summary";
   if (trigger === "메시지·이메일 작성") return "message";
+  if (trigger === "ERP 연동") return "erp";
 
   if (template.category === "content") return "content";
   if (template.category === "data") return "data";

@@ -3,7 +3,7 @@ import confetti from "canvas-confetti";
 const STORAGE_PREFIX = "rocky.milestone.v1.";
 const EVENT_NAME = "rocky:milestone";
 
-export type MilestoneKey = "first-agent" | "first-skill" | "first-task";
+export type MilestoneKey = string;
 
 export interface MilestoneOptions {
   title: string;
@@ -111,6 +111,37 @@ export function resetMilestones(): void {
   for (const key of keys) {
     window.localStorage.removeItem(`${STORAGE_PREFIX}${key}`);
   }
+  // Also strip per-agent level-up flags.
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith(`${STORAGE_PREFIX}agent-levelup:`)) {
+        stale.push(key);
+      }
+    }
+    for (const key of stale) window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Fire a celebration when an agent reaches a new level (level >= 2).
+ * Each (agentId, level) pair fires at most once, even across reloads.
+ */
+export function fireAgentLevelUp(input: {
+  agentId: string;
+  agentName: string;
+  level: number;
+}): boolean {
+  if (input.level < 2) return false;
+  const key = `agent-levelup:${input.agentId}:${input.level}`;
+  return fireMilestone(key, {
+    title: `🎊 ${input.agentName} Lv.${input.level} 달성!`,
+    description: `직원이 작업을 ${(input.level - 1) * 5}회 완료해 한 단계 성장했어요. 다음 레벨까지 ${5}작업 더!`,
+    durationMs: 7000,
+  });
 }
 
 export const MILESTONE_EVENT = EVENT_NAME;

@@ -7,7 +7,8 @@ export type SkillKind =
   | "translation"
   | "research"
   | "summary"
-  | "message";
+  | "message"
+  | "erp";
 
 export type SkillFieldKind =
   | "single-select"
@@ -207,7 +208,6 @@ const CONTENT_TEMPLATE: SkillTemplate = {
                 { id: "tiktok", label: "TikTok" },
               ],
             },
-            { id: "detail-page", label: "홈페이지 상세페이지" },
             {
               id: "blog",
               label: "블로그",
@@ -220,7 +220,6 @@ const CONTENT_TEMPLATE: SkillTemplate = {
                 { id: "medium", label: "Medium" },
               ],
             },
-            { id: "newsletter", label: "뉴스레터" },
           ],
         },
       ],
@@ -1020,6 +1019,125 @@ const MESSAGE_TEMPLATE: SkillTemplate = {
   ],
 };
 
+const ERP_TEMPLATE: SkillTemplate = {
+  kind: "erp",
+  label: "ERP 연동",
+  description: "ERP에서 데이터를 가져오거나 ERP에 데이터를 올리는 자동화를 만들어요.",
+  fallbackCategory: "data",
+  steps: [
+    {
+      id: "erp-system",
+      title: "어떤 ERP를 쓰시나요?",
+      helper: "사용 중인 ERP를 골라주세요. 없으면 직접 입력하실 수 있어요.",
+      fields: [
+        {
+          id: "erpSystem",
+          kind: "single-select",
+          label: "ERP 시스템",
+          allowCustom: true,
+          options: [
+            { id: "sap", label: "SAP" },
+            { id: "sap-b1", label: "SAP Business One" },
+            { id: "oracle-netsuite", label: "Oracle Netsuite" },
+            { id: "duzon", label: "더존" },
+            { id: "younglimwon", label: "영림원 K-System" },
+            { id: "ecount", label: "이카운트" },
+            { id: "custom-erp", label: "자체 개발 ERP" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "erp-connection",
+      title: "어떻게 연결할까요?",
+      helper:
+        "사용 중인 ERP 환경에 가장 가까운 방식을 골라주세요. 여러 방식을 섞어 쓸 수도 있어요.",
+      fields: [
+        {
+          id: "connectionMode",
+          kind: "single-select",
+          label: "연결 방식",
+          options: [
+            {
+              id: "api-key",
+              label: "API 키로 연결",
+              description:
+                "ERP가 REST API를 제공하면 가장 빠르고 안정적입니다. 키와 도메인은 작업 실행 단계에서 안전하게 입력해요.",
+            },
+            {
+              id: "login-automation",
+              label: "로그인 자동화",
+              description:
+                "Rocky가 띄우는 브라우저로 사용자가 한 번 로그인하면 세션이 저장돼서 이후엔 자동 처리합니다. 캡차·2FA도 사용자 흐름 그대로.",
+            },
+            {
+              id: "file-export",
+              label: "엑셀·CSV 파일 주고받기",
+              description:
+                "ERP에서 받은 파일을 올리면 Rocky가 가공·정리하고, 필요하면 다시 올릴 형식으로 내보내요. 직접 통합이 어려운 ERP에 적합.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "erp-action",
+      title: "어떤 작업을 하나요?",
+      helper: "방향을 정해주세요. 가져온 데이터를 가공해서 다시 올리는 양방향도 가능해요.",
+      fields: [
+        {
+          id: "action",
+          kind: "single-select",
+          label: "작업 방향",
+          options: [
+            { id: "extract", label: "데이터 가져오기 (조회·추출)" },
+            { id: "upload", label: "데이터 올리기 (등록·수정)" },
+            { id: "report", label: "리포트·요약 만들기" },
+            {
+              id: "round-trip",
+              label: "양방향 (가져와서 가공한 뒤 다시 올리기)",
+            },
+          ],
+        },
+        {
+          id: "dataKinds",
+          kind: "multi-select",
+          label: "다루는 데이터",
+          allowCustom: true,
+          options: [
+            { id: "sales", label: "매출·매입" },
+            { id: "inventory", label: "재고" },
+            { id: "customers", label: "거래처·고객" },
+            { id: "vendors", label: "공급사·협력사" },
+            { id: "purchase-orders", label: "발주·구매 주문" },
+            { id: "quotes", label: "견적·계약" },
+            { id: "accounting", label: "회계 전표" },
+            { id: "hr", label: "인사·근태" },
+            { id: "products", label: "품목·SKU" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "erp-notes",
+      title: "추가로 알려주실 게 있나요?",
+      helper:
+        "ERP 화면 이름·메뉴 경로·특이한 양식·자주 쓰는 검색 조건처럼 자동화에 도움이 되는 메모를 남겨주세요.",
+      skippable: true,
+      fields: [
+        {
+          id: "notes",
+          kind: "text",
+          label: "메모",
+          placeholder:
+            "예: '거래처 → 신규 등록' 메뉴, 사업자번호 자동 형식 변환, 품목코드 앞 3자리는 카테고리",
+          optional: true,
+        },
+      ],
+    },
+  ],
+};
+
 export const SKILL_TEMPLATES: Record<SkillKind, SkillTemplate> = {
   document: DOCUMENT_TEMPLATE,
   content: CONTENT_TEMPLATE,
@@ -1028,6 +1146,7 @@ export const SKILL_TEMPLATES: Record<SkillKind, SkillTemplate> = {
   research: RESEARCH_TEMPLATE,
   summary: SUMMARY_TEMPLATE,
   message: MESSAGE_TEMPLATE,
+  erp: ERP_TEMPLATE,
 };
 
 export const SKILL_TEMPLATE_LIST: SkillTemplate[] = [
@@ -1038,6 +1157,7 @@ export const SKILL_TEMPLATE_LIST: SkillTemplate[] = [
   RESEARCH_TEMPLATE,
   SUMMARY_TEMPLATE,
   MESSAGE_TEMPLATE,
+  ERP_TEMPLATE,
 ];
 
 export const LANGUAGE_OPTIONS: SkillFieldOption[] = [

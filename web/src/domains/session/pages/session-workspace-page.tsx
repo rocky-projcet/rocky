@@ -410,7 +410,7 @@ function WorkspacePathButton(props: {
       onClick={() => props.onOpenWorkspacePath(props.path, props.pathKind)}
       onKeyDown={handleKeyDown}
       className={cn(
-        "inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-xs text-foreground break-words transition",
+        "inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-foreground break-words transition",
         "cursor-pointer hover:bg-secondary hover:text-secondary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-1",
       )}
       title={`공유 워크스페이스에서 ${props.path} 열기`}
@@ -594,7 +594,7 @@ function AssistantSection(props: {
                   }
 
                   return (
-                    <code className="inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-xs text-foreground break-words">
+                    <code className="inline rounded-md bg-secondary px-1.5 py-0 align-baseline font-mono text-foreground break-words">
                       {codeProps.children}
                     </code>
                   );

@@ -41,6 +41,7 @@ export interface AgentRecord {
   id: string;
   name: string;
   description: string;
+  soul: string | null;
   color: string | null;
   workspaceRoot: string;
   runtimeHome: string;

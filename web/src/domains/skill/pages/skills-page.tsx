@@ -14,8 +14,8 @@ export function SkillsPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="스킬"
-        description="템플릿에서 만든 내 스킬 목록입니다. 카드에서 바로 실행할 수 있어요."
+        title="공용 스킬"
+        description="템플릿에서 만든 공용 스킬 목록입니다. 직원에게 장착하는 순간 그 직원의 사본이 만들어지고, 그 뒤로는 직원 안에서 따로 자라납니다."
         actions={
           <>
             <Button variant="outline" render={<Link to="/skills/archived" />}>
@@ -99,21 +99,26 @@ function SkillSummaryCard({ template }: { template: MdTemplateDefinition }) {
       </div>
 
       <dl className="mt-3 grid gap-1.5 text-[11px] text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <FileBox className="size-3.5 text-muted-foreground" />
-          <dt className="text-[10px] uppercase tracking-wide">결과</dt>
-          <dd className="ml-auto truncate text-foreground" title={outputFormat}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <FileBox className="size-3.5 shrink-0 text-muted-foreground" />
+          <dt className="shrink-0 whitespace-nowrap text-[10px] uppercase tracking-wide">
+            결과
+          </dt>
+          <dd
+            className="ml-auto min-w-0 truncate text-foreground"
+            title={outputFormat}
+          >
             {outputFormat}
           </dd>
         </div>
         {fileCount > 0 ? (
-          <div className="flex items-center gap-1.5">
-            <Paperclip className="size-3.5 text-muted-foreground" />
-            <dt className="text-[10px] uppercase tracking-wide">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
+            <dt className="shrink-0 whitespace-nowrap text-[10px] uppercase tracking-wide">
               {hasAttachedFiles ? "첨부" : "입력"}
             </dt>
             <dd
-              className="ml-auto truncate text-foreground"
+              className="ml-auto min-w-0 truncate text-foreground"
               title={
                 hasAttachedFiles
                   ? attachedFiles.map((file) => file.fileName).join(", ")

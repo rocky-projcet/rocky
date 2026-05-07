@@ -31,7 +31,7 @@ import { cn } from "@/shared/lib/utils";
 
 const TABS = [
   { value: "tasks", label: "작업 기록", icon: ListTodo },
-  { value: "skills", label: "스킬", icon: Sparkles },
+  { value: "skills", label: "공용 스킬", icon: Sparkles },
   { value: "agents", label: "에이전트", icon: Bot },
 ] as const;
 

@@ -10,6 +10,7 @@ export interface AgentRecord {
   id: string;
   name: string;
   description: string;
+  soul: string | null;
   color: string | null;
   workspaceRoot: string;
   runtimeHome: string;
@@ -112,12 +113,14 @@ export interface AgentCreateInput {
   name: string;
   id?: string | null;
   description?: string | null;
+  soul?: string | null;
   defaultRuntime?: RuntimeKind;
 }
 
 export interface AgentUpdateInput {
   name?: string;
   description?: string | null;
+  soul?: string | null;
   lifecycle?: "active" | "archived";
   stopRunningSessions?: boolean;
   color?: string | null;
@@ -345,6 +348,41 @@ export interface AgentSuggestionRecord {
   description: string;
   emoji: string | null;
   model: string;
+}
+
+export type ConnectorProvider =
+  | "threads"
+  | "instagram"
+  | "x"
+  | "facebook"
+  | "linkedin"
+  | "tiktok"
+  | "youtube"
+  | "naver-blog"
+  | "tistory"
+  | "brunch"
+  | "kakao-channel"
+  | "medium";
+
+export type ConnectorStatus = "idle" | "connecting" | "connected" | "failed";
+
+export interface ConnectorState {
+  provider: ConnectorProvider;
+  status: ConnectorStatus;
+  message: string;
+  accountLabel: string | null;
+  connectedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+}
+
+export type ChromiumChannel = "chrome" | "msedge" | "chromium";
+
+export interface ConnectorDiagnosticsRecord {
+  available: boolean;
+  channel: ChromiumChannel | null;
+  message: string;
+  checkedAt: string;
 }
 
 export type ProviderStatusDataState = "ok" | "stale" | "unavailable" | "error";
@@ -1360,6 +1398,43 @@ export class AgentEngineClient {
     });
   }
 
+  getConnectorDiagnostics(): Promise<ConnectorDiagnosticsRecord> {
+    return this.request<ConnectorDiagnosticsRecord>("/connectors/diagnostics");
+  }
+
+  getConnectorState(provider: ConnectorProvider): Promise<ConnectorState> {
+    return this.request<ConnectorState>(
+      `/connectors/${encodeURIComponent(provider)}/state`,
+    );
+  }
+
+  startConnectorLogin(provider: ConnectorProvider): Promise<ConnectorState> {
+    return this.request<ConnectorState>(
+      `/connectors/${encodeURIComponent(provider)}/login`,
+      {
+        method: "POST",
+      },
+    );
+  }
+
+  cancelConnectorLogin(provider: ConnectorProvider): Promise<ConnectorState> {
+    return this.request<ConnectorState>(
+      `/connectors/${encodeURIComponent(provider)}/cancel`,
+      {
+        method: "POST",
+      },
+    );
+  }
+
+  disconnectConnector(provider: ConnectorProvider): Promise<ConnectorState> {
+    return this.request<ConnectorState>(
+      `/connectors/${encodeURIComponent(provider)}/disconnect`,
+      {
+        method: "POST",
+      },
+    );
+  }
+
   createAgent(input: AgentCreateInput): Promise<AgentRecord> {
     return this.request<AgentRecord>("/agents", {
       method: "POST",
@@ -1367,6 +1442,7 @@ export class AgentEngineClient {
         name: input.name,
         id: input.id ?? undefined,
         description: input.description ?? undefined,
+        soul: input.soul ?? undefined,
         defaultRuntime: input.defaultRuntime ?? undefined,
       }),
     });

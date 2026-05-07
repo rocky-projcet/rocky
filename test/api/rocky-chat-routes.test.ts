@@ -28,6 +28,7 @@ function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
     id: input.id ?? "rocky-core",
     name: input.name ?? "Rocky",
     description: input.description ?? "",
+    soul: input.soul ?? null,
     color: input.color ?? null,
     workspaceRoot: input.workspaceRoot ?? "/tmp/rocky-workspace",
     runtimeHome: input.runtimeHome ?? "/tmp/rocky-runtime",

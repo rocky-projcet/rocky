@@ -147,7 +147,7 @@ export function TasksPage() {
     return sortedChats.filter((chat) => chatAgentMap[chat.id] === selectedTab);
   }, [selectedTab, sortedChats, chatAgentMap]);
 
-  const activeChats = sortedChats.filter(isRockyTaskActive);
+  const activeChats = visibleChats.filter(isRockyTaskActive);
 
   function setTab(next: string) {
     if (next === ALL_TAB) {
@@ -193,27 +193,31 @@ export function TasksPage() {
       {selectedAgent ? <NewTaskForAgentRow agent={selectedAgent} /> : null}
 
       {activeChats.length > 0 ? (
-        <section className="rounded-lg border bg-amber-500/6 p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Loader2 className="size-4 animate-spin text-amber-600" />
+        <section className="rounded-2xl border border-border/70 bg-muted/30 p-4">
+          <header className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
             진행중인 작업
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            <span className="text-xs font-normal text-muted-foreground">
+              {activeChats.length}개
+            </span>
+          </header>
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {activeChats.slice(0, 3).map((chat) => (
-              <Link
-                key={chat.id}
-                to={`/tasks/${encodeURIComponent(chat.id)}`}
-                className="rounded-md border bg-background px-3 py-2 text-sm transition hover:border-foreground/40"
-              >
-                <div className="truncate font-medium text-foreground">
-                  {chat.title || getRockyTaskRequest(chat)}
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {getRockyTaskSummary(chat)}
-                </div>
-              </Link>
+              <li key={chat.id}>
+                <Link
+                  to={`/tasks/${encodeURIComponent(chat.id)}`}
+                  className="block rounded-2xl border border-border/70 bg-card px-4 py-3 text-sm no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/40 hover:shadow-md"
+                >
+                  <div className="truncate font-semibold text-foreground">
+                    {chat.title || getRockyTaskRequest(chat)}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                    {getRockyTaskSummary(chat)}
+                  </div>
+                </Link>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
       ) : null}
 

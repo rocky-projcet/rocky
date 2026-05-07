@@ -204,6 +204,14 @@ function skillInvocationMessage(message: string, skillId: string | null | undefi
   return `$${normalizedSkillId}\n\n${trimmedMessage}`;
 }
 
+function withAgentSoul(message: string, soul: string | null | undefined): string {
+  const trimmedSoul = soul?.trim();
+  if (!trimmedSoul) {
+    return message;
+  }
+  return `# 직원 페르소나 (SOUL.md)\n${trimmedSoul}\n\n---\n\n${message}`;
+}
+
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
@@ -656,7 +664,10 @@ export class RockyChatService {
           chatId,
           messageId: userMessageId,
           message,
-          runtimeMessage: skillInvocationMessage(message, input.skillId),
+          runtimeMessage: withAgentSoul(
+            skillInvocationMessage(message, input.skillId),
+            targetAgent.soul,
+          ),
           selectedSkillId: input.skillId ?? null,
           attachments: attachmentDrafts,
           domain,
@@ -934,7 +945,7 @@ export class RockyChatService {
           chatId,
           messageId: userMessageId,
           message,
-          runtimeMessage: message,
+          runtimeMessage: withAgentSoul(message, targetAgent.soul),
           selectedSkillId: null,
           attachments: [...existing.attachments, ...attachmentDrafts],
           domain,

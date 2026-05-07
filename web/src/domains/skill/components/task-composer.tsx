@@ -21,6 +21,11 @@ import {
 import { Textarea } from "@/shared/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+import {
+  AttachmentChipList,
+  DropZoneOverlay,
+  useFileDropZone,
+} from "@/domains/attachment";
 
 const AUTO_VALUE = "__auto__";
 const AUTO_LABEL = "스킬 자동 선택";
@@ -64,13 +69,23 @@ export function TaskComposer({
   function handleFilesChange(event: ChangeEvent<HTMLInputElement>) {
     const next = Array.from(event.target.files ?? []);
     if (next.length === 0) return;
-    setFiles((current) => [...current, ...next]);
+    appendFiles(next);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function appendFiles(next: File[]) {
+    if (next.length === 0) return;
+    setFiles((current) => [...current, ...next]);
   }
 
   function removeFile(index: number) {
     setFiles((current) => current.filter((_, i) => i !== index));
   }
+
+  const { isDragging, handlers: dropHandlers } = useFileDropZone({
+    onFiles: appendFiles,
+    disabled: pending,
+  });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -97,13 +112,19 @@ export function TaskComposer({
   return (
     <form
       onSubmit={handleSubmit}
+      onDragEnter={dropHandlers.onDragEnter}
+      onDragOver={dropHandlers.onDragOver}
+      onDragLeave={dropHandlers.onDragLeave}
+      onDrop={dropHandlers.onDrop}
       className={cn(
-        "shrink-0 rounded-2xl border bg-card p-3 shadow-sm transition",
-        isFocused
+        "relative shrink-0 rounded-2xl border bg-card p-3 shadow-sm transition",
+        isFocused || isDragging
           ? "border-foreground/15 ring-2 ring-ring/10"
           : "border-border/70",
       )}
     >
+      <DropZoneOverlay visible={isDragging} />
+
       {pinnedSkill ? (
         <div className="mb-2 flex items-center gap-2 rounded-xl bg-muted/40 px-3 py-1.5 text-xs text-foreground">
           <Sparkles className="size-3.5 text-muted-foreground" />
@@ -121,25 +142,9 @@ export function TaskComposer({
       ) : null}
 
       {files.length > 0 ? (
-        <ul className="mb-2 flex flex-wrap gap-1.5">
-          {files.map((file, index) => (
-            <li
-              key={`${file.name}-${index}`}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/60 px-2.5 py-1 text-xs"
-            >
-              <Paperclip className="size-3" />
-              <span className="max-w-40 truncate">{file.name}</span>
-              <button
-                type="button"
-                onClick={() => removeFile(index)}
-                aria-label={`${file.name} 제거`}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3" />
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="mb-2">
+          <AttachmentChipList files={files} onRemove={(_, index) => removeFile(index)} />
+        </div>
       ) : null}
 
       <Textarea

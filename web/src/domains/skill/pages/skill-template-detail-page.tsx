@@ -21,7 +21,8 @@ function isSkillKind(value: string | undefined): value is SkillKind {
     value === "translation" ||
     value === "research" ||
     value === "summary" ||
-    value === "message"
+    value === "message" ||
+    value === "erp"
   );
 }
 

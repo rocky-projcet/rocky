@@ -198,7 +198,7 @@ function resolveCrumbs(args: {
   // /skills/new
   if (pathname === "/skills/new") {
     return [
-      { label: "스킬", to: "/skills" },
+      { label: "공용 스킬", to: "/skills" },
       { label: "새 스킬" },
     ];
   }
@@ -219,7 +219,7 @@ function resolveCrumbs(args: {
       ];
     }
     return [
-      { label: "스킬", to: "/skills" },
+      { label: "공용 스킬", to: "/skills" },
       { label: skillLabel },
     ];
   }

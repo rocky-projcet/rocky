@@ -226,14 +226,14 @@ export function SkillDetailPage() {
             <Bot className="size-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-foreground">이 스킬을 바로 사용해보세요</p>
+            <p className="font-medium text-foreground">이 공용 스킬을 직원에게 장착해 보세요</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              에이전트를 골라 즉시 작업을 시작할 수 있어요.
+              장착하는 순간 그 직원의 사본이 만들어지고, 이후엔 직원 안에서 따로 진화합니다.
             </p>
           </div>
           <Button onClick={() => setUseDialogOpen(true)}>
             <Sparkles className="size-4" />
-            이 스킬 사용하기
+            직원에게 장착
           </Button>
         </div>
       </section>
@@ -276,10 +276,38 @@ export function SkillDetailPage() {
       <SkillAttachmentSection skill={skill} />
 
       <section>
+        <header className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Bot className="size-4 text-muted-foreground" />
+            이 공용 스킬을 사용 중인 직원
+            <span className="text-xs font-normal text-muted-foreground">
+              {equippedAgents.length}명
+            </span>
+          </h2>
+        </header>
+        {equippedAgents.length === 0 ? (
+          <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+            아직 이 공용 스킬을 장착한 직원이 없어요. 위 "직원에게 장착" 버튼으로 시작해 보세요.
+          </div>
+        ) : (
+          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {equippedAgents.map((agent) => (
+              <li key={agent.id}>
+                <UsingAgentCard agent={agent} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <ListTodo className="size-4 text-muted-foreground" />
-            이 스킬로 한 작업
+            이 공용 스킬로 한 작업
+            <span className="text-[11px] font-normal text-muted-foreground">
+              (직원 사본 포함)
+            </span>
             <span className="text-xs font-normal text-muted-foreground">
               {taskSearchQuery.trim()
                 ? `${filteredTasks.length}/${tasks.length}개`
@@ -355,11 +383,11 @@ function UseSkillDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>이 스킬을 사용할 에이전트 선택</DialogTitle>
-          <DialogDescription>
-            {`"${skill.title}"으로 작업을 시작할 에이전트를 골라주세요.`}
+      <DialogContent className="flex flex-col gap-6 sm:max-w-2xl min-h-[28rem]">
+        <DialogHeader className="gap-2">
+          <DialogTitle className="text-lg">사본을 누구에게 줄까요?</DialogTitle>
+          <DialogDescription className="text-sm leading-6">
+            {`"${skill.title}" 공용 스킬의 사본을 만들어 직원에게 장착합니다. 한 번 장착되면 그 직원 안에서 따로 자라납니다.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -384,7 +412,7 @@ function UseSkillDialog({
             </Link>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {equippedAgents.length > 0 ? (
               <section>
                 <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -431,6 +459,34 @@ function UseSkillDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function UsingAgentCard({ agent }: { agent: AgentRecord }) {
+  const { emoji } = useAgentEmoji(agent.id);
+  const tinted = agent.color
+    ? {
+        borderColor: `color-mix(in srgb, ${agent.color} 28%, var(--border))`,
+        backgroundColor: `color-mix(in srgb, ${agent.color} 5%, var(--card))`,
+      }
+    : undefined;
+  return (
+    <Link
+      to={`/agents/${encodeURIComponent(agent.id)}`}
+      style={tinted}
+      className="block rounded-2xl border border-border/70 bg-card p-3 no-underline shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div className="flex items-center gap-3">
+        <AgentAvatar emoji={emoji} color={agent.color} size="md" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-foreground">{agent.name}</p>
+          <p className="truncate text-[11px] text-muted-foreground">
+            이 직원의 사본은 따로 진화 중이에요
+          </p>
+        </div>
+        <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+      </div>
+    </Link>
   );
 }
 

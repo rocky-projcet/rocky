@@ -287,7 +287,7 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
 
                       {task.eventTrigger.enabled ? (
                         <div className="mt-4 flex flex-wrap items-center gap-2">
-                          <code className="rounded-full bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+                          <code className="rounded-full bg-muted px-3 py-1.5 text-muted-foreground">
                             {webhookUrl(task)}
                           </code>
                           <Button

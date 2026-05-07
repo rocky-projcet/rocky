@@ -56,7 +56,6 @@ function usesBoundedCanvas(pathname: string): boolean {
   return (
     pathname === "/agents" ||
     isTaskDetailRoute(pathname) ||
-    isAgentDetailRoute(pathname) ||
     isCompactRoute(pathname)
   );
 }
@@ -191,12 +190,12 @@ function AppShellInner() {
                 </SidebarMenuItem>
                 <SidebarMenuItem data-tour="nav-skills">
                   <SidebarMenuButton
-                    tooltip="스킬"
+                    tooltip="공용 스킬"
                     isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
                     render={<NavLink to="/skills" />}
                   >
                     <Sparkles />
-                    <span>스킬</span>
+                    <span>공용 스킬</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem data-tour="nav-agents">
@@ -303,31 +302,37 @@ function ArchiveMenuItem({
           <PopoverContent
             side="right"
             align="start"
-            sideOffset={-4}
-            className="w-40 gap-0.5 rounded-xl p-1"
+            sideOffset={4}
+            className="w-52 gap-0.5 rounded-xl border border-sidebar-border bg-sidebar p-1.5 text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border/40"
           >
             <NavLink
               to="/skills/archived"
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-1.5 rounded px-2 py-1.5 text-xs text-foreground transition hover:bg-muted",
-                  isActive && "bg-muted font-medium",
+                  "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition",
+                  "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  isActive
+                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/85",
                 )
               }
             >
-              <Sparkles className="size-3.5 text-muted-foreground" />
-              <span>스킬 보관함</span>
+              <Sparkles className="size-4 shrink-0 text-sidebar-foreground/60" />
+              <span>공용 스킬 보관함</span>
             </NavLink>
             <NavLink
               to="/agents/archived"
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-1.5 rounded px-2 py-1.5 text-xs text-foreground transition hover:bg-muted",
-                  isActive && "bg-muted font-medium",
+                  "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition",
+                  "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  isActive
+                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/85",
                 )
               }
             >
-              <Bot className="size-3.5 text-muted-foreground" />
+              <Bot className="size-4 shrink-0 text-sidebar-foreground/60" />
               <span>내 에이전트 보관함</span>
             </NavLink>
           </PopoverContent>
@@ -363,7 +368,7 @@ function ArchiveMenuItem({
               render={<NavLink to="/skills/archived" />}
             >
               <Sparkles />
-              <span>스킬 보관함</span>
+              <span>공용 스킬 보관함</span>
             </SidebarMenuSubButton>
           </SidebarMenuSubItem>
           <SidebarMenuSubItem>

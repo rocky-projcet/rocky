@@ -84,6 +84,7 @@ import type {
 import { Textarea } from "@/shared/ui/textarea";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/utils";
+import { DropZoneOverlay, useFileDropZone } from "@/domains/attachment";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { buildTemplateRunPrompt } from "@/domains/template/lib/md-template-definitions";
 import { useAgentQuery } from "@/domains/agent/hooks";
@@ -2607,7 +2608,7 @@ function RockyMarkdownViewer({
             }
 
             return (
-              <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+              <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground">
                 {children}
               </code>
             );
@@ -5818,6 +5819,9 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const [chat, setChat] = useState<RockyChatRecord | null>(null);
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const pageDrop = useFileDropZone({
+    onFiles: (incoming) => setFiles((current) => [...current, ...incoming]),
+  });
   const [submitInFlight, setSubmitInFlight] = useState(false);
   const [templateExecutionTemplate, setTemplateExecutionTemplate] =
     useState<MdTemplateDefinition | null>(null);
@@ -6363,7 +6367,18 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background lg:flex-row">
-      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <section
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        onDragEnter={pageDrop.handlers.onDragEnter}
+        onDragOver={pageDrop.handlers.onDragOver}
+        onDragLeave={pageDrop.handlers.onDragLeave}
+        onDrop={pageDrop.handlers.onDrop}
+      >
+        <DropZoneOverlay
+          visible={pageDrop.isDragging}
+          label="여기에 떨어뜨리면 채팅에 첨부돼요"
+          className="m-3"
+        />
         {visibleFilePanelContext ? (
           <div className="pointer-events-none absolute right-4 top-4 z-20">
             <Button

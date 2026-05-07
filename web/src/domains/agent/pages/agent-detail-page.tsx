@@ -20,13 +20,19 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useQueryClient } from "@tanstack/react-query";
+
 import {
+  agentQueryKeys,
   useAgentQuery,
   useDeleteAgentMutation,
   useUpdateAgentMutation,
 } from "../hooks";
+import type { AgentRecord } from "../types";
 import { useMdTemplates } from "@/domains/template/hooks";
-import { fireMilestone } from "@/domains/onboarding/milestones";
+import { fireAgentLevelUp, fireMilestone } from "@/domains/onboarding/milestones";
+import { SoulCard } from "../components/soul-card";
+import { useMiniTour } from "@/domains/onboarding/use-mini-tour";
 import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
 import {
   formatRockyTaskDateTime,
@@ -62,7 +68,6 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
-import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/utils";
 import { useAgentSkills } from "../lib/agent-skill-store";
 import { useAgentEmoji } from "../lib/agent-avatar-store";
@@ -79,6 +84,7 @@ type EquippedSkillItem = {
 
 export function AgentDetailPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { agentId } = useParams<{ agentId: string }>();
   const [searchParams] = useSearchParams();
   const initialPinnedSkillId = searchParams.get("skill");
@@ -95,6 +101,19 @@ export function AgentDetailPage() {
   const { emoji, setEmoji } = useAgentEmoji(agentId);
   const chats = chatsQuery.data ?? [];
   const taskAgentMap = useMemo(() => readAllTaskAgentMap(), [chats]);
+  const hasNoTasks = !chatsQuery.isLoading && chats.length === 0;
+  useMiniTour({
+    key: "task-composer",
+    enabled: hasNoTasks,
+    spotlight: {
+      element: '[data-tour="task-composer"]',
+      side: "top",
+      align: "center",
+      title: "여기서 첫 작업을 보내보세요",
+      description:
+        "부탁할 내용을 적고 Enter를 누르면 직원이 일을 시작해요. Shift+Enter로 줄바꿈, 파일도 붙일 수 있어요.",
+    },
+  });
   const completedTaskCount = useMemo(
     () =>
       countCompletedRockyTasksForAgent(
@@ -104,6 +123,16 @@ export function AgentDetailPage() {
       ),
     [agent?.id, agentId, chats, taskAgentMap],
   );
+
+  const agentLevel = Math.max(1, Math.floor(completedTaskCount / 5) + 1);
+  useEffect(() => {
+    if (!agent || agentLevel < 2) return;
+    fireAgentLevelUp({
+      agentId: agent.id,
+      agentName: agent.name,
+      level: agentLevel,
+    });
+  }, [agent, agentLevel]);
 
   const equippedSkillItems = useMemo<EquippedSkillItem[]>(
     () =>
@@ -235,10 +264,10 @@ export function AgentDetailPage() {
 
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
-      <div className="custom-scrollbar flex flex-1 flex-col gap-6 overflow-y-auto pb-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+      <div className="flex flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 items-start gap-4">
+          <div className="flex min-w-0 flex-1 items-start gap-4">
             {archived ? (
               <AgentAvatar
                 emoji={emoji}
@@ -268,7 +297,7 @@ export function AgentDetailPage() {
                 }
               />
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               {archived ? (
                 <h1 className="text-2xl font-semibold tracking-normal text-foreground">
                   {agent.name}
@@ -279,7 +308,7 @@ export function AgentDetailPage() {
                   onSave={(next) => updateMutation.mutate({ name: next })}
                 />
               )}
-              <div className="mt-2 max-w-2xl">
+              <div className="mt-2 w-full">
                 {archived ? (
                   <p className="text-sm leading-6 text-muted-foreground">
                     {agent.description || "설명이 없어요."}
@@ -342,6 +371,19 @@ export function AgentDetailPage() {
         <CharacterStats
           skillCount={skillRecords.length}
           taskCount={completedTaskCount}
+        />
+
+        <SoulCard
+          agentId={agent.id}
+          agentName={agent.name}
+          soul={agent.soul}
+          readOnly={archived}
+          onSaved={(nextSoul) => {
+            queryClient.setQueryData<AgentRecord>(
+              agentQueryKeys.agent(agent.id),
+              (current) => (current ? { ...current, soul: nextSoul } : current),
+            );
+          }}
         />
 
         <section>
@@ -428,11 +470,14 @@ export function AgentDetailPage() {
       </div>
 
       {archived ? (
-        <div className="shrink-0 rounded-2xl border border-dashed border-border/70 bg-muted/40 p-4 text-center text-sm text-muted-foreground">
+        <div className="sticky bottom-0 z-10 -mx-2 mt-2 rounded-2xl border border-dashed border-border/70 bg-background/95 p-4 text-center text-sm text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/80">
           보관된 에이전트는 작업을 받을 수 없어요. 다시 사용하려면 위에서 복원해주세요.
         </div>
       ) : (
-        <div data-tour="task-composer" className="shrink-0">
+        <div
+          data-tour="task-composer"
+          className="sticky bottom-0 z-10 -mx-2 mt-2 rounded-2xl bg-background/95 px-2 pt-2 pb-4 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+        >
           <TaskComposer
           recipientName={agent.name}
           equippedSkills={equippedTemplateSkills}
@@ -850,14 +895,14 @@ function EditableTitle({
 
   if (editing) {
     return (
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="w-full">
         <Input
           ref={inputRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={handleKeyDown}
-          className="h-10 px-2 text-2xl font-semibold tracking-normal"
+          className="h-11 w-full px-3 text-2xl font-semibold tracking-normal"
           aria-label="에이전트 이름 수정"
         />
       </form>
@@ -891,7 +936,7 @@ function EditableDescription({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!editing) setDraft(value);
@@ -900,8 +945,8 @@ function EditableDescription({
   useEffect(() => {
     if (editing) {
       requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-        textareaRef.current?.select();
+        inputRef.current?.focus();
+        inputRef.current?.select();
       });
     }
   }, [editing]);
@@ -914,8 +959,8 @@ function EditableDescription({
     setEditing(false);
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
       event.preventDefault();
       commit();
     } else if (event.key === "Escape") {
@@ -927,13 +972,14 @@ function EditableDescription({
 
   if (editing) {
     return (
-      <Textarea
-        ref={textareaRef}
+      <Input
+        ref={inputRef}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={handleKeyDown}
-        className="min-h-20 text-sm leading-6"
+        className="h-10 w-full px-3 text-sm leading-6"
+        placeholder="이 직원이 어떤 일을 하는지 한 줄로 적어주세요"
         aria-label="에이전트 설명 수정"
       />
     );

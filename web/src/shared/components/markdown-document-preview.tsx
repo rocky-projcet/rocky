@@ -106,11 +106,11 @@ const defaultMarkdownComponents: Components = {
       Boolean(className?.includes("language-")) || content.includes("\n");
 
     if (isBlockCode) {
-      return <code className={cn("font-mono text-xs text-slate-100", className)}>{children}</code>;
+      return <code className={cn("font-mono text-slate-100", className)}>{children}</code>;
     }
 
     return (
-      <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+      <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground">
         {children}
       </code>
     );

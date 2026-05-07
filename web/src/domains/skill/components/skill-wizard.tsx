@@ -6,6 +6,7 @@ import { Input } from "@/shared/ui/input";
 import { Progress } from "@/shared/ui/progress";
 import { cn } from "@/shared/lib/utils";
 import type { MdTemplateInputArtifact } from "@/domains/template/types";
+import { ConnectorDialog } from "@/domains/connector/connector-dialog";
 import {
   LANGUAGE_OPTIONS,
   type SkillField,
@@ -200,6 +201,7 @@ function SkillStepView({
             key={field.id}
             field={field}
             value={answers[field.id]}
+            answers={answers}
             onChange={(next) => onChange(field.id, next)}
             onUploadFile={onUploadFile}
           />
@@ -212,11 +214,13 @@ function SkillStepView({
 function SkillFieldView({
   field,
   value,
+  answers,
   onChange,
   onUploadFile,
 }: {
   field: SkillField;
   value: AnswerValue;
+  answers: SkillWizardAnswers;
   onChange: (value: AnswerValue) => void;
   onUploadFile?: (input: {
     fieldId: string;
@@ -257,7 +261,7 @@ function SkillFieldView({
       ) : field.kind === "text" ? (
         <TextField field={field} value={value} onChange={onChange} />
       ) : field.kind === "account-connect" ? (
-        <AccountConnectField value={value} onChange={onChange} />
+        <AccountConnectField value={value} answers={answers} onChange={onChange} />
       ) : field.kind === "recipient-address" ? (
         <RecipientAddressField field={field} value={value} onChange={onChange} />
       ) : null}
@@ -265,14 +269,80 @@ function SkillFieldView({
   );
 }
 
+type ChannelConnector = {
+  provider:
+    | "threads"
+    | "instagram"
+    | "x"
+    | "facebook"
+    | "linkedin"
+    | "tiktok"
+    | "youtube"
+    | "naver-blog"
+    | "tistory"
+    | "brunch"
+    | "kakao-channel"
+    | "medium"
+    | null;
+  label: string;
+};
+
+function resolveChannelConnector(answers: SkillWizardAnswers): ChannelConnector {
+  const channel = answers["channel"];
+  let primary: string | null = null;
+  let detail: string | null = null;
+  if (typeof channel === "string") {
+    primary = channel;
+  } else if (channel && typeof channel === "object" && "primary" in channel) {
+    primary = (channel.primary as string) ?? null;
+    detail = (channel.detail as string | undefined) ?? null;
+  }
+
+  if (primary === "sns") {
+    if (detail === "threads") return { provider: "threads", label: "Threads" };
+    if (detail === "instagram" || detail === "instagram-reels") {
+      return { provider: "instagram", label: "Instagram" };
+    }
+    if (detail === "x") return { provider: "x", label: "X (트위터)" };
+    if (detail === "facebook") return { provider: "facebook", label: "Facebook" };
+    if (detail === "linkedin") return { provider: "linkedin", label: "LinkedIn" };
+    if (detail === "tiktok") return { provider: "tiktok", label: "TikTok" };
+    if (detail === "youtube-shorts") {
+      return { provider: "youtube", label: "YouTube" };
+    }
+    return { provider: null, label: "SNS" };
+  }
+
+  if (primary === "blog") {
+    if (detail === "naver") return { provider: "naver-blog", label: "네이버 블로그" };
+    if (detail === "tistory") return { provider: "tistory", label: "Tistory" };
+    if (detail === "brunch") return { provider: "brunch", label: "브런치" };
+    if (detail === "kakao-channel") {
+      return { provider: "kakao-channel", label: "카카오 채널" };
+    }
+    if (detail === "medium") return { provider: "medium", label: "Medium" };
+    return { provider: null, label: "블로그" };
+  }
+
+  if (primary === "newsletter") return { provider: null, label: "뉴스레터" };
+  if (primary === "detail-page") return { provider: null, label: "홈페이지" };
+  return { provider: null, label: "발행 계정" };
+}
+
 function AccountConnectField({
   value,
+  answers,
   onChange,
 }: {
   value: AnswerValue;
+  answers: SkillWizardAnswers;
   onChange: (value: AnswerValue) => void;
 }) {
   const connectedLabel = typeof value === "string" && value.length > 0 ? value : "";
+  const [open, setOpen] = useState(false);
+  const channel = resolveChannelConnector(answers);
+  const supported = channel.provider !== null;
+
   return (
     <div className="flex flex-col gap-2">
       {connectedLabel ? (
@@ -281,30 +351,48 @@ function AccountConnectField({
             <Check className="size-4 text-foreground" />
             <span className="text-sm font-medium text-foreground">{connectedLabel}</span>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
-            연결 해제
-          </Button>
+          {supported ? (
+            <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+              관리
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
+              연결 해제
+            </Button>
+          )}
         </div>
-      ) : (
+      ) : supported ? (
         <button
           type="button"
-          onClick={() => {
-            const handle = window.prompt(
-              "연결할 계정을 적어주세요. (예: @brand, hello@company.com, 워크스페이스 이름)",
-            );
-            if (handle && handle.trim().length > 0) {
-              onChange(handle.trim());
-            }
-          }}
+          onClick={() => setOpen(true)}
           className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm font-medium text-foreground transition hover:bg-muted/40"
         >
           <Plug className="size-4" />
-          계정 연결하기
+          {channel.label} 계정 연결하기
         </button>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm">
+          <p className="font-medium text-foreground">
+            {channel.label} 자동 연동은 곧 추가돼요
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            지금은 이 채널 자동 발행이 준비 중입니다. 일단 초안만 받으시고, 발행은 직접 해주세요.
+            연동이 추가되면 같은 자리에서 바로 연결할 수 있어요.
+          </p>
+        </div>
       )}
       <p className="text-xs text-muted-foreground">
-        연결 화면에서 로그인하면 이후 같은 채널에는 다시 묻지 않아요.
+        연결한 세션은 기기에 안전하게 저장되어 다음 작업부터 자동으로 사용됩니다.
       </p>
+      {channel.provider ? (
+        <ConnectorDialog
+          provider={channel.provider}
+          providerLabel={channel.label}
+          open={open}
+          onOpenChange={setOpen}
+          onConnected={(connectedLabel) => onChange(connectedLabel)}
+        />
+      ) : null}
     </div>
   );
 }

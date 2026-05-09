@@ -77,6 +77,27 @@ function mergeSessionWritableDirs(
   return [...new Set([requiredSkillDir, ...(requestedDirs ?? [])].map((entry) => path.resolve(entry)))];
 }
 
+function buildAgentSkillAuthoringInstructions(agent: AgentRecord): string[] {
+  const baseInstructions = [
+    "For explicit user requests to create, add, register, update, or improve a reusable skill, follow the internal skill-creator workflow as authoring guidance, but create only agent-local skill files under `.agents/skills/<skill-id>/`.",
+    "After creating or updating an agent-local skill, refresh the generated skill bridge by ensuring the new skill has a valid `SKILL.md`; the platform will treat it as an equipped skill for this agent.",
+  ];
+
+  if (!agent.skillPolicy?.automaticSkillCreation) {
+    return [
+      ...baseInstructions,
+      "Automatic skill creation is disabled for this agent. Do not turn ordinary task requests into new skills unless the user explicitly asks for a reusable skill or skill update.",
+    ];
+  }
+
+  return [
+    ...baseInstructions,
+    "Automatic skill creation is enabled for this agent. When the user's request is primarily about saving a reusable workflow, repeated operating rule, integration procedure, or future capability, proactively proceed through the skill-creator workflow.",
+    "If the request can be completed as a one-off task without a durable reusable workflow, do the task normally instead of creating a skill.",
+    "If key skill metadata is missing, ask only for the missing blocking detail; otherwise create the agent-local skill directly.",
+  ];
+}
+
 export class SessionService {
   private readonly stateRoot: string;
   private readonly baseEnv: NodeJS.ProcessEnv;
@@ -455,10 +476,17 @@ export class SessionService {
     await ensureRunPaths(runPaths);
     await this.hydrateRuntimeSession(agent, session);
     const authSource = await this.resolveRuntimeAuthSource(session, input);
+    const turnInput: AgentSessionTurnInput = {
+      ...input,
+      extraSystemInstructions: [
+        ...buildAgentSkillAuthoringInstructions(agent),
+        ...(input.extraSystemInstructions ?? []),
+      ],
+    };
 
     const runtimeRequest = buildRuntimeRequest({
       session,
-      input,
+      input: turnInput,
       runId,
       runPaths,
       authSource,
@@ -470,13 +498,13 @@ export class SessionService {
 
     const run = buildRunningRunRecord({
       session,
-      input,
+      input: turnInput,
       runId,
       started,
       runPaths,
     });
 
-    applyStartedRunToSession(session, input.prompt, started.startedAt);
+    applyStartedRunToSession(session, turnInput.prompt, started.startedAt);
 
     await this.writeSessionRecord(sessionPaths, session);
     await this.writeRunRecord(runPaths, run);
@@ -484,7 +512,7 @@ export class SessionService {
       sessionPaths,
       sessionId: session.id,
       runId,
-      prompt: input.prompt,
+      prompt: turnInput.prompt,
       createdAt: started.startedAt,
       reusedMessageContext,
     });

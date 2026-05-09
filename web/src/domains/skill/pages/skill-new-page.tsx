@@ -104,7 +104,7 @@ export function SkillNewPage() {
     return (
       <PageContainer>
         <PageHeader
-          title="어떤 스킬을 만드시나요?"
+          title="어떤 공용 스킬을 만드시나요?"
           description="가장 가까운 갈래를 골라주세요. 다음 단계에서 세부 옵션은 선택만 하면 됩니다."
         />
 

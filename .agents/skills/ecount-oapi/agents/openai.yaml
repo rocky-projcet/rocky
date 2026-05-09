@@ -1,0 +1,4 @@
+interface:
+  display_name: "ECOUNT OAPI"
+  short_description: "Test ECOUNT ERP OAPI web login, test keys, and session flow"
+  default_prompt: "Use $ecount-oapi to verify ECOUNT ERP OAPI access from .env, validate the test API key issuer ID, and run Zone/Login/read-only smoke tests without exposing secrets."

@@ -18,6 +18,9 @@ export interface AgentRecord {
   sandboxPolicy: string;
   approvalPolicy: string;
   modelProfile: string | null;
+  skillPolicy: {
+    automaticSkillCreation: boolean;
+  };
   status: string;
   lifecycle: "active" | "archived";
   archivedAt: string | null;
@@ -115,6 +118,9 @@ export interface AgentCreateInput {
   description?: string | null;
   soul?: string | null;
   defaultRuntime?: RuntimeKind;
+  skillPolicy?: {
+    automaticSkillCreation: boolean;
+  };
 }
 
 export interface AgentUpdateInput {
@@ -125,6 +131,9 @@ export interface AgentUpdateInput {
   stopRunningSessions?: boolean;
   color?: string | null;
   defaultRuntime?: RuntimeKind;
+  skillPolicy?: {
+    automaticSkillCreation: boolean;
+  };
 }
 
 export type AuthProfileLifecycle = "active" | "archived";
@@ -1482,6 +1491,7 @@ export class AgentEngineClient {
         description: input.description ?? undefined,
         soul: input.soul ?? undefined,
         defaultRuntime: input.defaultRuntime ?? undefined,
+        skillPolicy: input.skillPolicy ?? undefined,
       }),
     });
   }

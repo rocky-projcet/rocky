@@ -55,7 +55,7 @@ function buildExecutableCandidates(
     (baseEnv.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").replaceAll(";", path.delimiter)
   );
 
-  return [filePath, ...pathext.map((suffix) => `${filePath}${suffix.toLowerCase()}`)];
+  return [...pathext.map((suffix) => `${filePath}${suffix.toLowerCase()}`), filePath];
 }
 
 async function resolveBareCommand(

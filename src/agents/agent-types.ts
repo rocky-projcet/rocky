@@ -29,6 +29,10 @@ export interface AgentToolPolicy {
   ssh: AgentSshToolPolicy;
 }
 
+export interface AgentSkillPolicy {
+  automaticSkillCreation: boolean;
+}
+
 export interface PythonEnvironment {
   manager: string;
   type: string;
@@ -51,6 +55,7 @@ export interface AgentRecord {
   modelProfile: string | null;
   runtimePolicy: AgentRuntimePolicy;
   toolPolicy: AgentToolPolicy;
+  skillPolicy: AgentSkillPolicy;
   status: string;
   lifecycle: AgentLifecycle;
   archivedAt: string | null;

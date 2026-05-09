@@ -7,6 +7,7 @@ import path from "node:path";
 import { spawn as defaultSpawn } from "node:child_process";
 
 import type { SpawnLike } from "../runtime/runtime-types.js";
+import { prepareWindowsCommandSpawn } from "../runtime/windows-command-spawn.js";
 import type {
   CliLatestStatus,
   CliVersionDiagnosticsRecord,
@@ -43,6 +44,39 @@ interface CommandResult {
 }
 
 const VERSION_PATTERN = /\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/;
+
+function splitPathEntries(pathValue: string | undefined): string[] {
+  return (pathValue ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function buildExecutableCandidates(
+  filePath: string,
+  env: NodeJS.ProcessEnv
+): string[] {
+  if (process.platform !== "win32" || path.extname(filePath)) {
+    return [filePath];
+  }
+
+  const pathext = splitPathEntries(
+    (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").replaceAll(";", path.delimiter)
+  );
+  return [
+    ...pathext.map((extension) => `${filePath}${extension.toLowerCase()}`),
+    filePath,
+  ];
+}
+
+function shouldSpawnResolvedPath(resolvedPath: string | null): resolvedPath is string {
+  if (process.platform !== "win32" || !resolvedPath) {
+    return false;
+  }
+
+  const extension = path.extname(resolvedPath).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
+}
 
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -144,12 +178,16 @@ async function resolveCommandPath(
   }
 
   if (path.isAbsolute(command)) {
-    try {
-      await accessImpl(command, fsConstants.X_OK);
-      return command;
-    } catch {
-      return null;
+    for (const candidate of buildExecutableCandidates(command, env)) {
+      try {
+        await accessImpl(candidate, fsConstants.X_OK);
+        return candidate;
+      } catch {
+        continue;
+      }
     }
+
+    return null;
   }
 
   const searchPath = env.PATH ?? "";
@@ -159,16 +197,20 @@ async function resolveCommandPath(
       continue;
     }
 
-    const candidate = path.join(directory, command);
-    try {
-      await accessImpl(candidate, fsConstants.X_OK);
+    for (const candidate of buildExecutableCandidates(
+      path.join(directory, command),
+      env
+    )) {
       try {
-        return await defaultRealpath(candidate);
+        await accessImpl(candidate, fsConstants.X_OK);
+        try {
+          return await defaultRealpath(candidate);
+        } catch {
+          return candidate;
+        }
       } catch {
-        return candidate;
+        continue;
       }
-    } catch {
-      continue;
     }
   }
 
@@ -301,7 +343,10 @@ export class CliDiagnosticsService {
       resolvedPath ? "installed" : "not-installed";
 
     try {
-      const result = await this.runCommand(this.versionArgs);
+      const result = await this.runExternalCommand(
+        shouldSpawnResolvedPath(resolvedPath) ? resolvedPath : this.command,
+        this.versionArgs
+      );
       rawVersionText = normalizeOutput(result.stdout, result.stderr) || null;
       currentVersion = extractVersion(rawVersionText);
       installStatus = result.exitCode === 0 ? "installed" : "error";
@@ -371,10 +416,6 @@ export class CliDiagnosticsService {
     });
   }
 
-  private runCommand(args: string[]): Promise<CommandResult> {
-    return this.runExternalCommand(this.command, args);
-  }
-
   private async fetchLatestHomebrewCaskVersion(): Promise<LatestVersionLookupResult | null> {
     const caskName = caskNameForProvider(this.provider);
     const result = await this.runExternalCommand("brew", ["info", "--cask", caskName]);
@@ -397,11 +438,16 @@ export class CliDiagnosticsService {
 
   private runExternalCommand(command: string, args: string[]): Promise<CommandResult> {
     return new Promise((resolve, reject) => {
-      const child = this.spawnImpl(command, args, {
+      const prepared = prepareWindowsCommandSpawn(command, args, {
         cwd: this.baseEnv.HOME ?? process.cwd(),
         env: this.baseEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      const child = this.spawnImpl(
+        prepared.command,
+        prepared.args,
+        prepared.options
+      );
 
       let stdout = "";
       let stderr = "";

@@ -543,6 +543,34 @@ function requiresPdfOutput(value: string): boolean {
   return value.toLowerCase().includes("pdf");
 }
 
+function requiresEcountIntegration(draft: MdTemplateDraft): boolean {
+  const text = [
+    draft.title,
+    draft.description,
+    draft.triggerLabel,
+    draft.defaultInstructions,
+    ...draft.requiredInputs,
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  return text.includes("ecount") || text.includes("이카운트");
+}
+
+function formatIntegrationRules(draft: MdTemplateDraft): string[] {
+  if (!requiresEcountIntegration(draft)) {
+    return [];
+  }
+
+  return [
+    "## Integration Rules",
+    "- ECOUNT ERP credentials, API keys, passwords, and session IDs are managed by Rocky. Do not ask the user to paste them into the skill and never print them in outputs.",
+    "- Treat ECOUNT ERP as a lookup and analysis integration in this workflow. Use only lookup actions explicitly provided by the runtime.",
+    "- Do not create, register, update, delete, submit, or transmit ERP records. If the user asks for registration or modification, explain that ECOUNT ERP registration/modification support is planned.",
+    "",
+  ];
+}
+
 function formatOutputDirectoryRules(outputFormatLabel: string): string[] {
   const rules = [
     "## Output Directory Rules",
@@ -580,6 +608,19 @@ function formatRunPromptOutputRules(outputFormatLabel: string): string[] {
   return rules;
 }
 
+function formatRunPromptIntegrationRules(draft: MdTemplateDraft): string[] {
+  if (!requiresEcountIntegration(draft)) {
+    return [];
+  }
+
+  return [
+    "연동 정책:",
+    "- ECOUNT ERP 인증 정보와 세션 ID는 Rocky가 관리하므로 사용자에게 API 키나 비밀번호를 다시 묻거나 출력하지 않습니다.",
+    "- 현재 ECOUNT ERP는 조회와 분석 용도로만 사용합니다.",
+    "- ERP 데이터 등록, 수정, 삭제, 전송은 실행하지 않습니다. 사용자가 요청하면 제공 예정이라고 안내합니다.",
+  ];
+}
+
 export function buildOpenAiSkillDefinition(input: {
   skillId: string;
   draft: MdTemplateDraft;
@@ -607,6 +648,7 @@ export function buildOpenAiSkillDefinition(input: {
     formatMarkdownList(normalized.requiredInputs),
     "",
     ...formatPackagedInputArtifacts(normalized.inputArtifacts ?? []),
+    ...formatIntegrationRules(normalized),
     "## Workflow",
     "1. Check the user's latest request, uploaded files, and Packaged Input Files before asking anything.",
     "2. Treat Packaged Input Files as available inputs and inspect those paths before asking the user to upload them.",
@@ -847,6 +889,8 @@ export function buildTemplateRunPrompt(
     "템플릿 output 파일:",
     outputFiles,
     "",
+    ...formatRunPromptIntegrationRules(normalized),
+    ...(requiresEcountIntegration(normalized) ? [""] : []),
     ...formatRunPromptOutputRules(normalized.outputFormatLabel),
     "",
     "진행 방식:",

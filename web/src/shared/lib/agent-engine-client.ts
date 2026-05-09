@@ -112,6 +112,41 @@ export interface SkillTemplateRunRecord {
   updatedAt: string;
 }
 
+export interface EcountConnectionTestInput {
+  accountLabel?: string | null;
+  comCode: string;
+  userId: string;
+  apiCertKey: string;
+  zone?: string | null;
+  lanType?: string | null;
+}
+
+export interface EcountConnectionTestRecord {
+  ok: boolean;
+  status: "connected" | "failed";
+  accountLabel: string | null;
+  comCode: string;
+  userId: string;
+  zone: string | null;
+  checkedAt: string;
+  message: string;
+  diagnostics?: {
+    stage: "zone" | "login";
+    detail: string;
+  };
+}
+
+export interface EcountConnectionSettingsRecord {
+  configured: boolean;
+  accountLabel: string | null;
+  comCodeMasked: string | null;
+  userIdMasked: string | null;
+  apiCertKeyMasked: string | null;
+  zone: string | null;
+  checkedAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface AgentCreateInput {
   name: string;
   id?: string | null;
@@ -1595,6 +1630,43 @@ export class AgentEngineClient {
           size: input.file.size,
           contentBase64,
         }),
+      }
+    );
+  }
+
+  testEcountConnection(
+    input?: EcountConnectionTestInput | null
+  ): Promise<EcountConnectionTestRecord> {
+    return this.request<EcountConnectionTestRecord>(
+      "/integrations/ecount/test",
+      {
+        method: "POST",
+        body: JSON.stringify(input ?? {}),
+      }
+    );
+  }
+
+  getEcountConnectionSettings(): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>("/integrations/ecount/settings");
+  }
+
+  saveEcountConnectionSettings(
+    input: EcountConnectionTestInput
+  ): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>(
+      "/integrations/ecount/settings",
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  deleteEcountConnectionSettings(): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>(
+      "/integrations/ecount/settings",
+      {
+        method: "DELETE",
       }
     );
   }

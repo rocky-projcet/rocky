@@ -23,6 +23,7 @@ import { registerFavoriteRoutes } from "./routes/favorite-routes.js";
 import { ConnectorService } from "../connectors/connector-service.js";
 import { FavoriteService } from "../favorites/favorite-service.js";
 import { registerAuthProfileRoutes } from "./routes/auth-profile-routes.js";
+import { registerIntegrationRoutes } from "./routes/integration-routes.js";
 import { registerMessengerRoutes } from "./routes/messenger-routes.js";
 import { registerRunRoutes } from "./routes/run-routes.js";
 import { registerRuntimeRoutes } from "./routes/runtime-routes.js";
@@ -139,6 +140,12 @@ export function createAgentEngineServer(
   });
   server.register(registerAuthProfileRoutes, {
     authProfileService,
+  });
+  server.register(registerIntegrationRoutes, {
+    stateRoot: options.stateRoot,
+    now: options.now,
+    ecountConnectionTester: options.ecountConnectionTester,
+    ecountSettingsService: options.ecountSettingsService,
   });
   server.register(registerSessionRoutes, {
     sessionService,

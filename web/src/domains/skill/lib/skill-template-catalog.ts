@@ -20,12 +20,14 @@ export type SkillFieldKind =
   | "text"
   | "url-or-file"
   | "account-connect"
+  | "ecount-connection-test"
   | "recipient-address";
 
 export interface SkillFieldOption {
   id: string;
   label: string;
   description?: string;
+  disabled?: boolean;
   /** Sub-options revealed when this option is picked (used by single-select-with-detail). */
   detailOptions?: SkillFieldOption[];
   detailLabel?: string;
@@ -42,6 +44,7 @@ export interface SkillField {
   /** Required vs optional/skip. */
   optional?: boolean;
   placeholder?: string;
+  defaultValue?: string;
   /** For file fields: accepted MIME hints. */
   accept?: string;
 }
@@ -430,15 +433,108 @@ const DATA_TEMPLATE: SkillTemplate = {
       ],
     },
     {
+      id: "data-source",
+      title: "데이터를 어디에서 가져올까요?",
+      helper: "엑셀 파일만 쓸 수도 있고, 이카운트 ERP 데이터를 함께 볼 수도 있어요.",
+      fields: [
+        {
+          id: "dataSource",
+          kind: "single-select",
+          label: "데이터 소스",
+          options: [
+            {
+              id: "file-upload",
+              label: "파일 업로드",
+              description: "엑셀·CSV 파일을 올려서 분석합니다.",
+            },
+            {
+              id: "ecount-erp",
+              label: "이카운트 ERP",
+              description: "이카운트의 품목·거래처·재고·판매 데이터를 조회해 분석합니다.",
+            },
+            {
+              id: "file-and-ecount",
+              label: "파일 + 이카운트 ERP",
+              description: "업로드 파일과 ERP 데이터를 대조합니다.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "ecount-erp",
+      title: "이카운트 ERP 조회 연동을 사용하나요?",
+      helper:
+        "이카운트 데이터를 쓰는 스킬이면 계정과 조회 범위를 적어주세요. 등록·수정은 추후 제공 예정입니다.",
+      skippable: true,
+      fields: [
+        {
+          id: "ecountConnectionTest",
+          kind: "ecount-connection-test",
+          label: "이카운트 연결 테스트",
+          helper:
+            "회사코드, 사용자 ID, API 인증키로 세션 발급까지 확인합니다. 인증키와 세션은 스킬 내용에 저장하지 않습니다.",
+          placeholder: "예: 본사 이카운트",
+          optional: true,
+        },
+        {
+          id: "ecountDataScope",
+          kind: "multi-select",
+          label: "ERP 데이터 범위",
+          allowCustom: true,
+          options: [
+            { id: "items", label: "품목" },
+            { id: "customers", label: "거래처" },
+            { id: "inventory", label: "재고현황" },
+            { id: "warehouse-inventory", label: "창고별 재고" },
+            { id: "orders", label: "주문서" },
+            { id: "sales", label: "판매" },
+            { id: "purchase", label: "구매" },
+            { id: "accounting", label: "매출·매입" },
+          ],
+        },
+        {
+          id: "ecountPeriod",
+          kind: "text",
+          label: "조회 기간 또는 기준",
+          placeholder: "예: 최근 30일, 이번 달, 2026-05-01~2026-05-31",
+          optional: true,
+        },
+        {
+          id: "ecountWritePolicy",
+          kind: "single-select",
+          label: "ERP 변경 작업",
+          helper: "현재 ECOUNT ERP 연동은 조회와 분석만 허용합니다.",
+          defaultValue: "read-only",
+          options: [
+            {
+              id: "read-only",
+              label: "조회와 분석만 허용",
+              description: "품목·거래처·재고·판매 데이터를 읽어 분석하는 작업만 진행합니다.",
+            },
+            {
+              id: "write-planned",
+              label: "등록·수정은 추후 제공 예정",
+              description: "ERP 전송, 생성, 수정, 삭제 작업은 현재 스킬에서 실행하지 않습니다.",
+              disabled: true,
+            },
+          ],
+        },
+      ],
+    },
+    {
       id: "data-files",
       title: "분석할 데이터를 올려주세요",
-      helper: "어떤 데이터인지 한 줄로 설명해 주세요.",
+      helper:
+        "파일 없이 이카운트 ERP만 쓸 스킬이면 건너뛰어도 됩니다. 파일을 함께 쓰면 어떤 데이터인지 한 줄로 설명해 주세요.",
+      skippable: true,
       fields: [
         {
           id: "datasets",
           kind: "file-with-role",
           label: "데이터 파일과 설명",
           helper: "예: 매출_2025.xlsx → 채널별 월매출 / customers.csv → 회원 정보",
+          optional: true,
         },
       ],
     },

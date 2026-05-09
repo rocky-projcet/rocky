@@ -25,6 +25,8 @@ import type {
 } from "../tasks/task-types.js";
 import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
 import type { SkillTemplateStore } from "../skills/skill-template-store.js";
+import type { EcountConnectionTester } from "../integrations/ecount-connection-service.js";
+import type { EcountSettingsServiceLike } from "../integrations/ecount-settings-service.js";
 import type {
   RuntimeKind,
   RuntimeEvent,
@@ -247,6 +249,8 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
   skillTemplateStore?: SkillTemplateStore;
+  ecountConnectionTester?: EcountConnectionTester;
+  ecountSettingsService?: EcountSettingsServiceLike;
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;

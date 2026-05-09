@@ -81,6 +81,8 @@ function buildAgentSkillAuthoringInstructions(agent: AgentRecord): string[] {
   const baseInstructions = [
     "For explicit user requests to create, add, register, update, or improve a reusable skill, follow the internal skill-creator workflow as authoring guidance, but create only agent-local skill files under `.agents/skills/<skill-id>/`.",
     "After creating or updating an agent-local skill, refresh the generated skill bridge by ensuring the new skill has a valid `SKILL.md`; the platform will treat it as an equipped skill for this agent.",
+    "For integration-related skills, document the required integration name, allowed actions, and unavailable actions, but never write API keys, passwords, tokens, session IDs, or raw credentials into skill files.",
+    "For ECOUNT ERP skills, allow lookup and analysis workflows only. Do not instruct the agent to register, update, delete, submit, or mutate ERP data; describe those actions as planned support.",
   ];
 
   if (!agent.skillPolicy?.automaticSkillCreation) {

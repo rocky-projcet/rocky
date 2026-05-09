@@ -1,10 +1,22 @@
 import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Check, Plug, Plus, Upload, X } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Plug,
+  Plus,
+  ShieldCheck,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Progress } from "@/shared/ui/progress";
 import { cn } from "@/shared/lib/utils";
+import { agentEngineClient } from "@/shared/lib/api-client";
+import type { EcountConnectionTestRecord } from "@/shared/lib/agent-engine-client";
 import type { MdTemplateInputArtifact } from "@/domains/template/types";
 import { ConnectorDialog } from "@/domains/connector/connector-dialog";
 import {
@@ -26,14 +38,28 @@ type AnswerValue =
 
 export type SkillWizardAnswers = Record<string, AnswerValue>;
 
+function defaultAnswersFromTemplate(template: SkillTemplate): SkillWizardAnswers {
+  const defaults: SkillWizardAnswers = {};
+  for (const step of template.steps) {
+    for (const field of step.fields) {
+      if (field.defaultValue != null) {
+        defaults[field.id] = field.defaultValue;
+      }
+    }
+  }
+  return defaults;
+}
+
 export function SkillWizard({
   template,
+  initialAnswers,
   onCancel,
   onSubmit,
   finishLabel = "다음",
   onUploadFile,
 }: {
   template: SkillTemplate;
+  initialAnswers?: SkillWizardAnswers;
   onCancel: () => void;
   onSubmit: (answers: SkillWizardAnswers) => void;
   finishLabel?: string;
@@ -43,7 +69,10 @@ export function SkillWizard({
   }) => Promise<MdTemplateInputArtifact>;
 }) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [answers, setAnswers] = useState<SkillWizardAnswers>({});
+  const [answers, setAnswers] = useState<SkillWizardAnswers>(() => ({
+    ...defaultAnswersFromTemplate(template),
+    ...(initialAnswers ?? {}),
+  }));
 
   const totalSteps = template.steps.length;
   const step = template.steps[stepIndex];
@@ -120,10 +149,17 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
 
   if (field.kind === "single-select" || field.kind === "single-select-with-detail") {
     if (!value) return false;
-    if (typeof value === "string") return value.length > 0;
+    if (typeof value === "string") {
+      const option = field.options?.find((entry) => entry.id === value);
+      return value.length > 0 && option?.disabled !== true;
+    }
     if (typeof value === "object" && "primary" in value) {
       const primary = value.primary;
       if (!primary) return false;
+      if (primary !== "__custom") {
+        const primaryOption = field.options?.find((entry) => entry.id === primary);
+        if (primaryOption?.disabled) return false;
+      }
       // If user picked an option that has detailOptions but didn't pick a detail, fail
       const opt = field.options?.find((option) => option.id === primary);
       if (opt?.detailOptions && opt.detailOptions.length > 0 && !value.detail) {
@@ -162,6 +198,10 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
   }
 
   if (field.kind === "account-connect") {
+    return typeof value === "string" && value.length > 0;
+  }
+
+  if (field.kind === "ecount-connection-test") {
     return typeof value === "string" && value.length > 0;
   }
 
@@ -262,6 +302,8 @@ function SkillFieldView({
         <TextField field={field} value={value} onChange={onChange} />
       ) : field.kind === "account-connect" ? (
         <AccountConnectField value={value} answers={answers} onChange={onChange} />
+      ) : field.kind === "ecount-connection-test" ? (
+        <EcountConnectionTestField field={field} value={value} onChange={onChange} />
       ) : field.kind === "recipient-address" ? (
         <RecipientAddressField field={field} value={value} onChange={onChange} />
       ) : null}
@@ -397,6 +439,183 @@ function AccountConnectField({
   );
 }
 
+function safeEcountConnectionLabel(
+  result: EcountConnectionTestRecord,
+  accountLabel: string
+): string {
+  const label = result.accountLabel ?? (accountLabel.trim() || "이카운트 ERP");
+  return result.zone
+    ? `${label} · ZONE ${result.zone} · 로그인 테스트 통과`
+    : `${label} · 로그인 테스트 통과`;
+}
+
+function EcountConnectionTestField({
+  field,
+  value,
+  onChange,
+}: {
+  field: SkillField;
+  value: AnswerValue;
+  onChange: (value: AnswerValue) => void;
+}) {
+  const verifiedLabel = typeof value === "string" && value.length > 0 ? value : "";
+  const [accountLabel, setAccountLabel] = useState("");
+  const [comCode, setComCode] = useState("");
+  const [userId, setUserId] = useState("");
+  const [apiCertKey, setApiCertKey] = useState("");
+  const [zone, setZone] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<EcountConnectionTestRecord | null>(null);
+
+  function clearVerification() {
+    setResult(null);
+    if (verifiedLabel) {
+      onChange(null);
+    }
+  }
+
+  async function runTest() {
+    setTesting(true);
+    setResult(null);
+    try {
+      const next = await agentEngineClient.testEcountConnection({
+        accountLabel: accountLabel.trim() || null,
+        comCode: comCode.trim(),
+        userId: userId.trim(),
+        apiCertKey: apiCertKey.trim(),
+        zone: zone.trim() || null,
+        lanType: "ko-KR",
+      });
+      setResult(next);
+      if (next.ok) {
+        onChange(safeEcountConnectionLabel(next, accountLabel));
+      } else {
+        onChange(null);
+      }
+    } catch (error) {
+      setResult({
+        ok: false,
+        status: "failed",
+        accountLabel: accountLabel.trim() || null,
+        comCode: comCode.trim(),
+        userId: userId.trim(),
+        zone: zone.trim() || null,
+        checkedAt: new Date().toISOString(),
+        message: "ECOUNT connection test failed.",
+        diagnostics: {
+          stage: "login",
+          detail: error instanceof Error ? error.message : "연결 테스트를 실행하지 못했습니다.",
+        },
+      });
+      onChange(null);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const canTest = Boolean(comCode.trim() && userId.trim() && apiCertKey.trim());
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Input
+          value={accountLabel}
+          onChange={(event) => {
+            setAccountLabel(event.target.value);
+            clearVerification();
+          }}
+          placeholder={field.placeholder ?? "계정 별칭"}
+        />
+        <Input
+          value={zone}
+          onChange={(event) => {
+            setZone(event.target.value);
+            clearVerification();
+          }}
+          placeholder="ZONE (모르면 비워두기)"
+        />
+        <Input
+          value={comCode}
+          onChange={(event) => {
+            setComCode(event.target.value);
+            clearVerification();
+          }}
+          placeholder="회사코드"
+        />
+        <Input
+          value={userId}
+          onChange={(event) => {
+            setUserId(event.target.value);
+            clearVerification();
+          }}
+          placeholder="사용자 ID"
+        />
+        <Input
+          className="sm:col-span-2"
+          type="password"
+          value={apiCertKey}
+          onChange={(event) => {
+            setApiCertKey(event.target.value);
+            clearVerification();
+          }}
+          placeholder="API 인증키"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={runTest}
+          disabled={!canTest || testing}
+        >
+          <Plug className="size-4" />
+          {testing ? "테스트 중" : "연결 테스트"}
+        </Button>
+        {verifiedLabel ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            <ShieldCheck className="size-3.5" />
+            검증 완료
+          </span>
+        ) : null}
+      </div>
+
+      {result ? (
+        <div
+          className={cn(
+            "rounded-2xl border px-4 py-3 text-sm",
+            result.ok
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+              : "border-destructive/30 bg-destructive/10 text-destructive",
+          )}
+        >
+          <div className="flex items-start gap-2">
+            {result.ok ? (
+              <ShieldCheck className="mt-0.5 size-4 shrink-0" />
+            ) : (
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            )}
+            <div className="min-w-0">
+              <p className="font-medium">
+                {result.ok ? safeEcountConnectionLabel(result, accountLabel) : "연결 테스트 실패"}
+              </p>
+              <p className="mt-1 text-xs opacity-80">
+                {result.ok
+                  ? "세션 발급까지 확인했습니다. API 인증키와 세션 ID는 스킬에 저장하지 않습니다."
+                  : result.diagnostics?.detail ?? result.message}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <p className="text-xs leading-5 text-muted-foreground">
+        이 테스트는 읽기 전용 로그인 확인입니다. ERP 등록·수정 테스트는 실행하지 않습니다.
+      </p>
+    </div>
+  );
+}
+
 function RecipientAddressField({
   field,
   value,
@@ -443,21 +662,26 @@ function ChoicePill({
   description,
   active,
   onClick,
+  disabled,
 }: {
   label: string;
   description?: string;
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={cn(
         "group flex min-h-12 items-start gap-3 rounded-2xl border px-4 py-3 text-left transition",
-        active
-          ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
-          : "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/50",
+        disabled
+          ? "cursor-not-allowed border-border/60 bg-muted/30 opacity-65"
+          : active
+            ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
+            : "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/50",
       )}
     >
       <span
@@ -507,6 +731,7 @@ function SingleSelectField({
           label={option.label}
           description={option.description}
           active={selected === option.id}
+          disabled={option.disabled}
           onClick={() => onChange(option.id)}
         />
       ))}
@@ -561,6 +786,7 @@ function SingleSelectWithDetail({
             label={option.label}
             description={option.description}
             active={current.primary === option.id}
+            disabled={option.disabled}
             onClick={() => onChange({ primary: option.id })}
           />
         ))}
@@ -595,6 +821,7 @@ function SingleSelectWithDetail({
                 key={option.id}
                 label={option.label}
                 active={current.detail === option.id}
+                disabled={option.disabled}
                 onClick={() =>
                   onChange({ primary: current.primary, detail: option.id })
                 }
@@ -653,6 +880,7 @@ function MultiSelectField({
             label={option.label}
             description={option.description}
             active={selected.includes(option.id)}
+            disabled={option.disabled}
             onClick={() => toggle(option.id)}
           />
         ))}

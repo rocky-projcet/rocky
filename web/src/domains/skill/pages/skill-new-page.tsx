@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useMdTemplates } from "@/domains/template/hooks";
+import {
+  requiredInputsFromText,
+  requiredInputsToText,
+  templateToDraft,
+} from "@/domains/template/lib/md-template-definitions";
 import type { MdTemplateDraft } from "@/domains/template/types";
 import type { MdTemplateInputArtifact } from "@/domains/template/types";
-import { SKILL_KIND_THEME } from "../lib/skill-kind-theme";
+import { inferSkillKind, SKILL_KIND_THEME } from "../lib/skill-kind-theme";
 import { SkillTemplateCard } from "../components/skill-template-card";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Button } from "@/shared/ui/button";
@@ -45,6 +50,7 @@ import {
   LANGUAGE_OPTIONS,
   SKILL_TEMPLATES,
   SKILL_TEMPLATE_LIST,
+  type SkillField,
   type SkillKind,
   type SkillTemplate,
 } from "../lib/skill-template-catalog";
@@ -65,16 +71,38 @@ function parseKind(value: string | null): SkillKind | null {
   return null;
 }
 
+function templateWizardAnswerKey(template: {
+  id: string;
+  updatedAt?: string;
+  defaultInstructions: string;
+}): string {
+  return `${template.id}:${template.updatedAt ?? ""}:${template.defaultInstructions}`;
+}
+
 export function SkillNewPage() {
   const navigate = useNavigate();
+  const { skillId } = useParams<{ skillId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialKind = parseKind(searchParams.get("kind"));
-  const { saveTemplate, userTemplates } = useMdTemplates();
+  const editing = Boolean(skillId);
+  const { saveTemplate, userTemplates, templatesLoaded } = useMdTemplates();
+  const editingTemplate = useMemo(
+    () => (skillId ? userTemplates.find((template) => template.id === skillId) ?? null : null),
+    [skillId, userTemplates],
+  );
+  const editingTemplateKey = editingTemplate ? templateWizardAnswerKey(editingTemplate) : null;
+  const editingKind = editingTemplate ? inferSkillKind(editingTemplate) : null;
   const [chosen, setChosen] = useState<SkillTemplate | null>(
-    initialKind ? SKILL_TEMPLATES[initialKind] : null,
+    editingKind
+      ? SKILL_TEMPLATES[editingKind]
+      : initialKind
+        ? SKILL_TEMPLATES[initialKind]
+        : null,
   );
   const templateRunIdRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [wizardAnswers, setWizardAnswers] = useState<SkillWizardAnswers | null>(null);
+  const [wizardAnswersSourceKey, setWizardAnswersSourceKey] = useState<string | null>(null);
   const [pendingDraft, setPendingDraft] = useState<MdTemplateDraft | null>(null);
   const [agentStepDraft, setAgentStepDraft] = useState<MdTemplateDraft | null>(null);
 
@@ -82,7 +110,7 @@ export function SkillNewPage() {
     chosen !== null && pendingDraft === null && agentStepDraft === null;
   useMiniTour({
     key: "skill-wizard",
-    enabled: inWizard && userTemplates.length === 0,
+    enabled: !editing && inWizard && userTemplates.length === 0,
     spotlight: {
       element: '[data-tour="skill-wizard-step"]',
       side: "left",
@@ -94,11 +122,60 @@ export function SkillNewPage() {
   });
 
   useEffect(() => {
+    if (editing) return;
     const kindParam = parseKind(searchParams.get("kind"));
     if (kindParam) {
       setChosen(SKILL_TEMPLATES[kindParam]);
     }
-  }, [searchParams]);
+  }, [editing, searchParams]);
+
+  useEffect(() => {
+    if (!editing || !editingTemplate) return;
+    const kind = inferSkillKind(editingTemplate);
+    const template = SKILL_TEMPLATES[kind];
+    setChosen(template);
+    setWizardAnswers(draftToWizardAnswers(template, templateToDraft(editingTemplate)));
+    setWizardAnswersSourceKey(templateWizardAnswerKey(editingTemplate));
+    setPendingDraft(null);
+    setAgentStepDraft(null);
+    templateRunIdRef.current = editingTemplate.sourceRunId ?? null;
+  }, [editing, editingTemplate]);
+
+  if (editing && !templatesLoaded) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="스킬을 불러오는 중입니다."
+          description="저장된 스킬 정보를 확인하고 있어요."
+        />
+      </PageContainer>
+    );
+  }
+
+  if (editing && !editingTemplate) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="스킬을 찾을 수 없습니다."
+          description="삭제되었거나 이 브라우저에 저장된 스킬이 아닙니다."
+        />
+      </PageContainer>
+    );
+  }
+
+  if (
+    editing &&
+    (!wizardAnswers || wizardAnswersSourceKey !== editingTemplateKey)
+  ) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="스킬을 불러오는 중입니다."
+          description="편집 화면에 기존 설정을 채우고 있어요."
+        />
+      </PageContainer>
+    );
+  }
 
   if (!chosen) {
     return (
@@ -127,6 +204,7 @@ export function SkillNewPage() {
     const draft = buildDraftFromAnswers(chosen, answers, {
       sourceRunId: templateRunIdRef.current,
     });
+    setWizardAnswers(answers);
     setPendingDraft(draft);
   }
 
@@ -150,6 +228,26 @@ export function SkillNewPage() {
       fieldId: input.fieldId,
       file: input.file,
     });
+  }
+
+  async function persistDraft(finalDraft: MdTemplateDraft): Promise<void> {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const saved = await saveTemplate(finalDraft, skillId ?? null);
+      toast.success(editing ? "스킬을 수정했습니다." : "새 스킬을 만들었습니다.", {
+        description: saved.title,
+      });
+      navigate(editing ? `/skills/${encodeURIComponent(saved.id)}` : "/skills", {
+        replace: true,
+      });
+    } catch (error) {
+      toast.error(editing ? "스킬을 수정하지 못했습니다." : "스킬을 저장하지 못했습니다.", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function persistAndAttach(
@@ -268,7 +366,7 @@ export function SkillNewPage() {
               {chosen.label}
             </span>
             <h1 className="mt-1 text-xl font-semibold text-foreground">
-              {chosen.label} 스킬 만들기
+              {chosen.label} 스킬 {editing ? "수정" : "만들기"}
             </h1>
           </div>
         </div>
@@ -276,13 +374,17 @@ export function SkillNewPage() {
           variant="ghost"
           size="sm"
           onClick={() => {
+            if (editing && skillId) {
+              navigate(`/skills/${encodeURIComponent(skillId)}`);
+              return;
+            }
             setChosen(null);
             const next = new URLSearchParams(searchParams);
             next.delete("kind");
             setSearchParams(next, { replace: true });
           }}
         >
-          종류 다시 고르기
+          {editing ? "상세로 돌아가기" : "종류 다시 고르기"}
         </Button>
       </header>
 
@@ -299,15 +401,27 @@ export function SkillNewPage() {
           saving={saving}
           onBack={() => setPendingDraft(null)}
           onSubmit={(next) => {
+            if (editing) {
+              void persistDraft(next);
+              return;
+            }
             setPendingDraft(null);
             setAgentStepDraft(next);
           }}
+          submitLabel={editing ? "수정 저장" : undefined}
         />
       ) : (
         <div data-tour="skill-wizard-step">
           <SkillWizard
             template={chosen}
-            onCancel={() => setChosen(null)}
+            initialAnswers={wizardAnswers ?? undefined}
+            onCancel={() => {
+              if (editing && skillId) {
+                navigate(`/skills/${encodeURIComponent(skillId)}`);
+                return;
+              }
+              setChosen(null);
+            }}
             onSubmit={handleSubmit}
             onUploadFile={handleUploadFile}
             finishLabel="검토하기"
@@ -323,14 +437,33 @@ function SkillReviewForm({
   saving,
   onBack,
   onSubmit,
+  submitLabel = "다음",
 }: {
   draft: MdTemplateDraft;
   saving: boolean;
   onBack: () => void;
   onSubmit: (next: MdTemplateDraft) => void;
+  submitLabel?: string;
 }) {
   const [title, setTitle] = useState(draft.title);
   const [description, setDescription] = useState(draft.description);
+  const [triggerLabel, setTriggerLabel] = useState(draft.triggerLabel);
+  const [outputFormatLabel, setOutputFormatLabel] = useState(draft.outputFormatLabel);
+  const [requiredInputsText, setRequiredInputsText] = useState(
+    requiredInputsToText(draft.requiredInputs),
+  );
+  const [defaultInstructions, setDefaultInstructions] = useState(
+    draft.defaultInstructions,
+  );
+
+  useEffect(() => {
+    setTitle(draft.title);
+    setDescription(draft.description);
+    setTriggerLabel(draft.triggerLabel);
+    setOutputFormatLabel(draft.outputFormatLabel);
+    setRequiredInputsText(requiredInputsToText(draft.requiredInputs));
+    setDefaultInstructions(draft.defaultInstructions);
+  }, [draft]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -341,6 +474,10 @@ function SkillReviewForm({
       ...draft,
       title: trimmedTitle,
       description: trimmedDescription,
+      triggerLabel: triggerLabel.trim() || draft.triggerLabel,
+      outputFormatLabel: outputFormatLabel.trim() || draft.outputFormatLabel,
+      requiredInputs: requiredInputsFromText(requiredInputsText),
+      defaultInstructions: defaultInstructions.trim() || draft.defaultInstructions,
     });
   }
 
@@ -358,33 +495,85 @@ function SkillReviewForm({
         </p>
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="skill-title" className="text-sm font-medium text-foreground">
-          스킬 이름
-        </label>
-        <Input
-          id="skill-title"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder={draft.title}
-          className="h-11 text-base"
-        />
-      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2 sm:col-span-2">
+          <label htmlFor="skill-title" className="text-sm font-medium text-foreground">
+            스킬 이름
+          </label>
+          <Input
+            id="skill-title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={draft.title}
+            className="h-11 text-base"
+          />
+        </div>
 
-      <div className="space-y-2">
-        <label htmlFor="skill-description" className="text-sm font-medium text-foreground">
-          한 줄 설명
-        </label>
-        <Textarea
-          id="skill-description"
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          placeholder={draft.description}
-          className="min-h-24 text-sm"
-        />
-        <p className="text-xs text-muted-foreground">
-          비우면 자동 추천 값이 사용돼요.
-        </p>
+        <div className="space-y-2">
+          <label htmlFor="skill-trigger-label" className="text-sm font-medium text-foreground">
+            분류 라벨
+          </label>
+          <Input
+            id="skill-trigger-label"
+            value={triggerLabel}
+            onChange={(event) => setTriggerLabel(event.target.value)}
+            placeholder={draft.triggerLabel}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="skill-output-format" className="text-sm font-medium text-foreground">
+            결과 형식
+          </label>
+          <Input
+            id="skill-output-format"
+            value={outputFormatLabel}
+            onChange={(event) => setOutputFormatLabel(event.target.value)}
+            placeholder={draft.outputFormatLabel}
+          />
+        </div>
+
+        <div className="space-y-2 sm:col-span-2">
+          <label htmlFor="skill-description" className="text-sm font-medium text-foreground">
+            한 줄 설명
+          </label>
+          <Textarea
+            id="skill-description"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder={draft.description}
+            className="min-h-24 text-sm"
+          />
+        </div>
+
+        <div className="space-y-2 sm:col-span-2">
+          <label htmlFor="skill-required-inputs" className="text-sm font-medium text-foreground">
+            필요한 입력
+          </label>
+          <Textarea
+            id="skill-required-inputs"
+            value={requiredInputsText}
+            onChange={(event) => setRequiredInputsText(event.target.value)}
+            placeholder="한 줄에 하나씩 입력"
+            className="min-h-24 text-sm"
+          />
+        </div>
+
+        <div className="space-y-2 sm:col-span-2">
+          <label htmlFor="skill-default-instructions" className="text-sm font-medium text-foreground">
+            기본 지시문
+          </label>
+          <Textarea
+            id="skill-default-instructions"
+            value={defaultInstructions}
+            onChange={(event) => setDefaultInstructions(event.target.value)}
+            placeholder={draft.defaultInstructions}
+            className="min-h-44 font-mono text-xs leading-5"
+          />
+          <p className="text-xs text-muted-foreground">
+            비우면 자동 추천 값이 사용돼요.
+          </p>
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-2 pt-2">
@@ -393,7 +582,7 @@ function SkillReviewForm({
           이전
         </Button>
         <Button type="submit" disabled={saving}>
-          다음
+          {submitLabel}
           <ArrowRight className="size-4" />
         </Button>
       </div>
@@ -722,6 +911,163 @@ function QuickCreateAgentDialog({
   );
 }
 
+function draftToWizardAnswers(
+  template: SkillTemplate,
+  draft: MdTemplateDraft,
+): SkillWizardAnswers {
+  const instructionAnswers = parseInstructionAnswers(draft.defaultInstructions);
+  const answers: SkillWizardAnswers = {};
+
+  for (const step of template.steps) {
+    for (const field of step.fields) {
+      const artifactAnswer = answerFromArtifacts(field, draft);
+      if (artifactAnswer != null) {
+        answers[field.id] = artifactAnswer;
+        continue;
+      }
+
+      const rawText =
+        findInstructionAnswer(instructionAnswers, field) ??
+        findRequiredInputAnswer(draft, field) ??
+        (field.id === "outputFormats" ? draft.outputFormatLabel : null);
+      if (!rawText) continue;
+
+      const answer = answerFromText(field, rawText);
+      if (answer != null) {
+        answers[field.id] = answer;
+      }
+    }
+  }
+
+  return answers;
+}
+
+function parseInstructionAnswers(defaultInstructions: string): Map<string, string> {
+  const answers = new Map<string, string>();
+  for (const line of defaultInstructions.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("- ")) continue;
+    const body = trimmed.slice(2);
+    const separatorIndex = body.indexOf(":");
+    if (separatorIndex <= 0) continue;
+    const label = body.slice(0, separatorIndex).trim();
+    const value = body.slice(separatorIndex + 1).trim();
+    if (label && value) {
+      answers.set(label, value);
+    }
+  }
+  return answers;
+}
+
+function findInstructionAnswer(
+  instructionAnswers: Map<string, string>,
+  field: SkillField,
+): string | null {
+  const direct = instructionAnswers.get(field.label);
+  if (direct) return direct;
+  if (field.kind === "ecount-connection-test") {
+    return instructionAnswers.get("이카운트 계정") ?? null;
+  }
+  return null;
+}
+
+function findRequiredInputAnswer(
+  draft: MdTemplateDraft,
+  field: SkillField,
+): string | null {
+  const prefix = `${field.label}:`;
+  const entry = draft.requiredInputs.find((input) => input.startsWith(prefix));
+  return entry ? entry.slice(prefix.length).trim() : null;
+}
+
+function answerFromArtifacts(
+  field: SkillField,
+  draft: MdTemplateDraft,
+): SkillWizardAnswers[string] | null {
+  const artifacts = draft.inputArtifacts?.filter((artifact) => artifact.fieldId === field.id) ?? [];
+  if (field.kind === "file-with-role") {
+    return artifacts.length > 0 ? artifacts : null;
+  }
+  if (
+    field.kind === "file-upload" ||
+    field.kind === "url-or-file"
+  ) {
+    return artifacts[0] ?? null;
+  }
+  return null;
+}
+
+function answerFromText(
+  field: SkillField,
+  rawText: string,
+): SkillWizardAnswers[string] | null {
+  const text = rawText.trim();
+  if (!text) return null;
+
+  switch (field.kind) {
+    case "single-select":
+      return answerSingleSelect(field, text);
+    case "single-select-with-detail":
+      return answerSingleSelectWithDetail(field, text);
+    case "multi-select":
+      return answerMultiSelect(field, text);
+    case "language-pair":
+      return answerLanguagePair(text);
+    case "text":
+    case "account-connect":
+    case "ecount-connection-test":
+    case "recipient-address":
+    case "file-upload":
+    case "url-or-file":
+      return text;
+    default:
+      return null;
+  }
+}
+
+function answerSingleSelect(field: SkillField, text: string): SkillWizardAnswers[string] | null {
+  const option = field.options?.find((entry) => entry.label === text);
+  if (option && !option.disabled) return option.id;
+  return field.allowCustom ? { primary: "__custom", custom: text } : null;
+}
+
+function answerSingleSelectWithDetail(
+  field: SkillField,
+  text: string,
+): SkillWizardAnswers[string] | null {
+  const [primaryText, detailText] = text.split("·").map((entry) => entry.trim());
+  const primary = field.options?.find((entry) => entry.label === primaryText);
+  if (primary && !primary.disabled) {
+    const detail = primary.detailOptions?.find(
+      (entry) => entry.label === detailText && !entry.disabled,
+    );
+    return detail ? { primary: primary.id, detail: detail.id } : { primary: primary.id };
+  }
+  return field.allowCustom ? { primary: "__custom", custom: text } : null;
+}
+
+function answerMultiSelect(field: SkillField, text: string): SkillWizardAnswers[string] | null {
+  const values = text
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const option = field.options?.find((candidate) => candidate.label === entry);
+      if (option && !option.disabled) return option.id;
+      return field.allowCustom ? `custom:${entry}` : null;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+
+  return values.length > 0 ? values : null;
+}
+
+function answerLanguagePair(text: string): SkillWizardAnswers[string] | null {
+  const [fromText, toText] = text.split("→").map((entry) => entry.trim());
+  const from = LANGUAGE_OPTIONS.find((entry) => entry.label === fromText)?.id;
+  const to = LANGUAGE_OPTIONS.find((entry) => entry.label === toText)?.id;
+  return from && to ? { from, to } : null;
+}
+
 function languageLabel(id: string): string {
   return LANGUAGE_OPTIONS.find((entry) => entry.id === id)?.label ?? id;
 }
@@ -796,6 +1142,10 @@ function describeAnswer(template: SkillTemplate, fieldId: string, value: unknown
   return String(value);
 }
 
+function usesEcountDataSource(value: unknown): boolean {
+  return value === "ecount-erp" || value === "file-and-ecount";
+}
+
 function pickTitle(template: SkillTemplate, answers: SkillWizardAnswers): string {
   if (template.kind === "document") {
     const docType = answers["documentType"];
@@ -807,7 +1157,10 @@ function pickTitle(template: SkillTemplate, answers: SkillWizardAnswers): string
   }
   if (template.kind === "data") {
     const kind = answers["analysisKind"];
-    return `${describeAnswer(template, "analysisKind", kind)}`;
+    const label = describeAnswer(template, "analysisKind", kind);
+    return usesEcountDataSource(answers["dataSource"])
+      ? `이카운트 ERP ${label}`
+      : label;
   }
   if (template.kind === "translation") {
     const pair = answers["languagePair"];
@@ -874,6 +1227,12 @@ function pickOutputFormatLabel(template: SkillTemplate, answers: SkillWizardAnsw
 
 function pickRequiredInputs(template: SkillTemplate, answers: SkillWizardAnswers): string[] {
   const inputs: string[] = [];
+  if (template.kind === "data" && usesEcountDataSource(answers["dataSource"])) {
+    inputs.push("이카운트 ERP 연결 계정 또는 회사코드 별칭");
+    inputs.push("조회할 이카운트 ERP 메뉴와 데이터 범위");
+    inputs.push("조회 기간, 창고, 거래처, 품목 등 필터 기준");
+    inputs.push("ERP 등록·수정 요청은 실행하지 않고 제공 예정으로 안내");
+  }
   for (const step of template.steps) {
     for (const field of step.fields) {
       const raw = answers[field.id];
@@ -905,7 +1264,7 @@ function pickRequiredInputs(template: SkillTemplate, answers: SkillWizardAnswers
       }
     }
   }
-  return inputs;
+  return [...new Set(inputs)];
 }
 
 function collectInputArtifacts(answers: SkillWizardAnswers): MdTemplateInputArtifact[] {
@@ -932,6 +1291,13 @@ function pickInstructions(template: SkillTemplate, answers: SkillWizardAnswers):
   for (const step of template.steps) {
     for (const field of step.fields) {
       if (
+        template.kind === "data" &&
+        field.id.startsWith("ecount") &&
+        !usesEcountDataSource(answers["dataSource"])
+      ) {
+        continue;
+      }
+      if (
         field.kind === "file-upload" ||
         field.kind === "file-with-role" ||
         field.kind === "url-or-file"
@@ -944,6 +1310,12 @@ function pickInstructions(template: SkillTemplate, answers: SkillWizardAnswers):
       if (!text || text === "—") continue;
       lines.push(`- ${field.label}: ${text}`);
     }
+  }
+  if (template.kind === "data" && usesEcountDataSource(answers["dataSource"])) {
+    lines.push("- 이카운트 연동은 현재 조회와 분석만 허용합니다.");
+    lines.push("- 이카운트 API 키, 비밀번호, 회사 인증 정보는 사용자 답변이나 스킬 본문에 평문으로 저장하지 않습니다.");
+    lines.push("- 품목·거래처·주문·전표 등록, 수정, 삭제, 전송은 실행하지 않습니다. 사용자가 요청하면 제공 예정이라고 안내합니다.");
+    lines.push("- 조회 결과와 업로드 파일을 대조할 때 품목코드, 거래처코드, 창고, 기간 기준을 먼저 확인합니다.");
   }
   return lines.join("\n");
 }

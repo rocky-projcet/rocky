@@ -1158,10 +1158,179 @@ test("rocky chat prepares ECOUNT lookup files for agent ECOUNT skills", async ()
     assert.ok(fileMatch?.[1]);
     const prepared = JSON.parse(
       await readFile(path.join(workspaceRoot, ...fileMatch[1]!.split("/")), "utf8")
-    ) as { count: number; returnedCount: number; products: Array<{ code: string }> };
+    ) as { count: number; returnedCount: number; records: Array<{ code: string }> };
     assert.equal(prepared.count, 2);
     assert.equal(prepared.returnedCount, 2);
-    assert.deepEqual(prepared.products.map((product) => product.code), ["P-001", "P-002"]);
+    assert.deepEqual(prepared.records.map((record) => record.code), ["P-001", "P-002"]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat prepares selected ECOUNT skill scope on proceed requests", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-ecount-scope-"));
+  const settings = new EcountSettingsService({
+    stateRoot,
+    now: () => "2026-04-21T00:00:00.000Z",
+  });
+  await settings.saveSettings({
+    accountLabel: "본사 이카운트",
+    comCode: "123456",
+    userId: "api-user",
+    apiCertKey: "test-secret-key",
+    zone: "CC",
+    checkedAt: "2026-04-21T00:00:00.000Z",
+  });
+
+  const queriedDatasets: string[] = [];
+  const readyDatasets = new Set(["products", "inventory", "warehouseInventory", "purchases"]);
+  const {
+    agents,
+    sendTurnCalls,
+    server,
+  } = createRockyChatTestServer(stateRoot, {
+    ecountLookupService: {
+      async getBasicProductsList() {
+        throw new Error("standard queryDataset should be used.");
+      },
+      async queryDataset(_input, query) {
+        queriedDatasets.push(String(query.dataset));
+        const ready = readyDatasets.has(String(query.dataset));
+        return {
+          ok: ready,
+          provider: "ecount",
+          dataset: String(query.dataset),
+          title: `ECOUNT ERP ${query.dataset} 조회`,
+          status: ready ? "ready" : "unsupported",
+          accountLabel: "본사 이카운트",
+          zone: "CC",
+          checkedAt: "2026-04-21T00:00:00.000Z",
+          api:
+            query.dataset === "products"
+              ? "InventoryBasic/GetBasicProductsList"
+              : query.dataset === "purchases"
+                ? "Purchases/GetPurchasesOrderList"
+                : query.dataset === "inventory" || query.dataset === "warehouseInventory"
+                  ? "InventoryBalance/GetListInventoryBalanceStatusByLocation"
+                  : null,
+          count: ready ? 1 : 0,
+          returnedCount: ready ? 1 : 0,
+          records:
+            query.dataset === "products"
+              ? [
+                  {
+                    code: "P-001",
+                    name: "테스트 품목",
+                  },
+                ]
+              : query.dataset === "purchases"
+                ? [
+                    {
+                      orderNo: "PO-001",
+                    },
+                  ]
+                : ready
+                  ? [
+                      {
+                        code: String(query.dataset),
+                      },
+                    ]
+                  : [],
+          message:
+            query.dataset === "products"
+              ? "ECOUNT product lookup returned 1 product(s)."
+              : ready
+                ? `ECOUNT ${query.dataset} lookup returned 1 record(s).`
+                : `ECOUNT ${query.dataset} lookup is not supported by the current read-only backend.`,
+          diagnostics:
+            ready
+              ? undefined
+              : {
+                  stage: "capability",
+                  detail: "not implemented",
+                },
+        };
+      },
+    },
+  });
+  const workspaceRoot = path.join(stateRoot, "agents", "erp-agent", "workspace");
+  agents.push(buildAgent({
+    id: "erp-agent",
+    name: "ERP 비서",
+    workspaceRoot,
+    runtimeHome: path.join(stateRoot, "agents", "erp-agent", "runtime-home"),
+  }));
+  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "md-erp-test");
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-erp-test",
+      'description: "ECOUNT ERP 매출 분석"',
+      "---",
+      "",
+      "# 이카운트 ERP 매출 분석",
+      "",
+      "## Quality Rules",
+      "- ERP 데이터 범위: 품목, 재고현황, 거래처, 판매, 창고별 재고, 주문서, 구매, 매출·매입",
+      "- 조회 기간 또는 기준: 최근 30일",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "진행해줘",
+        agentId: "erp-agent",
+        skillId: "md-erp-test",
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.deepEqual(queriedDatasets, [
+      "products",
+      "inventory",
+      "customers",
+      "sales",
+      "warehouseInventory",
+      "orders",
+      "purchases",
+      "accounting",
+    ]);
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /ECOUNT ERP products 조회: ready/u);
+    assert.match(agentContext, /ECOUNT ERP purchases 조회: ready/u);
+    assert.match(agentContext, /ECOUNT ERP sales 조회: unsupported/u);
+    assert.match(agentContext, /inputs\/rocky-chat-.*\/integrations\/ecount\/products\.json/u);
+    assert.match(agentContext, /inputs\/rocky-chat-.*\/integrations\/ecount\/purchases\.json/u);
+    assert.match(agentContext, /inputs\/rocky-chat-.*\/integrations\/ecount\/sales\.json/u);
+
+    const preparedProducts = JSON.parse(
+      await readFile(
+        path.join(
+          workspaceRoot,
+          "inputs",
+          response.json().id,
+          "integrations",
+          "ecount",
+          "products.json"
+        ),
+        "utf8"
+      )
+    ) as { status: string; records: Array<{ code: string }> };
+    assert.equal(preparedProducts.status, "ready");
+    assert.deepEqual(preparedProducts.records.map((record) => record.code), ["P-001"]);
   } finally {
     await server.close();
   }

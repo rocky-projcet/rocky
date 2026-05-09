@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -92,6 +92,10 @@ import {
 } from "../integrations/ecount-settings-service.js";
 import {
   EcountConnectionService,
+  normalizeEcountDatasetId,
+  type EcountDatasetId,
+  type EcountDatasetQueryInput,
+  type EcountDatasetQueryResult,
   type EcountLookupServiceLike,
 } from "../integrations/ecount-connection-service.js";
 
@@ -228,12 +232,237 @@ function mentionsEcountIntegration(content: string): boolean {
   return /ecount|이카운트/iu.test(content);
 }
 
+const ECOUNT_DATASET_KEYWORDS: Array<{
+  dataset: EcountDatasetId;
+  keywords: RegExp[];
+}> = [
+  {
+    dataset: "warehouseInventory",
+    keywords: [/창고\s*별\s*재고/u, /warehouse\s*inventory/iu, /location\s*inventory/iu],
+  },
+  {
+    dataset: "accounting",
+    keywords: [/매출\s*[·/]\s*매입/u, /매출매입/u, /회계/u, /accounting/iu, /invoice/iu],
+  },
+  {
+    dataset: "products",
+    keywords: [/품목/u, /상품/u, /\bproducts?\b/iu, /\bitems?\b/iu],
+  },
+  {
+    dataset: "inventory",
+    keywords: [/재고\s*현황/u, /\binventory\b/iu, /inventory\s*balance/iu],
+  },
+  {
+    dataset: "customers",
+    keywords: [/거래처/u, /\bcustomers?\b/iu, /\bvendors?\b/iu],
+  },
+  {
+    dataset: "sales",
+    keywords: [/판매/u, /매출\s*분석/u, /\bsales?\b/iu],
+  },
+  {
+    dataset: "orders",
+    keywords: [/주문서/u, /주문/u, /\borders?\b/iu, /sales\s*order/iu],
+  },
+  {
+    dataset: "purchases",
+    keywords: [/구매/u, /발주서/u, /\bpurchases?\b/iu, /purchase\s*order/iu],
+  },
+];
+
+const DEFAULT_ECOUNT_SKILL_DATASETS: EcountDatasetId[] = [
+  "products",
+  "inventory",
+  "customers",
+  "sales",
+  "warehouseInventory",
+  "orders",
+  "purchases",
+  "accounting",
+];
+
+const ECOUNT_DATASET_LABELS: Record<EcountDatasetId, string> = {
+  products: "품목",
+  inventory: "재고현황",
+  customers: "거래처",
+  sales: "판매",
+  warehouseInventory: "창고별 재고",
+  orders: "주문서",
+  purchases: "구매",
+  accounting: "매출·매입",
+};
+
+function ecountDatasetTitle(dataset: EcountDatasetId | string): string {
+  return `ECOUNT ERP ${
+    ECOUNT_DATASET_LABELS[dataset as EcountDatasetId] ?? dataset
+  } 조회`;
+}
+
+function uniqueEcountDatasets(datasets: Array<EcountDatasetId | string>): EcountDatasetId[] {
+  const seen = new Set<EcountDatasetId>();
+  for (const dataset of datasets) {
+    const normalized = normalizeEcountDatasetId(String(dataset));
+    if (!DEFAULT_ECOUNT_SKILL_DATASETS.includes(normalized as EcountDatasetId)) {
+      continue;
+    }
+    const typed = normalized as EcountDatasetId;
+    if (seen.has(typed)) {
+      continue;
+    }
+    seen.add(typed);
+  }
+  return DEFAULT_ECOUNT_SKILL_DATASETS.filter((dataset) => seen.has(dataset));
+}
+
+function extractEcountDatasets(content: string): EcountDatasetId[] {
+  const datasets: EcountDatasetId[] = [];
+  for (const entry of ECOUNT_DATASET_KEYWORDS) {
+    if (entry.keywords.some((keyword) => keyword.test(content))) {
+      datasets.push(entry.dataset);
+    }
+  }
+  return uniqueEcountDatasets(datasets);
+}
+
+function shouldPrepareEcountLookup(input: {
+  message: string;
+  hasSelectedEcountSkill: boolean;
+  messageDatasets: EcountDatasetId[];
+}): boolean {
+  const normalized = input.message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const explicitIntegrationIntent = /ecount|이카운트|erp/u.test(normalized);
+  const lookupIntent = /조회|검색|목록|전체|확인|가져|보여|새로고침|refresh|list|all|lookup|search/u.test(
+    normalized
+  );
+  const actionIntent = /진행|실행|시작|분석|보고서|pdf|해줘|해주세요|yes|예/u.test(
+    normalized
+  );
+  if (input.messageDatasets.length > 0 && (lookupIntent || actionIntent)) {
+    return true;
+  }
+  if (input.hasSelectedEcountSkill && (lookupIntent || actionIntent || explicitIntegrationIntent)) {
+    return true;
+  }
+  return explicitIntegrationIntent && lookupIntent;
+}
+
+function ecountDatasetLookupWorkspacePath(chatId: string, dataset: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "ecount",
+    `${dataset}.json`
+  );
+}
+
+function legacyEcountProductLookupWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "ecount-products.json"
+  );
+}
+
+function ecountQueryOptionsForDataset(dataset: EcountDatasetId): Omit<EcountDatasetQueryInput, "dataset"> {
+  return dataset === "products" ? {} : { filters: { period: "recent-30-days" } };
+}
+
+function ecountResultToPreparedSummary(
+  result: EcountDatasetQueryResult,
+  workspacePath: string | null,
+  source: AgentPreparedIntegrationSummary["source"]
+): AgentPreparedIntegrationSummary {
+  return {
+    provider: "ecount",
+    dataset: String(result.dataset),
+    title: result.title,
+    status: result.status,
+    api: result.api,
+    count: result.count,
+    returnedCount: result.returnedCount,
+    checkedAt: result.checkedAt,
+    workspacePath,
+    message: result.message,
+    diagnostic: result.diagnostics?.detail ?? null,
+    source,
+  };
+}
+
+function ecountProductLookupToDatasetResult(
+  result: Awaited<ReturnType<EcountLookupServiceLike["getBasicProductsList"]>>
+): EcountDatasetQueryResult {
+  return {
+    ok: result.ok,
+    provider: "ecount",
+    dataset: "products",
+    title: "ECOUNT ERP 품목 조회",
+    status: result.ok ? "ready" : "failed",
+    accountLabel: result.accountLabel,
+    zone: result.zone,
+    checkedAt: result.checkedAt,
+    api: result.api,
+    count: result.count,
+    returnedCount: result.returnedCount,
+    records: result.products.map((product) => ({
+      code: product.code,
+      name: product.name,
+      spec: product.spec,
+      unit: product.unit,
+      raw: product.raw,
+    })),
+    message: result.message,
+    diagnostics: result.diagnostics,
+  };
+}
+
+function unsupportedEcountDatasetResult(dataset: EcountDatasetId): EcountDatasetQueryResult {
+  return {
+    ok: false,
+    provider: "ecount",
+    dataset,
+    title: `ECOUNT ERP ${dataset} 조회`,
+    status: "unsupported",
+    accountLabel: null,
+    zone: null,
+    checkedAt: new Date().toISOString(),
+    api: null,
+    count: 0,
+    returnedCount: 0,
+    records: [],
+    message: `ECOUNT ${dataset} lookup is not supported by the current read-only backend.`,
+    diagnostics: {
+      stage: "capability",
+      detail: "The current ECOUNT lookup service does not implement this dataset.",
+    },
+  };
+}
+
+function latestUsedSkillId(chat: RockyChatRecord): string | null {
+  for (const message of [...chat.messages].reverse()) {
+    const skillId = message.usedSkills[0]?.id;
+    if (skillId) {
+      return skillId;
+    }
+  }
+  return null;
+}
+
+function shouldUseSkillScopeForEcountLookup(message: string): boolean {
+  const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  return /진행|실행|시작|분석|보고서|pdf|새로고침|refresh|erp|이카운트|ecount/u.test(
+    normalized
+  );
+}
+
 function shouldPrepareEcountProductLookup(message: string): boolean {
   const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
   if (!normalized) {
     return false;
   }
-
   const productIntent = /품목|상품|product|item/u.test(normalized);
   const lookupIntent = /조회|검색|목록|전체|확인|가져|보여|list|all|lookup|search/u.test(
     normalized
@@ -242,11 +471,7 @@ function shouldPrepareEcountProductLookup(message: string): boolean {
 }
 
 function ecountProductLookupWorkspacePath(chatId: string): string {
-  return path.posix.join(
-    rockyTaskInputDirectory(chatId),
-    "integrations",
-    "ecount-products.json"
-  );
+  return legacyEcountProductLookupWorkspacePath(chatId);
 }
 
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
@@ -989,6 +1214,7 @@ export class RockyChatService {
       ? await this.requireRunnableAgent(existingAgentId)
       : null;
     const reusableSessionId = this.findReusableSessionId(existing);
+    const followupSkillId = latestUsedSkillId(existing);
     const routed = targetAgent
       ? await this.handleAgentMessage({
           agent: targetAgent,
@@ -996,7 +1222,7 @@ export class RockyChatService {
           messageId: userMessageId,
           message,
           runtimeMessage: withAgentSoul(message, targetAgent.soul),
-          selectedSkillId: null,
+          selectedSkillId: followupSkillId,
           attachments: [...existing.attachments, ...attachmentDrafts],
           domain,
           intent,
@@ -1213,85 +1439,183 @@ export class RockyChatService {
     }
   }
 
-  private async agentHasEcountSkill(agent: AgentRecord): Promise<boolean> {
+  private async listAgentEcountSkillContexts(
+    agent: AgentRecord,
+    selectedSkillId: string | null
+  ): Promise<Array<{ skill: AgentLocalSkillRecord; content: string }>> {
     const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+    const contexts: Array<{ skill: AgentLocalSkillRecord; content: string }> = [];
     for (const skill of skills) {
+      if (selectedSkillId && skill.id !== selectedSkillId) {
+        continue;
+      }
+      let content = "";
       try {
-        const content = await readFile(skill.skillPath, "utf8");
-        if (
-          mentionsEcountIntegration(skill.displayName) ||
-          mentionsEcountIntegration(skill.description ?? "") ||
-          mentionsEcountIntegration(content)
-        ) {
-          return true;
-        }
+        content = await readFile(skill.skillPath, "utf8");
       } catch {
-        if (
-          mentionsEcountIntegration(skill.displayName) ||
-          mentionsEcountIntegration(skill.description ?? "")
-        ) {
-          return true;
-        }
+        content = "";
+      }
+      if (
+        mentionsEcountIntegration(skill.displayName) ||
+        mentionsEcountIntegration(skill.description ?? "") ||
+        mentionsEcountIntegration(content)
+      ) {
+        contexts.push({ skill, content });
       }
     }
 
-    return false;
+    return contexts;
   }
 
-  private async readExistingEcountProductLookup(
+  private async readExistingEcountLookups(
     agent: AgentRecord,
-    chatId: string
-  ): Promise<AgentPreparedIntegrationSummary | null> {
-    const workspacePath = ecountProductLookupWorkspacePath(chatId);
-    const absolutePath = path.join(agent.workspaceRoot, ...workspacePath.split("/"));
-    try {
-      const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as {
-        api?: string;
-        count?: number;
-        returnedCount?: number;
-        checkedAt?: string;
-        message?: string;
-      };
-      return {
-        provider: "ecount",
-        title: "ECOUNT ERP 품목 조회",
-        status: "ready",
-        api: typeof parsed.api === "string" ? parsed.api : null,
-        count: typeof parsed.count === "number" ? parsed.count : null,
-        returnedCount:
-          typeof parsed.returnedCount === "number" ? parsed.returnedCount : null,
-        checkedAt: typeof parsed.checkedAt === "string" ? parsed.checkedAt : null,
-        workspacePath,
-        message: parsed.message ?? "Previous ECOUNT product lookup result is available.",
-        diagnostic: null,
-        source: "existing",
-      };
-    } catch {
-      return null;
+    chatId: string,
+    datasets: EcountDatasetId[]
+  ): Promise<AgentPreparedIntegrationSummary[]> {
+    const paths = new Map<string, string>();
+    for (const dataset of datasets) {
+      paths.set(dataset, ecountDatasetLookupWorkspacePath(chatId, dataset));
     }
+
+    if (datasets.includes("products")) {
+      paths.set("products:legacy", legacyEcountProductLookupWorkspacePath(chatId));
+    }
+
+    if (datasets.length === 0) {
+      const integrationDir = path.join(
+        agent.workspaceRoot,
+        ...path.posix.join(rockyTaskInputDirectory(chatId), "integrations", "ecount").split("/")
+      );
+      try {
+        for (const fileName of await readdir(integrationDir)) {
+          if (!fileName.endsWith(".json")) {
+            continue;
+          }
+          const dataset = fileName.replace(/\.json$/u, "");
+          paths.set(dataset, path.posix.join(rockyTaskInputDirectory(chatId), "integrations", "ecount", fileName));
+        }
+      } catch {
+        // No prepared standard integration directory for this chat yet.
+      }
+      paths.set("products:legacy", legacyEcountProductLookupWorkspacePath(chatId));
+    }
+
+    const summaries: AgentPreparedIntegrationSummary[] = [];
+    const seenDatasets = new Set<string>();
+    for (const [key, workspacePath] of paths) {
+      const absolutePath = path.join(agent.workspaceRoot, ...workspacePath.split("/"));
+      try {
+        const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as {
+          dataset?: string;
+          title?: string;
+          status?: "ready" | "failed" | "unsupported";
+          api?: string | null;
+          count?: number;
+          returnedCount?: number;
+          checkedAt?: string;
+          message?: string;
+          diagnostics?: { detail?: string };
+        };
+        const dataset = parsed.dataset ?? (key === "products:legacy" ? "products" : key);
+        if (seenDatasets.has(dataset)) {
+          continue;
+        }
+        seenDatasets.add(dataset);
+        summaries.push({
+          provider: "ecount",
+          dataset,
+          title: parsed.title ?? ecountDatasetTitle(dataset),
+          status: parsed.status ?? "ready",
+          api: typeof parsed.api === "string" ? parsed.api : null,
+          count: typeof parsed.count === "number" ? parsed.count : null,
+          returnedCount:
+            typeof parsed.returnedCount === "number" ? parsed.returnedCount : null,
+          checkedAt: typeof parsed.checkedAt === "string" ? parsed.checkedAt : null,
+          workspacePath,
+          message: parsed.message ?? "Previous ECOUNT lookup result is available.",
+          diagnostic: parsed.diagnostics?.detail ?? null,
+          source: "existing",
+        });
+      } catch {
+        // Ignore missing or stale lookup files.
+      }
+    }
+    return summaries;
   }
 
-  private async prepareEcountProductLookup(input: {
+  private async queryEcountDataset(
+    connectionInput: Awaited<ReturnType<EcountSettingsServiceLike["getConnectionInput"]>>,
+    query: EcountDatasetQueryInput
+  ): Promise<EcountDatasetQueryResult> {
+    if (!connectionInput) {
+      return unsupportedEcountDatasetResult(query.dataset as EcountDatasetId);
+    }
+    if (this.ecountLookupService.queryDataset) {
+      return this.ecountLookupService.queryDataset(connectionInput, query);
+    }
+    const dataset = normalizeEcountDatasetId(String(query.dataset));
+    if (dataset === "products") {
+      return ecountProductLookupToDatasetResult(
+        await this.ecountLookupService.getBasicProductsList(connectionInput, {
+          limit: query.limit,
+          offset: query.offset,
+        })
+      );
+    }
+    return {
+      ...unsupportedEcountDatasetResult(dataset as EcountDatasetId),
+      checkedAt: this.now(),
+    };
+  }
+
+  private async prepareEcountLookups(input: {
     agent: AgentRecord;
     chatId: string;
     message: string;
+    selectedSkillId: string | null;
+    skillContexts: Array<{ skill: AgentLocalSkillRecord; content: string }>;
   }): Promise<AgentPreparedIntegrationSummary[]> {
-    const existing = await this.readExistingEcountProductLookup(
-      input.agent,
-      input.chatId
+    const messageDatasets = extractEcountDatasets(input.message);
+    const skillDatasets = uniqueEcountDatasets(
+      input.skillContexts.flatMap((context) => extractEcountDatasets(context.content))
     );
-    if (!shouldPrepareEcountProductLookup(input.message)) {
-      return existing ? [existing] : [];
+    const useSkillScope =
+      input.skillContexts.length > 0 &&
+      (messageDatasets.length === 0 || shouldUseSkillScopeForEcountLookup(input.message));
+    const requestedDatasets = uniqueEcountDatasets(
+      useSkillScope
+        ? skillDatasets.length > 0
+          ? skillDatasets
+          : DEFAULT_ECOUNT_SKILL_DATASETS
+        : messageDatasets
+    );
+    const shouldPrepare = shouldPrepareEcountLookup({
+      message: input.message,
+      hasSelectedEcountSkill: Boolean(input.selectedSkillId && input.skillContexts.length > 0),
+      messageDatasets,
+    });
+    const existing = await this.readExistingEcountLookups(
+      input.agent,
+      input.chatId,
+      requestedDatasets
+    );
+    if (!shouldPrepare) {
+      return existing;
     }
 
+    const datasets: EcountDatasetId[] = requestedDatasets.length > 0
+      ? requestedDatasets
+      : shouldPrepareEcountProductLookup(input.message)
+        ? ["products"]
+        : DEFAULT_ECOUNT_SKILL_DATASETS;
     const connectionInput = await this.ecountSettingsService.getConnectionInput();
     if (!connectionInput) {
-      return [
-        {
+      return datasets.map((dataset) => ({
           provider: "ecount",
-          title: "ECOUNT ERP 품목 조회",
+          dataset,
+          title: ecountDatasetTitle(dataset),
           status: "not-configured",
-          api: "InventoryBasic/GetBasicProductsList",
+          api: null,
           count: null,
           returnedCount: null,
           checkedAt: null,
@@ -1299,75 +1623,60 @@ export class RockyChatService {
           message: "ECOUNT connection settings are not configured.",
           diagnostic: null,
           source: "settings",
-        },
-      ];
+        }));
     }
 
-    const result = await this.ecountLookupService.getBasicProductsList(connectionInput);
-    if (!result.ok) {
-      return [
-        {
-          provider: "ecount",
-          title: "ECOUNT ERP 품목 조회",
-          status: "failed",
-          api: result.api,
-          count: result.count,
-          returnedCount: result.returnedCount,
-          checkedAt: result.checkedAt,
-          workspacePath: null,
-          message: result.message,
-          diagnostic: result.diagnostics?.detail ?? null,
-          source: "fresh",
-        },
-      ];
+    const summaries: AgentPreparedIntegrationSummary[] = [];
+    for (const dataset of datasets) {
+      const query: EcountDatasetQueryInput = {
+        ...ecountQueryOptionsForDataset(dataset),
+        dataset,
+      };
+      const result = await this.queryEcountDataset(connectionInput, query);
+      const workspacePath = ecountDatasetLookupWorkspacePath(input.chatId, dataset);
+      const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+      await mkdir(path.dirname(absolutePath), { recursive: true });
+      await writeFile(
+        absolutePath,
+        `${JSON.stringify(
+          {
+            provider: "ecount",
+            dataset: result.dataset,
+            title: result.title,
+            status: result.status,
+            api: result.api,
+            accountLabel: result.accountLabel,
+            zone: result.zone,
+            checkedAt: result.checkedAt,
+            count: result.count,
+            returnedCount: result.returnedCount,
+            records: result.records,
+            message: result.message,
+            diagnostics: result.diagnostics ?? null,
+            filters: query.filters ?? null,
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      summaries.push(ecountResultToPreparedSummary(result, workspacePath, "fresh"));
     }
-
-    const workspacePath = ecountProductLookupWorkspacePath(input.chatId);
-    const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
-    await mkdir(path.dirname(absolutePath), { recursive: true });
-    await writeFile(
-      absolutePath,
-      `${JSON.stringify(
-        {
-          provider: "ecount",
-          api: result.api,
-          accountLabel: result.accountLabel,
-          zone: result.zone,
-          checkedAt: result.checkedAt,
-          count: result.count,
-          returnedCount: result.returnedCount,
-          products: result.products,
-          message: result.message,
-        },
-        null,
-        2
-      )}\n`,
-      "utf8"
-    );
-
-    return [
-      {
-        provider: "ecount",
-        title: "ECOUNT ERP 품목 조회",
-        status: "ready",
-        api: result.api,
-        count: result.count,
-        returnedCount: result.returnedCount,
-        checkedAt: result.checkedAt,
-        workspacePath,
-        message: result.message,
-        diagnostic: null,
-        source: "fresh",
-      },
-    ];
+    return summaries;
   }
 
   private async resolveAgentEcountLookupInstruction(input: {
     agent: AgentRecord;
     chatId: string;
     message: string;
+    selectedSkillId: string | null;
   }): Promise<AgentEcountLookupInstruction | null> {
-    if (!(await this.agentHasEcountSkill(input.agent))) {
+    const skillContexts = await this.listAgentEcountSkillContexts(
+      input.agent,
+      input.selectedSkillId
+    );
+    if (skillContexts.length === 0) {
       return null;
     }
 
@@ -1381,7 +1690,10 @@ export class RockyChatService {
     return {
       configured,
       preparedResults: configured
-        ? await this.prepareEcountProductLookup(input)
+        ? await this.prepareEcountLookups({
+            ...input,
+            skillContexts,
+          })
         : [],
     };
   }
@@ -1493,6 +1805,7 @@ export class RockyChatService {
       agent: input.agent,
       chatId: input.chatId,
       message: input.message,
+      selectedSkillId: input.selectedSkillId,
     });
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({

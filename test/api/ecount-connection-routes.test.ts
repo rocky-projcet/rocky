@@ -227,6 +227,190 @@ test("ECOUNT product route uses stored settings without returning secrets", asyn
   }
 });
 
+test("standard integration routes expose ECOUNT capabilities and query products", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ecount-standard-route-"));
+  const received: Array<{
+    dataset: string;
+    limit?: number | null;
+    offset?: number | null;
+    filters?: Record<string, unknown> | null;
+  }> = [];
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-03T00:00:00.000Z",
+    ecountLookupService: {
+      async getBasicProductsList() {
+        throw new Error("queryDataset should be used by the standard route.");
+      },
+      listCapabilities() {
+        return [
+          {
+            provider: "ecount",
+            dataset: "products",
+            label: "품목",
+            status: "supported",
+            access: "read",
+            api: "InventoryBasic/GetBasicProductsList",
+            filters: ["limit", "offset"],
+            reason: null,
+          },
+          {
+            provider: "ecount",
+            dataset: "sales",
+            label: "판매",
+            status: "unsupported",
+            access: "read",
+            api: null,
+            filters: ["fromDate", "toDate"],
+            reason: "not implemented",
+          },
+        ];
+      },
+      async queryDataset(input, query) {
+        received.push({
+          dataset: String(query.dataset),
+          limit: query.limit,
+          offset: query.offset,
+          filters: query.filters,
+        });
+        return {
+          ok: true,
+          provider: "ecount",
+          dataset: String(query.dataset),
+          title: "ECOUNT ERP 품목 조회",
+          status: "ready",
+          accountLabel: input.accountLabel ?? null,
+          zone: input.zone ?? "CC",
+          checkedAt: "2026-05-03T00:00:00.000Z",
+          api: "InventoryBasic/GetBasicProductsList",
+          count: 1,
+          returnedCount: 1,
+          records: [
+            {
+              code: "P-001",
+              name: "테스트 품목",
+            },
+          ],
+          message: "ok",
+        };
+      },
+    },
+  });
+
+  try {
+    const settingsResponse = await server.inject({
+      method: "PUT",
+      url: "/integrations/ecount/settings",
+      payload: {
+        accountLabel: "본사 이카운트",
+        comCode: "123456",
+        userId: "api-user",
+        apiCertKey: "test-secret-key",
+        zone: "CC",
+      },
+    });
+    assert.equal(settingsResponse.statusCode, 200);
+
+    const capabilitiesResponse = await server.inject({
+      method: "GET",
+      url: "/integrations/ecount/capabilities",
+    });
+    assert.equal(capabilitiesResponse.statusCode, 200);
+    assert.deepEqual(
+      capabilitiesResponse.json().capabilities.map(
+        (capability: { dataset: string; status: string }) => [
+          capability.dataset,
+          capability.status,
+        ]
+      ),
+      [
+        ["products", "supported"],
+        ["sales", "unsupported"],
+      ]
+    );
+
+    const queryResponse = await server.inject({
+      method: "POST",
+      url: "/integrations/ecount/query",
+      payload: {
+        dataset: "products",
+        limit: 25,
+        offset: 10,
+      },
+    });
+    assert.equal(queryResponse.statusCode, 200);
+    assert.equal(queryResponse.json().provider, "ecount");
+    assert.equal(queryResponse.json().dataset, "products");
+    assert.equal(queryResponse.json().records[0]?.code, "P-001");
+    assert.deepEqual(received, [
+      { dataset: "products", limit: 25, offset: 10, filters: null },
+    ]);
+    assert.equal(JSON.stringify(queryResponse.json()).includes("test-secret-key"), false);
+
+    const inventoryResponse = await server.inject({
+      method: "GET",
+      url: "/integrations/ecount/datasets/inventory?baseDate=2026-05-01&warehouseCode=100&productCode=P-001",
+    });
+    assert.equal(inventoryResponse.statusCode, 200);
+    assert.equal(inventoryResponse.json().dataset, "inventory");
+    assert.deepEqual(received[1], {
+      dataset: "inventory",
+      limit: null,
+      offset: null,
+      filters: {
+        baseDate: "2026-05-01",
+        warehouseCode: "100",
+        productCode: "P-001",
+      },
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test("standard integration route returns structured unsupported ECOUNT dataset results", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ecount-unsupported-route-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-03T00:00:00.000Z",
+  });
+
+  try {
+    const settingsResponse = await server.inject({
+      method: "PUT",
+      url: "/integrations/ecount/settings",
+      payload: {
+        accountLabel: "본사 이카운트",
+        comCode: "123456",
+        userId: "api-user",
+        apiCertKey: "test-secret-key",
+        zone: "CC",
+      },
+    });
+    assert.equal(settingsResponse.statusCode, 200);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/integrations/ecount/query",
+      payload: {
+        dataset: "sales",
+        filters: {
+          period: "recent-30-days",
+        },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().provider, "ecount");
+    assert.equal(response.json().dataset, "sales");
+    assert.equal(response.json().status, "unsupported");
+    assert.equal(response.json().records.length, 0);
+    assert.match(response.json().diagnostics.detail, /sales lookup/u);
+  } finally {
+    await server.close();
+  }
+});
+
 test("EcountConnectionService resolves zone and logs in", async () => {
   const calls: Array<{ url: string; body: unknown }> = [];
   const service = new EcountConnectionService({
@@ -358,6 +542,271 @@ test("EcountConnectionService reads, offsets, and normalizes ECOUNT product rows
       "https://sboapiCC.ecount.com/OAPI/V2/InventoryBasic/GetBasicProductsList?session_Id=session-secret",
     ]
   );
+  assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
+  assert.equal(JSON.stringify(result).includes("session-secret"), false);
+});
+
+test("EcountConnectionService queries ECOUNT inventory balance datasets", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const service = new EcountConnectionService({
+    now: () => "2026-05-03T00:00:00.000Z",
+    fetchImpl: async (url, init) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+      if (String(url).includes("/OAPILogin")) {
+        return new Response(
+          JSON.stringify({ Data: { Code: "00", Datas: { SESSION_ID: "session-secret" } } }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          Data: {
+            Code: "00",
+            Output: [
+              {
+                PROD_CD: "P-001",
+                PROD_DES: "테스트 품목",
+                WH_CD: "100",
+                WH_DES: "본사창고",
+                BAL_QTY: "7",
+              },
+              {
+                PROD_CD: "P-001",
+                PROD_DES: "테스트 품목",
+                WH_CD: "200",
+                WH_DES: "지점창고",
+                BAL_QTY: "3",
+              },
+            ],
+          },
+        }),
+        { status: 200 }
+      );
+    },
+  });
+  assert.deepEqual(
+    service
+      .listCapabilities()
+      .filter((capability) =>
+        ["products", "inventory", "warehouseInventory", "purchases"].includes(capability.dataset)
+      )
+      .map((capability) => [capability.dataset, capability.status, capability.api]),
+    [
+      ["products", "supported", "InventoryBasic/GetBasicProductsList"],
+      [
+        "inventory",
+        "supported",
+        "InventoryBalance/GetListInventoryBalanceStatusByLocation",
+      ],
+      [
+        "warehouseInventory",
+        "supported",
+        "InventoryBalance/GetListInventoryBalanceStatusByLocation",
+      ],
+      ["purchases", "supported", "Purchases/GetPurchasesOrderList"],
+    ]
+  );
+
+  const result = await service.queryDataset(
+    {
+      accountLabel: "본사 이카운트",
+      comCode: "123456",
+      userId: "api-user",
+      apiCertKey: "test-secret-key",
+      zone: "CC",
+    },
+    {
+      dataset: "inventory",
+      filters: {
+        baseDate: "2026-05-01",
+        productCode: "P-001",
+        warehouseCode: "100",
+      },
+    }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.dataset, "inventory");
+  assert.equal(result.api, "InventoryBalance/GetListInventoryBalanceStatusByLocation");
+  assert.equal(result.count, 1);
+  assert.equal(result.returnedCount, 1);
+  assert.deepEqual(result.records[0], {
+    productCode: "P-001",
+    productName: "테스트 품목",
+    balanceQuantity: 10,
+    warehouses: [
+      {
+        productCode: "P-001",
+        productName: "테스트 품목",
+        warehouseCode: "100",
+        warehouseName: "본사창고",
+        balanceQuantity: 7,
+        raw: {
+          PROD_CD: "P-001",
+          PROD_DES: "테스트 품목",
+          WH_CD: "100",
+          WH_DES: "본사창고",
+          BAL_QTY: "7",
+        },
+      },
+      {
+        productCode: "P-001",
+        productName: "테스트 품목",
+        warehouseCode: "200",
+        warehouseName: "지점창고",
+        balanceQuantity: 3,
+        raw: {
+          PROD_CD: "P-001",
+          PROD_DES: "테스트 품목",
+          WH_CD: "200",
+          WH_DES: "지점창고",
+          BAL_QTY: "3",
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    [
+      "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
+      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBalance/GetListInventoryBalanceStatusByLocation?SESSION_ID=session-secret",
+    ]
+  );
+  assert.deepEqual(calls[1]?.body, {
+    SESSION_ID: "session-secret",
+    BASE_DATE: "20260501",
+    COM_CODE: "123456",
+    USER_ID: "api-user",
+    ZONE: "CC",
+    API_CERT_KEY: "test-secret-key",
+    LAN_TYPE: "ko-KR",
+    PROD_CD: "P-001",
+    WH_CD: "100",
+  });
+  assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
+  assert.equal(JSON.stringify(result).includes("session-secret"), false);
+});
+
+test("EcountConnectionService queries ECOUNT purchase order datasets", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const service = new EcountConnectionService({
+    now: () => "2026-05-31T00:00:00.000Z",
+    fetchImpl: async (url, init) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+      if (String(url).includes("/OAPILogin")) {
+        return new Response(
+          JSON.stringify({ Data: { Code: "00", Datas: { SESSION_ID: "session-secret" } } }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          Data: {
+            Code: "00",
+            Output: [
+              {
+                IO_NO: "PO-001",
+                IO_DATE: "20260501",
+                CUST: "C-001",
+                CUST_DES: "테스트 거래처",
+                PROD_CD: "P-001",
+                PROD_DES: "첫 번째 품목",
+                QTY: "2",
+                SUPPLY_AMT: "1,200",
+              },
+              {
+                IO_NO: "PO-002",
+                IO_DATE: "20260502",
+                CUST: "C-001",
+                CUST_DES: "테스트 거래처",
+                PROD_CD: "P-002",
+                PROD_DES: "두 번째 품목",
+                QTY: "3",
+                TOTAL_AMT: "2,400",
+                STATUS: "open",
+              },
+            ],
+          },
+        }),
+        { status: 200 }
+      );
+    },
+  });
+
+  const result = await service.queryDataset(
+    {
+      accountLabel: "본사 이카운트",
+      comCode: "123456",
+      userId: "api-user",
+      apiCertKey: "test-secret-key",
+      zone: "CC",
+    },
+    {
+      dataset: "purchases",
+      limit: 1,
+      offset: 1,
+      filters: {
+        fromDate: "2026-05-01",
+        toDate: "2026-05-31",
+        customerCode: "C-001",
+        productCode: "P-002",
+      },
+    }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.dataset, "purchases");
+  assert.equal(result.api, "Purchases/GetPurchasesOrderList");
+  assert.equal(result.count, 2);
+  assert.equal(result.returnedCount, 1);
+  assert.deepEqual(result.records[0], {
+    orderNo: "PO-002",
+    orderDate: "20260502",
+    customerCode: "C-001",
+    customerName: "테스트 거래처",
+    productCode: "P-002",
+    productName: "두 번째 품목",
+    quantity: 3,
+    supplyAmount: null,
+    totalAmount: 2400,
+    status: "open",
+    raw: {
+      IO_NO: "PO-002",
+      IO_DATE: "20260502",
+      CUST: "C-001",
+      CUST_DES: "테스트 거래처",
+      PROD_CD: "P-002",
+      PROD_DES: "두 번째 품목",
+      QTY: "3",
+      TOTAL_AMT: "2,400",
+      STATUS: "open",
+    },
+  });
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    [
+      "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
+      "https://sboapiCC.ecount.com/OAPI/V2/Purchases/GetPurchasesOrderList?SESSION_ID=session-secret",
+    ]
+  );
+  assert.deepEqual(calls[1]?.body, {
+    SESSION_ID: "session-secret",
+    START_DATE: "20260501",
+    END_DATE: "20260531",
+    COM_CODE: "123456",
+    USER_ID: "api-user",
+    ZONE: "CC",
+    API_CERT_KEY: "test-secret-key",
+    LAN_TYPE: "ko-KR",
+    CUST: "C-001",
+    PROD_CD: "P-002",
+  });
   assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
   assert.equal(JSON.stringify(result).includes("session-secret"), false);
 });

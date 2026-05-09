@@ -502,14 +502,46 @@ const DATA_TEMPLATE: SkillTemplate = {
           label: "ERP 데이터 범위",
           allowCustom: true,
           options: [
-            { id: "items", label: "품목" },
-            { id: "customers", label: "거래처" },
-            { id: "inventory", label: "재고현황" },
-            { id: "warehouse-inventory", label: "창고별 재고" },
-            { id: "orders", label: "주문서" },
-            { id: "sales", label: "판매" },
-            { id: "purchase", label: "구매" },
-            { id: "accounting", label: "매출·매입" },
+            { id: "items", label: "품목", description: "현재 백엔드 조회 지원" },
+            {
+              id: "customers",
+              label: "거래처",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+            {
+              id: "inventory",
+              label: "재고현황",
+              description: "현재 백엔드 조회 지원",
+            },
+            {
+              id: "warehouse-inventory",
+              label: "창고별 재고",
+              description: "현재 백엔드 조회 지원",
+            },
+            {
+              id: "orders",
+              label: "주문서",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+            {
+              id: "sales",
+              label: "판매",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+            {
+              id: "purchase",
+              label: "구매",
+              description: "현재 백엔드 조회 지원",
+            },
+            {
+              id: "accounting",
+              label: "매출·매입",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
           ],
         },
         {
@@ -529,7 +561,7 @@ const DATA_TEMPLATE: SkillTemplate = {
             {
               id: "read-only",
               label: "조회와 분석만 허용",
-              description: "품목·거래처·재고·판매 데이터를 읽어 분석하는 작업만 진행합니다.",
+              description: "지원되는 ECOUNT 조회 데이터만 읽어 분석하는 작업을 진행합니다.",
             },
             {
               id: "write-planned",

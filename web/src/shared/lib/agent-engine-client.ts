@@ -147,6 +147,57 @@ export interface EcountConnectionSettingsRecord {
   updatedAt: string | null;
 }
 
+export interface IntegrationCapabilityRecord {
+  provider: string;
+  dataset: string;
+  label: string;
+  status: "supported" | "unsupported";
+  access: "read";
+  api: string | null;
+  filters: string[];
+  reason: string | null;
+}
+
+export interface IntegrationCapabilitiesRecord {
+  provider: string;
+  capabilities: IntegrationCapabilityRecord[];
+}
+
+export interface IntegrationQueryInput {
+  dataset?: string;
+  datasets?: string[];
+  limit?: number | null;
+  offset?: number | null;
+  filters?: Record<string, unknown> | null;
+}
+
+export interface IntegrationQueryResultRecord {
+  ok: boolean;
+  provider: string;
+  dataset: string;
+  title: string;
+  status: "ready" | "failed" | "unsupported";
+  accountLabel: string | null;
+  zone: string | null;
+  checkedAt: string;
+  api: string | null;
+  count: number;
+  returnedCount: number;
+  records: Array<Record<string, unknown>>;
+  message: string;
+  diagnostics?: {
+    stage: string;
+    detail: string;
+  };
+}
+
+export interface IntegrationQueryBatchResultRecord {
+  provider: string;
+  status: "ready" | "partial";
+  checkedAt: string;
+  results: IntegrationQueryResultRecord[];
+}
+
 export interface AgentCreateInput {
   name: string;
   id?: string | null;
@@ -1667,6 +1718,25 @@ export class AgentEngineClient {
       "/integrations/ecount/settings",
       {
         method: "DELETE",
+      }
+    );
+  }
+
+  getIntegrationCapabilities(provider: string): Promise<IntegrationCapabilitiesRecord> {
+    return this.request<IntegrationCapabilitiesRecord>(
+      `/integrations/${encodeURIComponent(provider)}/capabilities`
+    );
+  }
+
+  queryIntegration(
+    provider: string,
+    input: IntegrationQueryInput
+  ): Promise<IntegrationQueryResultRecord | IntegrationQueryBatchResultRecord> {
+    return this.request<IntegrationQueryResultRecord | IntegrationQueryBatchResultRecord>(
+      `/integrations/${encodeURIComponent(provider)}/query`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       }
     );
   }

@@ -33,9 +33,9 @@ function parseEnv(text) {
   return env;
 }
 
-function requireEnv(env, key) {
-  const value = env[key]?.trim();
-  if (!value) throw new Error(`${key} is missing`);
+function requireFirstEnv(env, keys, label) {
+  const value = firstEnv(env, keys);
+  if (!value) throw new Error(`${label ?? keys.join("/")} is missing`);
   return value;
 }
 
@@ -102,10 +102,14 @@ async function loadPlaywright() {
 async function discoverIssuerId(env) {
   const playwright = await loadPlaywright();
   const { chromium } = playwright;
-  const comCode = requireEnv(env, "COM_CODE");
-  const userId = requireEnv(env, "USER_ID");
-  const password = requireEnv(env, "PW");
-  const apiKey = requireEnv(env, "API_CERT_KEY");
+  const comCode = requireFirstEnv(env, ["COM_CODE", "ECOUNT_ERP_COM"], "company code");
+  const userId = requireFirstEnv(env, ["USER_ID", "ECOUNT_ERP_ID"], "web login ID");
+  const password = requireFirstEnv(env, ["PW", "ECOUNT_ERP_PW"], "web login password");
+  const apiKey = requireFirstEnv(
+    env,
+    ["API_CERT_KEY", "ECOUNT_API_CERT_KEY", "ECOUNT_OAPI_CERT_KEY", "ECOUNT_ERP_API_CERT_KEY"],
+    "API cert key"
+  );
 
   const browser = await chromium.launch({ channel: "msedge", headless: true });
   try {
@@ -155,9 +159,20 @@ async function discoverIssuerId(env) {
 
 const args = parseArgs(process.argv.slice(2));
 const env = parseEnv(await readFile(args.envPath, "utf8"));
-const comCode = requireEnv(env, "COM_CODE");
-const apiCertKey = requireEnv(env, "API_CERT_KEY");
-let apiUserId = firstEnv(env, ["API_USER_ID", "OAPI_USER_ID", "USER_ID"]);
+const comCode = requireFirstEnv(env, ["COM_CODE", "ECOUNT_ERP_COM"], "company code");
+const apiCertKey = requireFirstEnv(
+  env,
+  ["API_CERT_KEY", "ECOUNT_API_CERT_KEY", "ECOUNT_OAPI_CERT_KEY", "ECOUNT_ERP_API_CERT_KEY"],
+  "API cert key"
+);
+let apiUserId = firstEnv(env, [
+  "API_USER_ID",
+  "OAPI_USER_ID",
+  "ECOUNT_API_USER_ID",
+  "ECOUNT_OAPI_USER_ID",
+  "USER_ID",
+  "ECOUNT_ERP_ID",
+]);
 let issuerDiscovered = false;
 
 if (args.discoverIssuer) {

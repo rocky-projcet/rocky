@@ -42,6 +42,30 @@ test("ECOUNT skill settings do not include connection-test credential fields", (
     "ecountWritePolicy",
   ]);
   assert.equal(
+    ecountStep?.fields
+      .find((field) => field.id === "ecountDataScope")
+      ?.options?.find((option) => option.id === "items")?.disabled,
+    undefined
+  );
+  assert.equal(
+    ecountStep?.fields
+      .find((field) => field.id === "ecountDataScope")
+      ?.options?.find((option) => option.id === "inventory")?.disabled,
+    undefined
+  );
+  assert.equal(
+    ecountStep?.fields
+      .find((field) => field.id === "ecountDataScope")
+      ?.options?.find((option) => option.id === "purchase")?.disabled,
+    undefined
+  );
+  assert.equal(
+    ecountStep?.fields
+      .find((field) => field.id === "ecountDataScope")
+      ?.options?.find((option) => option.id === "sales")?.disabled,
+    true
+  );
+  assert.equal(
     ecountStep?.fields.some((field) => field.kind === "erp-integration-select"),
     false
   );

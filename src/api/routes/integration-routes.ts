@@ -6,6 +6,10 @@ import {
   type EcountConnectionTester,
   type EcountConnectionTestInput,
   type EcountConnectionTestResult,
+  type EcountDatasetQueryInput,
+  type EcountDatasetQueryResult,
+  listEcountIntegrationCapabilities,
+  normalizeEcountDatasetId,
 } from "../../integrations/ecount-connection-service.js";
 import {
   EcountSettingsService,
@@ -27,8 +31,25 @@ function badRequest(message: string): Error & { statusCode: number } {
   });
 }
 
+function notFound(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), {
+    statusCode: 404,
+  });
+}
+
 function sendJson(reply: FastifyReply, statusCode: number, body: unknown): void {
   reply.status(statusCode).type("application/json").send(body);
+}
+
+function requireIntegrationProvider(value: unknown): "ecount" {
+  if (typeof value !== "string" || !value.trim()) {
+    throw badRequest("Integration provider is required.");
+  }
+  const provider = value.trim().toLowerCase();
+  if (provider !== "ecount") {
+    throw notFound(`Unsupported integration provider: ${value}`);
+  }
+  return "ecount";
 }
 
 function requiredString(input: Record<string, unknown>, key: string): string {
@@ -157,6 +178,165 @@ function parseEcountProductsLookupOptions(input: unknown): {
   };
 }
 
+function parseObjectBody(input: unknown, message: string): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw badRequest(message);
+  }
+  return input as Record<string, unknown>;
+}
+
+function parseFilterRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw badRequest("Integration query filters must be a JSON object.");
+  }
+  return value as Record<string, unknown>;
+}
+
+const INTEGRATION_FILTER_KEYS = [
+  "baseDate",
+  "date",
+  "fromDate",
+  "toDate",
+  "warehouseCode",
+  "productCode",
+  "customerCode",
+  "period",
+];
+
+function parseIntegrationFilters(record: Record<string, unknown>): Record<string, unknown> | null {
+  const filters = parseFilterRecord(record.filters) ?? {};
+  for (const key of INTEGRATION_FILTER_KEYS) {
+    const value = record[key];
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+    filters[key] = value;
+  }
+  return Object.keys(filters).length > 0 ? filters : null;
+}
+
+function parseDatasetId(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw badRequest("Integration query requires dataset.");
+  }
+  return normalizeEcountDatasetId(value.trim());
+}
+
+function parseDatasetIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const datasets = value.map((entry) => parseDatasetId(entry));
+  return [...new Set(datasets)];
+}
+
+function parseIntegrationQueryBody(body: unknown): {
+  datasets: string[];
+  options: Omit<EcountDatasetQueryInput, "dataset">;
+} {
+  const record = parseObjectBody(
+    body,
+    "Integration query requests require a JSON object body."
+  );
+  const datasets = parseDatasetIds(record.datasets);
+  if (datasets.length === 0) {
+    datasets.push(parseDatasetId(record.dataset));
+  }
+
+  return {
+    datasets,
+    options: {
+      limit: parsePositiveLimit(record.limit),
+      offset: parseNonNegativeOffset(record.offset),
+      filters: parseIntegrationFilters(record),
+    },
+  };
+}
+
+function parseIntegrationDatasetQuery(
+  dataset: unknown,
+  query: unknown
+): EcountDatasetQueryInput {
+  const record =
+    query && typeof query === "object" && !Array.isArray(query)
+      ? query as Record<string, unknown>
+      : {};
+  return {
+    dataset: parseDatasetId(dataset),
+    limit: parsePositiveLimit(record.limit),
+    offset: parseNonNegativeOffset(record.offset),
+    filters: parseIntegrationFilters(record),
+  };
+}
+
+function unsupportedEcountQueryResult(
+  query: EcountDatasetQueryInput,
+  now?: () => string
+): EcountDatasetQueryResult {
+  return {
+    ok: false,
+    provider: "ecount",
+    dataset: normalizeEcountDatasetId(String(query.dataset)),
+    title: `ECOUNT ERP ${query.dataset} 조회`,
+    status: "unsupported",
+    accountLabel: null,
+    zone: null,
+    checkedAt: now?.() ?? new Date().toISOString(),
+    api: null,
+    count: 0,
+    returnedCount: 0,
+    records: [],
+    message: `ECOUNT ${query.dataset} lookup is not supported by the current read-only backend.`,
+    diagnostics: {
+      stage: "capability",
+      detail: "This ECOUNT lookup service does not implement the standard queryDataset method.",
+    },
+  };
+}
+
+async function queryEcountDataset(
+  service: EcountLookupServiceLike,
+  input: EcountConnectionTestInput,
+  query: EcountDatasetQueryInput,
+  now?: () => string
+): Promise<EcountDatasetQueryResult> {
+  if (service.queryDataset) {
+    return service.queryDataset(input, query);
+  }
+  if (normalizeEcountDatasetId(String(query.dataset)) === "products") {
+    const result = await service.getBasicProductsList(input, {
+      limit: query.limit,
+      offset: query.offset,
+    });
+    return {
+      ok: result.ok,
+      provider: "ecount",
+      dataset: "products",
+      title: "ECOUNT ERP 품목 조회",
+      status: result.ok ? "ready" : "failed",
+      accountLabel: result.accountLabel,
+      zone: result.zone,
+      checkedAt: result.checkedAt,
+      api: result.api,
+      count: result.count,
+      returnedCount: result.returnedCount,
+      records: result.products.map((product) => ({
+        code: product.code,
+        name: product.name,
+        spec: product.spec,
+        unit: product.unit,
+        raw: product.raw,
+      })),
+      message: result.message,
+      diagnostics: result.diagnostics,
+    };
+  }
+  return unsupportedEcountQueryResult(query, now);
+}
+
 export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOptions> = async (
   server,
   options
@@ -180,20 +360,24 @@ export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOpti
       now: options.now,
     });
 
-  server.get("/integrations/ecount/settings", async (_request, reply) => {
+  server.get("/integrations/:provider/settings", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
     sendJson(reply, 200, await ecountSettingsService.getPublicSettings());
   });
 
-  server.put("/integrations/ecount/settings", async (request, reply) => {
+  server.put("/integrations/:provider/settings", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
     const input = parseEcountConnectionSettingsBody(request.body);
     sendJson(reply, 200, await ecountSettingsService.saveSettings(input));
   });
 
-  server.delete("/integrations/ecount/settings", async (_request, reply) => {
+  server.delete("/integrations/:provider/settings", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
     sendJson(reply, 200, await ecountSettingsService.deleteSettings());
   });
 
-  server.post("/integrations/ecount/test", async (request, reply) => {
+  server.post("/integrations/:provider/test", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
     const inlineInput = parseOptionalEcountConnectionTestBody(request.body);
     const storedInput = inlineInput
       ? null
@@ -220,6 +404,71 @@ export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOpti
       }
     }
     sendJson(reply, 200, sanitizeEcountConnectionResult(result));
+  });
+
+  server.get("/integrations/:provider/capabilities", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
+    sendJson(reply, 200, {
+      provider: "ecount",
+      capabilities: ecountLookupService.listCapabilities
+        ? ecountLookupService.listCapabilities()
+        : listEcountIntegrationCapabilities(),
+    });
+  });
+
+  server.post("/integrations/:provider/query", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
+    const input = await ecountSettingsService.getConnectionInput();
+    if (!input) {
+      throw badRequest("ECOUNT connection settings are not configured.");
+    }
+    const query = parseIntegrationQueryBody(request.body);
+    const results = await Promise.all(
+      query.datasets.map((dataset) =>
+        queryEcountDataset(
+          ecountLookupService,
+          input,
+          {
+            ...query.options,
+            dataset,
+          },
+          options.now
+        )
+      )
+    );
+
+    if (results.length === 1) {
+      sendJson(reply, 200, results[0]);
+      return;
+    }
+
+    sendJson(reply, 200, {
+      provider: "ecount",
+      status: results.some((result) => result.status === "failed")
+        ? "partial"
+        : results.some((result) => result.status === "unsupported")
+          ? "partial"
+          : "ready",
+      checkedAt: options.now?.() ?? new Date().toISOString(),
+      results,
+    });
+  });
+
+  server.get("/integrations/:provider/datasets/:dataset", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
+    const input = await ecountSettingsService.getConnectionInput();
+    if (!input) {
+      throw badRequest("ECOUNT connection settings are not configured.");
+    }
+    const query = parseIntegrationDatasetQuery(
+      (request.params as { dataset?: string }).dataset,
+      request.query
+    );
+    sendJson(
+      reply,
+      200,
+      await queryEcountDataset(ecountLookupService, input, query, options.now)
+    );
   });
 
   server.post("/integrations/ecount/products", async (request, reply) => {

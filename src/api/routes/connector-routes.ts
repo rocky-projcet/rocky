@@ -38,7 +38,34 @@ export const registerConnectorRoutes: FastifyPluginAsync<
   server.post("/connectors/:provider/login", async (request, reply) => {
     const { provider } = request.params as { provider: string };
     const parsed = parseProvider(provider);
-    sendJson(reply, 202, await options.connectorService.startLogin(parsed));
+    sendJson(
+      reply,
+      202,
+      await options.connectorService.startLogin(parsed, {
+        redirectBaseUrl: resolveRequestBaseUrl(request),
+      }),
+    );
+  });
+
+  server.get("/connectors/:provider/oauth/callback", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    const query = request.query as {
+      code?: string;
+      state?: string;
+      error?: string;
+      error_description?: string;
+    };
+    const result = await options.connectorService.handleOAuthCallback(parsed, {
+      code: query.code ?? null,
+      state: query.state ?? null,
+      error: query.error ?? null,
+      errorDescription: query.error_description ?? null,
+    });
+    reply
+      .code(result.ok ? 200 : 400)
+      .type("text/html; charset=utf-8")
+      .send(renderOAuthCallbackHtml(result.title, result.message));
   });
 
   server.post("/connectors/:provider/cancel", async (request, reply) => {
@@ -53,3 +80,53 @@ export const registerConnectorRoutes: FastifyPluginAsync<
     sendJson(reply, 200, await options.connectorService.disconnect(parsed));
   });
 };
+
+function resolveRequestBaseUrl(request: {
+  headers: Record<string, string | string[] | undefined>;
+  protocol?: string;
+}): string | null {
+  const forwardedProto = firstHeader(request.headers["x-forwarded-proto"]);
+  const forwardedHost = firstHeader(request.headers["x-forwarded-host"]);
+  const host = forwardedHost ?? firstHeader(request.headers.host);
+  if (!host) return null;
+  const protocol = forwardedProto ?? request.protocol ?? "http";
+  return `${protocol}://${host}`;
+}
+
+function firstHeader(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function renderOAuthCallbackHtml(title: string, message: string): string {
+  return `<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 40px; color: #111827; background: #f8fafc; }
+      main { max-width: 520px; margin: 12vh auto 0; border: 1px solid #e5e7eb; border-radius: 16px; background: #fff; padding: 28px; }
+      h1 { margin: 0 0 12px; font-size: 20px; }
+      p { margin: 0; line-height: 1.6; color: #4b5563; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+  </body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}

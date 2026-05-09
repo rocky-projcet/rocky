@@ -460,6 +460,7 @@ export type ConnectorProvider =
   | "medium";
 
 export type ConnectorStatus = "idle" | "connecting" | "connected" | "failed";
+export type ConnectorLoginMode = "oauth" | "external-browser" | "managed-browser";
 
 export interface ConnectorState {
   provider: ConnectorProvider;
@@ -467,6 +468,8 @@ export interface ConnectorState {
   message: string;
   accountLabel: string | null;
   connectedAt: string | null;
+  loginUrl: string | null;
+  loginMode: ConnectorLoginMode | null;
   lastError: string | null;
   updatedAt: string;
 }

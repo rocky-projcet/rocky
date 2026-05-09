@@ -42,7 +42,11 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
-import type { NativeFileOpener, NativeFolderOpener } from "./http/native-open.js";
+import type {
+  NativeFileOpener,
+  NativeFolderOpener,
+  NativeUrlOpener,
+} from "./http/native-open.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -258,4 +262,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
+  nativeUrlOpener?: NativeUrlOpener;
+  connectorBaseEnv?: NodeJS.ProcessEnv;
+  connectorFetch?: typeof fetch;
 }

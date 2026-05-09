@@ -18,12 +18,35 @@ export type ConnectorStatus =
   | "connected"
   | "failed";
 
+export type ConnectorLoginMode = "oauth" | "external-browser" | "managed-browser";
+
+export interface ConnectorStartLoginInput {
+  redirectBaseUrl?: string | null;
+}
+
+export interface ConnectorOAuthCallbackInput {
+  code?: string | null;
+  state?: string | null;
+  error?: string | null;
+  errorDescription?: string | null;
+}
+
+export interface ConnectorOAuthCallbackResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  title: string;
+  message: string;
+  state: ConnectorState;
+}
+
 export interface ConnectorState {
   provider: ConnectorProvider;
   status: ConnectorStatus;
   message: string;
   accountLabel: string | null;
   connectedAt: string | null;
+  loginUrl: string | null;
+  loginMode: ConnectorLoginMode | null;
   lastError: string | null;
   updatedAt: string;
 }
@@ -39,7 +62,14 @@ export interface ConnectorDiagnosticsRecord {
 
 export interface ConnectorServiceLike {
   getState(provider: ConnectorProvider): Promise<ConnectorState>;
-  startLogin(provider: ConnectorProvider): Promise<ConnectorState>;
+  startLogin(
+    provider: ConnectorProvider,
+    input?: ConnectorStartLoginInput,
+  ): Promise<ConnectorState>;
+  handleOAuthCallback(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthCallbackInput,
+  ): Promise<ConnectorOAuthCallbackResult>;
   cancelLogin(provider: ConnectorProvider): Promise<ConnectorState>;
   disconnect(provider: ConnectorProvider): Promise<ConnectorState>;
   getDiagnostics(): Promise<ConnectorDiagnosticsRecord>;

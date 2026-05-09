@@ -2,12 +2,19 @@ import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   AlertCircle,
   ArrowRight,
+  BookOpenText,
+  Boxes,
+  BriefcaseBusiness,
+  Building2,
   CheckCircle2,
   Database,
   ExternalLink,
+  Factory,
   FileSpreadsheet,
   Hourglass,
   KeyRound,
+  Landmark,
+  type LucideIcon,
   Loader2,
   Plug,
   RadioTower,
@@ -18,6 +25,19 @@ import {
   Unplug,
   X,
 } from "lucide-react";
+import {
+  siFacebook,
+  siInstagram,
+  siKakao,
+  siMedium,
+  siNaver,
+  siThreads,
+  siTiktok,
+  siTistory,
+  siX,
+  siYoutube,
+  type SimpleIcon,
+} from "simple-icons";
 
 import { ConnectorDialog } from "@/domains/connector/connector-dialog";
 import { useConnectorStateQuery } from "@/domains/connector/hooks";
@@ -49,6 +69,9 @@ interface ProviderEntry {
   provider: ConnectorProvider;
   label: string;
   description: string;
+  brandIcon?: SimpleIcon;
+  fallbackIcon?: LucideIcon;
+  iconColor?: string;
 }
 
 type ErpStatus = "available" | "planned" | "manual" | "custom-api";
@@ -59,6 +82,8 @@ interface ErpProviderEntry {
   description: string;
   auth: string;
   status: ErpStatus;
+  icon: LucideIcon;
+  iconColor: string;
 }
 
 const ERP_PROVIDERS: ErpProviderEntry[] = [
@@ -68,6 +93,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "이카운트 테스트 API 키로 연결을 확인하고 조회 연동 준비 상태를 관리합니다.",
     auth: "회사코드, 키 발급자 ID, 테스트 API 인증키",
     status: "available",
+    icon: Database,
+    iconColor: "#059669",
   },
   {
     id: "douzone-wehago",
@@ -75,6 +102,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "회계·세무·인사 데이터 연동 후보입니다.",
     auth: "API 앱, 토큰, 회사 권한 설정",
     status: "planned",
+    icon: Landmark,
+    iconColor: "#4f46e5",
   },
   {
     id: "sap",
@@ -82,6 +111,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "대기업·제조 운영 데이터 연동 후보입니다.",
     auth: "OAuth, API token, tenant 설정",
     status: "planned",
+    icon: Factory,
+    iconColor: "#0284c7",
   },
   {
     id: "netsuite",
@@ -89,6 +120,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "글로벌 재무·재고·주문 데이터 연동 후보입니다.",
     auth: "Token-based auth, account realm",
     status: "planned",
+    icon: Boxes,
+    iconColor: "#d97706",
   },
   {
     id: "dynamics",
@@ -96,6 +129,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "CRM·ERP 운영 데이터를 연결하는 후보입니다.",
     auth: "Microsoft OAuth, tenant, environment",
     status: "planned",
+    icon: BriefcaseBusiness,
+    iconColor: "#2563eb",
   },
   {
     id: "odoo",
@@ -103,6 +138,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "오픈소스 ERP의 판매·재고·회계 데이터를 연결합니다.",
     auth: "URL, DB, 사용자, API key",
     status: "planned",
+    icon: Building2,
+    iconColor: "#9333ea",
   },
   {
     id: "custom-api",
@@ -110,6 +147,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "사내 ERP나 커스텀 백오피스를 HTTP API로 연결합니다.",
     auth: "Base URL, headers, token",
     status: "custom-api",
+    icon: ServerCog,
+    iconColor: "#7c3aed",
   },
   {
     id: "file-based",
@@ -117,6 +156,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
     description: "API가 없거나 권한 준비 전인 ERP 데이터를 파일로 가져옵니다.",
     auth: "업로드 파일, 컬럼 매핑",
     status: "manual",
+    icon: FileSpreadsheet,
+    iconColor: "#16a34a",
   },
 ];
 
@@ -125,36 +166,50 @@ const SNS_PROVIDERS: ProviderEntry[] = [
     provider: "threads",
     label: "Threads",
     description: "게시글 초안 발행과 계정 세션 확인에 사용합니다.",
+    brandIcon: siThreads,
+    iconColor: "#64748b",
   },
   {
     provider: "instagram",
     label: "Instagram",
     description: "피드·릴스 초안 발행 전 계정 세션을 준비합니다.",
+    brandIcon: siInstagram,
+    iconColor: "#e4405f",
   },
   {
     provider: "x",
     label: "X (트위터)",
     description: "짧은 글 발행과 캠페인 초안 확인에 사용합니다.",
+    brandIcon: siX,
+    iconColor: "#64748b",
   },
   {
     provider: "facebook",
     label: "Facebook",
     description: "페이지·게시물 작업용 로그인 상태를 저장합니다.",
+    brandIcon: siFacebook,
+    iconColor: "#1877f2",
   },
   {
     provider: "linkedin",
     label: "LinkedIn",
     description: "회사·개인 계정 기반 비즈니스 글 발행에 사용합니다.",
+    fallbackIcon: BriefcaseBusiness,
+    iconColor: "#0a66c2",
   },
   {
     provider: "tiktok",
     label: "TikTok",
     description: "숏폼 콘텐츠 작업용 세션을 연결합니다.",
+    brandIcon: siTiktok,
+    iconColor: "#ff0050",
   },
   {
     provider: "youtube",
     label: "YouTube",
     description: "YouTube Studio 작업과 쇼츠 업로드 준비에 사용합니다.",
+    brandIcon: siYoutube,
+    iconColor: "#ff0000",
   },
 ];
 
@@ -163,28 +218,48 @@ const CONTENT_PROVIDERS: ProviderEntry[] = [
     provider: "naver-blog",
     label: "네이버 블로그",
     description: "블로그 글 초안 발행과 계정 확인에 사용합니다.",
+    brandIcon: siNaver,
+    iconColor: "#03c75a",
   },
   {
     provider: "tistory",
     label: "Tistory",
     description: "티스토리 글 발행용 로그인 세션을 준비합니다.",
+    brandIcon: siTistory,
+    iconColor: "#f97316",
   },
   {
     provider: "brunch",
     label: "브런치",
     description: "브런치 원고 발행 전 계정을 연결합니다.",
+    fallbackIcon: BookOpenText,
+    iconColor: "#059669",
   },
   {
     provider: "kakao-channel",
     label: "카카오 채널",
     description: "채널 포스트와 메시지 작업용 계정을 연결합니다.",
+    brandIcon: siKakao,
+    iconColor: "#b45309",
   },
   {
     provider: "medium",
     label: "Medium",
     description: "영문 콘텐츠 발행용 세션을 저장합니다.",
+    brandIcon: siMedium,
+    iconColor: "#334155",
   },
 ];
+
+function iconColorStyle(color: string): { color: string } {
+  return {
+    color,
+  };
+}
+
+function providerIconColor(entry: ProviderEntry): string {
+  return entry.iconColor ?? (entry.brandIcon ? `#${entry.brandIcon.hex}` : "#64748b");
+}
 
 export function IntegrationsPage() {
   const [activeTab, setActiveTab] = useState<IntegrationTab>("erp");
@@ -260,12 +335,7 @@ function ErpProviderCard({ entry }: { entry: ErpProviderEntry }) {
   const [open, setOpen] = useState(false);
   const [ecountConnection, setEcountConnection] =
     useState<EcountConnectionSettingsRecord>(() => emptyEcountConnectionSettings());
-  const Icon =
-    entry.status === "manual"
-      ? FileSpreadsheet
-      : entry.status === "custom-api"
-        ? ServerCog
-        : Database;
+  const Icon = entry.icon;
   const available = entry.status === "available";
   const connected = available && ecountConnection.configured;
 
@@ -310,7 +380,10 @@ function ErpProviderCard({ entry }: { entry: ErpProviderEntry }) {
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+              <span
+                className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted"
+                style={iconColorStyle(entry.iconColor)}
+              >
                 <Icon className="size-4" />
               </span>
               <div className="min-w-0">
@@ -925,6 +998,8 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
   const status = state?.status ?? "idle";
   const connected = status === "connected";
   const connecting = status === "connecting";
+  const awaitingVerification =
+    connecting && state?.loginMode === "external-browser";
   const failed = status === "failed";
 
   return (
@@ -932,8 +1007,11 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
-              <RadioTower className="size-4" />
+            <span
+              className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted"
+              style={iconColorStyle(providerIconColor(entry))}
+            >
+              <ProviderIcon entry={entry} />
             </span>
             <div className="min-w-0">
               <h3 className="truncate text-sm font-semibold text-foreground">
@@ -944,7 +1022,12 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
               </p>
             </div>
           </div>
-          <ConnectionBadge connected={connected} connecting={connecting} failed={failed} />
+          <ConnectionBadge
+            connected={connected}
+            connecting={connecting}
+            awaitingVerification={awaitingVerification}
+            failed={failed}
+          />
         </div>
 
         <div className="min-h-8 text-xs leading-5 text-muted-foreground">
@@ -973,7 +1056,7 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
           onClick={() => setOpen(true)}
         >
           {connected ? <RefreshCw className="size-4" /> : <ExternalLink className="size-4" />}
-          {connected ? "관리" : "연결"}
+          {connected ? "관리" : awaitingVerification ? "상태" : "로그인 열기"}
         </Button>
         {stateQuery.isFetching ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -990,13 +1073,33 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
   );
 }
 
+function ProviderIcon({ entry }: { entry: ProviderEntry }) {
+  if (entry.brandIcon) {
+    return (
+      <svg
+        aria-hidden="true"
+        className="size-4"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
+        <path d={entry.brandIcon.path} />
+      </svg>
+    );
+  }
+
+  const Icon = entry.fallbackIcon ?? RadioTower;
+  return <Icon className="size-4" />;
+}
+
 function ConnectionBadge({
   connected,
   connecting = false,
+  awaitingVerification = false,
   failed = false,
 }: {
   connected: boolean;
   connecting?: boolean;
+  awaitingVerification?: boolean;
   failed?: boolean;
 }) {
   if (connected) {
@@ -1004,6 +1107,15 @@ function ConnectionBadge({
       <Badge className="border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
         <CheckCircle2 className="size-3" />
         연결됨
+      </Badge>
+    );
+  }
+
+  if (awaitingVerification) {
+    return (
+      <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
+        <ExternalLink className="size-3" />
+        미검증
       </Badge>
     );
   }

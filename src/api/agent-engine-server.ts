@@ -12,6 +12,7 @@ import { RockyChatService } from "../rocky-chat/rocky-chat-service.js";
 import { SessionService } from "../sessions/session-service.js";
 import { TaskService } from "../tasks/task-service.js";
 import { createDefaultRuntimeRegistry } from "../runtime/runtime-registry.js";
+import { openUrl } from "./http/native-open.js";
 
 import type { AgentRegistryServiceOptions } from "../agents/agent-types.js";
 import type { AgentEngineServerOptions } from "./api-types.js";
@@ -115,6 +116,9 @@ export function createAgentEngineServer(
   const connectorService = new ConnectorService({
     stateRoot: options.stateRoot,
     now: options.now,
+    openExternalUrl: options.nativeUrlOpener ?? openUrl,
+    baseEnv: options.connectorBaseEnv,
+    fetchImpl: options.connectorFetch,
   });
   const favoriteService = new FavoriteService({
     stateRoot: options.stateRoot,

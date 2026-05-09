@@ -7,10 +7,45 @@ import {
 
 import type { ChromiumChannel, ConnectorProvider } from "./connector-types.js";
 
+export type ConnectorOAuthTokenAuth = "body" | "basic";
+
+export interface ConnectorOAuthUserInfoConfig {
+  url: string;
+  labelPath?: string[];
+  request?: "bearer" | "query-access-token";
+  query?: Record<string, string>;
+}
+
+export type ConnectorOAuthConfig =
+  | {
+      supported: true;
+      envPrefix: string;
+      authorizationUrl: string;
+      tokenUrl: string;
+      scopes: string[];
+      scopeSeparator?: " " | ",";
+      pkce?: boolean;
+      tokenAuth?: ConnectorOAuthTokenAuth;
+      authClientIdParam?: string;
+      tokenClientIdParam?: string;
+      tokenClientSecretParam?: string;
+      includeStateInToken?: boolean;
+      extraAuthParams?: Record<string, string>;
+      extraTokenParams?: Record<string, string>;
+      userInfo?: ConnectorOAuthUserInfoConfig;
+      docsUrl?: string;
+    }
+  | {
+      supported: false;
+      unavailableReason: string;
+      docsUrl?: string;
+    };
+
 export interface ConnectorAdapter {
   provider: ConnectorProvider;
   label: string;
   loginUrl: string;
+  oauth: ConnectorOAuthConfig;
   /**
    * Inspect the browser page to determine whether the user has finished
    * logging in. Should be cheap; called repeatedly. Returns null until the

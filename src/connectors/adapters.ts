@@ -1,10 +1,180 @@
-import type { ConnectorAdapter } from "./connector-runner.js";
+import type {
+  ConnectorAdapter,
+  ConnectorOAuthConfig,
+} from "./connector-runner.js";
 import type { ConnectorProvider } from "./connector-types.js";
+
+const threadsOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "THREADS",
+  authorizationUrl: "https://threads.net/oauth/authorize",
+  tokenUrl: "https://graph.threads.net/oauth/access_token",
+  scopes: ["threads_basic", "threads_content_publish"],
+  scopeSeparator: ",",
+  userInfo: {
+    url: "https://graph.threads.net/v1.0/me",
+    request: "query-access-token",
+    query: { fields: "id,username" },
+    labelPath: ["username"],
+  },
+  docsUrl: "https://developers.facebook.com/docs/threads",
+};
+
+const instagramOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "INSTAGRAM",
+  authorizationUrl: "https://api.instagram.com/oauth/authorize",
+  tokenUrl: "https://api.instagram.com/oauth/access_token",
+  scopes: ["user_profile", "user_media"],
+  scopeSeparator: ",",
+  userInfo: {
+    url: "https://graph.instagram.com/me",
+    request: "query-access-token",
+    query: { fields: "id,username" },
+    labelPath: ["username"],
+  },
+  docsUrl: "https://developers.facebook.com/docs/instagram-basic-display-api",
+};
+
+const xOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "X",
+  authorizationUrl: "https://x.com/i/oauth2/authorize",
+  tokenUrl: "https://api.x.com/2/oauth2/token",
+  scopes: ["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"],
+  pkce: true,
+  tokenAuth: "basic",
+  userInfo: {
+    url: "https://api.x.com/2/users/me",
+    request: "bearer",
+    labelPath: ["data", "username"],
+  },
+  docsUrl: "https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code",
+};
+
+const facebookOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "FACEBOOK",
+  authorizationUrl: "https://www.facebook.com/v22.0/dialog/oauth",
+  tokenUrl: "https://graph.facebook.com/v22.0/oauth/access_token",
+  scopes: ["public_profile", "pages_show_list", "pages_read_engagement", "pages_manage_posts"],
+  scopeSeparator: ",",
+  userInfo: {
+    url: "https://graph.facebook.com/v22.0/me",
+    request: "query-access-token",
+    query: { fields: "id,name" },
+    labelPath: ["name"],
+  },
+  docsUrl: "https://developers.facebook.com/docs/facebook-login",
+};
+
+const linkedinOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "LINKEDIN",
+  authorizationUrl: "https://www.linkedin.com/oauth/v2/authorization",
+  tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
+  scopes: ["openid", "profile", "email", "w_member_social"],
+  userInfo: {
+    url: "https://api.linkedin.com/v2/userinfo",
+    request: "bearer",
+    labelPath: ["name"],
+  },
+  docsUrl: "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authentication",
+};
+
+const tiktokOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "TIKTOK",
+  authorizationUrl: "https://www.tiktok.com/v2/auth/authorize/",
+  tokenUrl: "https://open.tiktokapis.com/v2/oauth/token/",
+  scopes: ["user.info.basic", "video.list"],
+  scopeSeparator: ",",
+  pkce: true,
+  authClientIdParam: "client_key",
+  tokenClientIdParam: "client_key",
+  userInfo: {
+    url: "https://open.tiktokapis.com/v2/user/info/",
+    request: "bearer",
+    query: { fields: "open_id,display_name,avatar_url" },
+    labelPath: ["data", "user", "display_name"],
+  },
+  docsUrl: "https://developers.tiktok.com/doc/login-kit-web",
+};
+
+const youtubeOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "YOUTUBE",
+  authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenUrl: "https://oauth2.googleapis.com/token",
+  scopes: [
+    "openid",
+    "profile",
+    "email",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube.upload",
+  ],
+  pkce: true,
+  extraAuthParams: {
+    access_type: "offline",
+    include_granted_scopes: "true",
+    prompt: "consent",
+  },
+  userInfo: {
+    url: "https://openidconnect.googleapis.com/v1/userinfo",
+    request: "bearer",
+    labelPath: ["email"],
+  },
+  docsUrl: "https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps",
+};
+
+const naverOAuth: ConnectorOAuthConfig = {
+  supported: true,
+  envPrefix: "NAVER_BLOG",
+  authorizationUrl: "https://nid.naver.com/oauth2.0/authorize",
+  tokenUrl: "https://nid.naver.com/oauth2.0/token",
+  scopes: [],
+  includeStateInToken: true,
+  userInfo: {
+    url: "https://openapi.naver.com/v1/nid/me",
+    request: "bearer",
+    labelPath: ["response", "nickname"],
+  },
+  docsUrl: "https://developers.naver.com/docs/login/api/api.md",
+};
+
+const kakaoOAuth = (envPrefix: "BRUNCH" | "KAKAO_CHANNEL"): ConnectorOAuthConfig => ({
+  supported: true,
+  envPrefix,
+  authorizationUrl: "https://kauth.kakao.com/oauth/authorize",
+  tokenUrl: "https://kauth.kakao.com/oauth/token",
+  scopes: ["profile_nickname", "account_email"],
+  scopeSeparator: ",",
+  pkce: true,
+  userInfo: {
+    url: "https://kapi.kakao.com/v2/user/me",
+    request: "bearer",
+    labelPath: ["properties", "nickname"],
+  },
+  docsUrl: "https://developers.kakao.com/docs/latest/en/kakaologin/rest-api",
+});
+
+const tistoryOAuth: ConnectorOAuthConfig = {
+  supported: false,
+  unavailableReason: "Tistory Open API가 공식 문서상 종료되어 OAuth 연결을 제공하지 않습니다.",
+  docsUrl: "https://tistory.github.io/document-tistory-apis",
+};
+
+const mediumOAuth: ConnectorOAuthConfig = {
+  supported: false,
+  unavailableReason: "Medium API는 공식 저장소가 보관 처리되었고 더 이상 지원되지 않습니다.",
+  docsUrl: "https://github.com/Medium/medium-api-docs",
+};
 
 const threadsAdapter: ConnectorAdapter = {
   provider: "threads",
   label: "Threads",
   loginUrl: "https://www.threads.net/login",
+  oauth: threadsOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const session = cookies.find(
@@ -25,6 +195,7 @@ const instagramAdapter: ConnectorAdapter = {
   provider: "instagram",
   label: "Instagram",
   loginUrl: "https://www.instagram.com/accounts/login/",
+  oauth: instagramOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const session = cookies.find(
@@ -43,6 +214,7 @@ const xAdapter: ConnectorAdapter = {
   provider: "x",
   label: "X (트위터)",
   loginUrl: "https://x.com/i/flow/login",
+  oauth: xOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const auth = cookies.find((cookie) => cookie.name === "auth_token");
@@ -58,6 +230,7 @@ const facebookAdapter: ConnectorAdapter = {
   provider: "facebook",
   label: "Facebook",
   loginUrl: "https://www.facebook.com/login",
+  oauth: facebookOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const cUser = cookies.find((cookie) => cookie.name === "c_user");
@@ -72,6 +245,7 @@ const linkedinAdapter: ConnectorAdapter = {
   provider: "linkedin",
   label: "LinkedIn",
   loginUrl: "https://www.linkedin.com/login",
+  oauth: linkedinOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const liAt = cookies.find((cookie) => cookie.name === "li_at");
@@ -86,6 +260,7 @@ const tiktokAdapter: ConnectorAdapter = {
   provider: "tiktok",
   label: "TikTok",
   loginUrl: "https://www.tiktok.com/login",
+  oauth: tiktokOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const session = cookies.find(
@@ -103,6 +278,7 @@ const naverBlogAdapter: ConnectorAdapter = {
   provider: "naver-blog",
   label: "네이버 블로그",
   loginUrl: "https://nid.naver.com/nidlogin.login?url=https%3A%2F%2Fblog.naver.com",
+  oauth: naverOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const auth = cookies.find((cookie) => cookie.name === "NID_AUT");
@@ -119,6 +295,7 @@ const tistoryAdapter: ConnectorAdapter = {
   provider: "tistory",
   label: "Tistory",
   loginUrl: "https://www.tistory.com/auth/login",
+  oauth: tistoryOAuth,
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const session = cookies.find(
@@ -138,6 +315,7 @@ const youtubeAdapter: ConnectorAdapter = {
   label: "YouTube",
   loginUrl:
     "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fstudio.youtube.com",
+  oauth: youtubeOAuth,
   detectLoggedIn: async (page) => {
     const url = page.url();
     if (url.includes("accounts.google.com")) return null;
@@ -160,6 +338,7 @@ const brunchAdapter: ConnectorAdapter = {
   label: "브런치",
   loginUrl:
     "https://accounts.kakao.com/login?continue=https%3A%2F%2Fbrunch.co.kr",
+  oauth: kakaoOAuth("BRUNCH"),
   detectLoggedIn: async (page) => {
     const url = page.url();
     if (url.includes("accounts.kakao.com")) return null;
@@ -181,6 +360,7 @@ const kakaoChannelAdapter: ConnectorAdapter = {
   label: "카카오 채널",
   loginUrl:
     "https://accounts.kakao.com/login?continue=https%3A%2F%2Fcenter-pf.kakao.com",
+  oauth: kakaoOAuth("KAKAO_CHANNEL"),
   detectLoggedIn: async (page) => {
     const url = page.url();
     if (url.includes("accounts.kakao.com")) return null;
@@ -198,6 +378,7 @@ const mediumAdapter: ConnectorAdapter = {
   provider: "medium",
   label: "Medium",
   loginUrl: "https://medium.com/m/signin",
+  oauth: mediumOAuth,
   detectLoggedIn: async (page) => {
     const url = page.url();
     if (url.includes("/m/signin") || url.includes("/m/sso")) return null;

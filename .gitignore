@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 node_modules/
 .runtime/
+.tmp/
 dist/
 web/node_modules/
 web/dist/

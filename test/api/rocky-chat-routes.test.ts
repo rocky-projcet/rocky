@@ -56,6 +56,9 @@ function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
         command: "ssh",
       },
     },
+    skillPolicy: input.skillPolicy ?? {
+      automaticSkillCreation: false,
+    },
     status: input.status ?? "active",
     lifecycle: input.lifecycle ?? "active",
     archivedAt: input.archivedAt ?? null,

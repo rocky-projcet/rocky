@@ -110,6 +110,7 @@ function buildWorkspaceAgentConfig(agent: AgentRecord): Record<string, unknown> 
       modelProfile: agent.modelProfile,
       runtime: agent.runtimePolicy ?? null,
       tools: agent.toolPolicy ?? null,
+      skills: agent.skillPolicy ?? null,
     },
     pythonEnvironment: agent.pythonEnvironment ?? null,
     status: agent.status,

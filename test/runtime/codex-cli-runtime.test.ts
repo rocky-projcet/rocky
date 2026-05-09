@@ -23,6 +23,10 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
+function tomlProjectKey(pathname: string): string {
+  return pathname.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
 function createFakeChild(): EventEmitter & RuntimeChildProcess {
   const child = new EventEmitter() as EventEmitter & RuntimeChildProcess;
   child.stdout = new PassThrough();
@@ -340,7 +344,7 @@ test("prepareCodexRuntimeEnvironment seeds auth, config, and workspace trust", a
   );
   assert.equal(
     await readFile(path.join(targetHome, ".codex", "config.toml"), "utf8"),
-    `model = "gpt-5.4"\n\n[projects."${workspaceRoot}"]\ntrust_level = "trusted"\n`
+    `model = "gpt-5.4"\n\n[projects."${tomlProjectKey(workspaceRoot)}"]\ntrust_level = "trusted"\n`
   );
   await assert.rejects(access(path.join(workspaceRoot, "AGENTS.md")), /ENOENT/);
 });
@@ -413,7 +417,7 @@ test("prepareCodexRuntimeEnvironment keeps managed auth profiles on their own HO
   );
   assert.equal(
     await readFile(path.join(profileHome, ".codex", "config.toml"), "utf8"),
-    `model = "gpt-5.4"\n\n[projects."${workspaceRoot}"]\ntrust_level = "trusted"\n`
+    `model = "gpt-5.4"\n\n[projects."${tomlProjectKey(workspaceRoot)}"]\ntrust_level = "trusted"\n`
   );
   await assert.rejects(access(path.join(runtimeHome, ".codex", "auth.json")), /ENOENT/);
 });
@@ -469,6 +473,34 @@ test("prepareCodexRuntimeEnvironment can share HOME while isolating XDG", async 
     workspaceRoot,
     baseEnv: {
       HOME: sourceHome,
+      PATH: process.env.PATH ?? "",
+    },
+    shareHomeWithBaseEnv: true,
+  });
+
+  assert.equal(prepared.sharedHomeFallback, true);
+  assert.equal(prepared.env.HOME, sourceHome);
+  assert.equal(
+    prepared.env.XDG_CONFIG_HOME,
+    path.join(runtimeHome, "xdg-config")
+  );
+});
+
+test("prepareCodexRuntimeEnvironment uses USERPROFILE when HOME is unavailable", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "codex-runtime-userprofile-"));
+  const sourceHome = path.join(tempRoot, "userprofile-home");
+  const runtimeHome = path.join(tempRoot, "runtime-home");
+  const workspaceRoot = path.join(tempRoot, "workspace");
+
+  await mkdir(path.join(sourceHome, ".codex"), { recursive: true });
+  await mkdir(workspaceRoot, { recursive: true });
+  await writeFile(path.join(sourceHome, ".codex", "auth.json"), '{"token":"abc"}');
+
+  const prepared = await prepareCodexRuntimeEnvironment({
+    runtimeHome,
+    workspaceRoot,
+    baseEnv: {
+      USERPROFILE: sourceHome,
       PATH: process.env.PATH ?? "",
     },
     shareHomeWithBaseEnv: true,

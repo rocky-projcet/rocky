@@ -232,6 +232,7 @@ export interface RuntimeSpawnOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdio: ["ignore" | "pipe", "pipe", "pipe"];
+  shell?: boolean;
 }
 
 export type SpawnLike = (

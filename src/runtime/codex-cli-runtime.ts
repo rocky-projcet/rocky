@@ -12,6 +12,7 @@ import {
   type LiveRuntimeRunState,
 } from "./codex-runtime-helpers.js";
 import { registerCodexRunStreamHandlers } from "./codex-runtime-events.js";
+import { prepareWindowsCommandSpawn } from "./windows-command-spawn.js";
 import {
   prepareCodexRuntimeEnvironment,
   SHARED_HOME_WRITABLE_SANDBOX_WARNING,
@@ -184,18 +185,23 @@ export class CodexCliRuntime extends RuntimeAdapter {
     });
     const workspaceSnapshot = await createWorkspaceSnapshot(session.workspaceRoot);
 
-    const child = this.spawnImpl(command, args, {
+    const preparedSpawn = prepareWindowsCommandSpawn(command, args, {
       cwd: session.workspaceRoot,
       env: preparedEnvironment.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const child = this.spawnImpl(
+      preparedSpawn.command,
+      preparedSpawn.args,
+      preparedSpawn.options
+    );
 
     const run = buildLiveRunState({
       runId,
       session,
       mode,
-      command,
-      args,
+      command: preparedSpawn.command,
+      args: preparedSpawn.args,
       startedAt,
       child: child as RuntimeChildProcess,
       eventQueue,
@@ -274,8 +280,8 @@ export class CodexCliRuntime extends RuntimeAdapter {
       runId,
       session,
       run,
-      command,
-      args,
+      command: preparedSpawn.command,
+      args: preparedSpawn.args,
       request,
       eventQueue,
       now: this.now,

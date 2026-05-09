@@ -60,6 +60,8 @@ import {
 } from "@/domains/skill/components/task-composer";
 import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
+import { Checkbox } from "@/shared/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -80,6 +82,7 @@ import { agentEngineClient } from "@/shared/lib/api-client";
 type EquippedSkillItem = {
   record: AgentLocalSkillRecord;
   template: MdTemplateDefinition | null;
+  source: "common" | "agent";
 };
 
 export function AgentDetailPage() {
@@ -136,13 +139,17 @@ export function AgentDetailPage() {
 
   const equippedSkillItems = useMemo<EquippedSkillItem[]>(
     () =>
-      skillRecords.map((record) => ({
-        record,
-        template:
+      skillRecords.map((record) => {
+        const template =
           userTemplates.find((entry) => entry.skill.id === record.id) ??
           userTemplates.find((entry) => entry.id === record.id) ??
-          null,
-      })),
+          null;
+        return {
+          record,
+          template,
+          source: template ? "common" : "agent",
+        };
+      }),
     [skillRecords, userTemplates],
   );
   const equippedTemplateSkills = useMemo(
@@ -261,6 +268,34 @@ export function AgentDetailPage() {
   }
 
   const archived = agent.lifecycle === "archived";
+  const automaticSkillCreation =
+    agent.skillPolicy?.automaticSkillCreation === true;
+
+  function handleAutomaticSkillCreationChange(next: boolean) {
+    if (!agent) return;
+    updateMutation.mutate(
+      {
+        skillPolicy: {
+          ...(agent.skillPolicy ?? { automaticSkillCreation: false }),
+          automaticSkillCreation: next,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            next
+              ? "자동 스킬 만들기를 켰습니다."
+              : "자동 스킬 만들기를 껐습니다.",
+          );
+        },
+        onError: (error) => {
+          toast.error("자동 스킬 만들기 설정을 저장하지 못했습니다.", {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        },
+      },
+    );
+  }
 
 
   return (
@@ -414,6 +449,44 @@ export function AgentDetailPage() {
               </Button>
             ) : null}
           </header>
+
+          {archived ? null : (
+            <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="agent-auto-skill-creation"
+                  checked={automaticSkillCreation}
+                  disabled={updateMutation.isPending}
+                  onCheckedChange={(checked) =>
+                    handleAutomaticSkillCreationChange(checked === true)
+                  }
+                />
+                <div className="min-w-0 flex-1">
+                  <label
+                    htmlFor="agent-auto-skill-creation"
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    자동 스킬 만들기
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    켜두면 세션에서 재사용 가능한 업무나 연동 절차를 스킬 생성 흐름으로 바로 정리합니다.
+                    꺼져 있어도 명시적으로 스킬을 요청하면 만들 수 있어요.
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[11px]",
+                    automaticSkillCreation
+                      ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700"
+                      : "border-border bg-muted text-muted-foreground",
+                  )}
+                >
+                  {automaticSkillCreation ? "ON" : "OFF"}
+                </Badge>
+              </div>
+            </div>
+          )}
 
           {archived ? null : (
             <SkillPickerDialog
@@ -624,6 +697,11 @@ function EquippedSkillCard({
     item.record.description ??
     "이 에이전트 workspace와 runtime home에 설치된 agent-local skill입니다.";
   const triggerLabel = skill?.triggerLabel ?? item.record.invocation;
+  const sourceLabel = item.source === "common" ? "공용 스킬" : "에이전트 생성";
+  const sourceTone =
+    item.source === "common"
+      ? "border-sky-500/30 bg-sky-500/8 text-sky-700"
+      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-700";
   const skillHref = skill
     ? `/skills/${encodeURIComponent(skill.id)}?from=agent:${encodeURIComponent(fromAgentId)}`
     : null;
@@ -644,7 +722,16 @@ function EquippedSkillCard({
         </span>
       </div>
 
-      <div className="mt-3 min-w-0 flex-1">
+      <div className="mt-3">
+        <Badge
+          variant="outline"
+          className={cn("rounded-full px-2 py-0.5 text-[11px]", sourceTone)}
+        >
+          {sourceLabel}
+        </Badge>
+      </div>
+
+      <div className="mt-2 min-w-0 flex-1">
         {skillHref ? (
           <Link
             to={skillHref}

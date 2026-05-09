@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyReply } from "fastify";
 
 import {
   EcountConnectionService,
+  type EcountLookupServiceLike,
   type EcountConnectionTester,
   type EcountConnectionTestInput,
   type EcountConnectionTestResult,
@@ -16,6 +17,7 @@ export interface IntegrationRoutesOptions {
   stateRoot?: string;
   now?: () => string;
   ecountConnectionTester?: EcountConnectionTester;
+  ecountLookupService?: EcountLookupServiceLike;
   ecountSettingsService?: EcountSettingsServiceLike;
 }
 
@@ -98,6 +100,63 @@ function parseOptionalEcountConnectionTestBody(body: unknown): EcountConnectionT
   return parseEcountConnectionSettingsBody(body);
 }
 
+function parsePositiveLimit(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(parsed)) {
+    throw badRequest("ECOUNT lookup limit must be a number.");
+  }
+  const limit = Math.floor(parsed);
+  if (limit < 1 || limit > 1000) {
+    throw badRequest("ECOUNT lookup limit must be between 1 and 1000.");
+  }
+  return limit;
+}
+
+function parseNonNegativeOffset(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(parsed)) {
+    throw badRequest("ECOUNT lookup offset must be a number.");
+  }
+  const offset = Math.floor(parsed);
+  if (offset < 0) {
+    throw badRequest("ECOUNT lookup offset must be zero or greater.");
+  }
+  return offset;
+}
+
+function parseEcountProductsLookupOptions(input: unknown): {
+  limit?: number | null;
+  offset?: number | null;
+} {
+  if (input === null || input === undefined) {
+    return {};
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw badRequest("ECOUNT product lookup requests require a JSON object body.");
+  }
+  const record = input as Record<string, unknown>;
+  return {
+    limit: parsePositiveLimit(record.limit),
+    offset: parseNonNegativeOffset(record.offset),
+  };
+}
+
 export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOptions> = async (
   server,
   options
@@ -107,6 +166,13 @@ export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOpti
     new EcountConnectionService({
       now: options.now,
     });
+  const ecountLookupService =
+    options.ecountLookupService ??
+    (ecountConnectionTester instanceof EcountConnectionService
+      ? ecountConnectionTester
+      : new EcountConnectionService({
+          now: options.now,
+        }));
   const ecountSettingsService =
     options.ecountSettingsService ??
     new EcountSettingsService({
@@ -154,5 +220,37 @@ export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOpti
       }
     }
     sendJson(reply, 200, sanitizeEcountConnectionResult(result));
+  });
+
+  server.post("/integrations/ecount/products", async (request, reply) => {
+    const input = await ecountSettingsService.getConnectionInput();
+    if (!input) {
+      throw badRequest("ECOUNT connection settings are not configured.");
+    }
+
+    sendJson(
+      reply,
+      200,
+      await ecountLookupService.getBasicProductsList(
+        input,
+        parseEcountProductsLookupOptions(request.body)
+      )
+    );
+  });
+
+  server.get("/integrations/ecount/products", async (request, reply) => {
+    const input = await ecountSettingsService.getConnectionInput();
+    if (!input) {
+      throw badRequest("ECOUNT connection settings are not configured.");
+    }
+
+    sendJson(
+      reply,
+      200,
+      await ecountLookupService.getBasicProductsList(
+        input,
+        parseEcountProductsLookupOptions(request.query)
+      )
+    );
   });
 };

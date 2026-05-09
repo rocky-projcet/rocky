@@ -21,6 +21,8 @@ import type {
   AgentSessionRecord,
 } from "../../src/sessions/session-types.js";
 import type { RuntimeRunResult } from "../../src/runtime/runtime-types.js";
+import { EcountSettingsService } from "../../src/integrations/ecount-settings-service.js";
+import type { EcountLookupServiceLike } from "../../src/integrations/ecount-connection-service.js";
 
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
@@ -143,7 +145,10 @@ function buildRun(input: {
   };
 }
 
-function createRockyChatTestServer(stateRoot: string) {
+function createRockyChatTestServer(
+  stateRoot: string,
+  options: { ecountLookupService?: EcountLookupServiceLike } = {}
+) {
   const agents: AgentRecord[] = [];
   const sessions: AgentSessionRecord[] = [];
   const runs: AgentRunRecord[] = [];
@@ -170,6 +175,7 @@ function createRockyChatTestServer(stateRoot: string) {
   const server = createAgentEngineServer({
     stateRoot,
     now: () => "2026-04-21T00:00:00.000Z",
+    ecountLookupService: options.ecountLookupService,
     agentService: {
       async createAgent(input) {
         const agentId = input?.id ?? "rocky-core";
@@ -1020,6 +1026,142 @@ test("rocky chat routes agent detail requests through the selected agent", async
     assert.equal(runs.length, 2);
     assert.equal(sendTurnCalls.length, 2);
     assert.equal(sendTurnCalls[1]?.sessionId, "session-1");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat prepares ECOUNT lookup files for agent ECOUNT skills", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-ecount-"));
+  const settings = new EcountSettingsService({
+    stateRoot,
+    now: () => "2026-04-21T00:00:00.000Z",
+  });
+  await settings.saveSettings({
+    accountLabel: "본사 이카운트",
+    comCode: "123456",
+    userId: "api-user",
+    apiCertKey: "test-secret-key",
+    zone: "CC",
+    checkedAt: "2026-04-21T00:00:00.000Z",
+  });
+
+  const ecountLookupCalls: Array<{ limit?: number | null; offset?: number | null }> = [];
+  const {
+    agents,
+    sendTurnCalls,
+    server,
+  } = createRockyChatTestServer(stateRoot, {
+    ecountLookupService: {
+      async getBasicProductsList(_input, options) {
+        ecountLookupCalls.push({
+          limit: options?.limit ?? null,
+          offset: options?.offset ?? null,
+        });
+        return {
+          ok: true,
+          status: "connected",
+          accountLabel: "본사 이카운트",
+          zone: "CC",
+          checkedAt: "2026-04-21T00:00:00.000Z",
+          api: "InventoryBasic/GetBasicProductsList",
+          count: 2,
+          returnedCount: 2,
+          products: [
+            {
+              code: "P-001",
+              name: "테스트 품목",
+              spec: "BOX",
+              unit: "EA",
+              raw: {
+                PROD_CD: "P-001",
+                PROD_DES: "테스트 품목",
+                SIZE_DES: "BOX",
+                UNIT: "EA",
+              },
+            },
+            {
+              code: "P-002",
+              name: "두번째 품목",
+              spec: null,
+              unit: null,
+              raw: {
+                PROD_CD: "P-002",
+                PROD_DES: "두번째 품목",
+              },
+            },
+          ],
+          message: "ECOUNT product lookup returned 2 product(s).",
+        };
+      },
+    },
+  });
+  const workspaceRoot = path.join(stateRoot, "agents", "erp-agent", "workspace");
+  agents.push(buildAgent({
+    id: "erp-agent",
+    name: "ERP 비서",
+    workspaceRoot,
+    runtimeHome: path.join(stateRoot, "agents", "erp-agent", "runtime-home"),
+  }));
+  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "md-erp-test");
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-erp-test",
+      'description: "ECOUNT ERP 조회와 분석"',
+      "---",
+      "",
+      "# 이카운트 ERP 매출 분석",
+      "",
+      "## Integration Rules",
+      "- ECOUNT ERP는 조회와 분석만 허용합니다.",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "품목 조회해줘",
+        agentId: "erp-agent",
+        skillId: "md-erp-test",
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.deepEqual(ecountLookupCalls, [{ limit: null, offset: null }]);
+    assert.equal(sendTurnCalls.length, 1);
+    const instructions = sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "";
+    assert.match(instructions, /ECOUNT ERP lookup integration is configured/u);
+    assert.match(instructions, /Do not call localhost, 127\.0\.0\.1/u);
+    assert.doesNotMatch(instructions, /curl -sS -X POST/u);
+    assert.doesNotMatch(instructions, /integrations\/ecount\/products/u);
+    assert.doesNotMatch(instructions, /test-secret-key|123456|api-user/u);
+
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /연동 조회 결과:/u);
+    assert.match(agentContext, /ECOUNT ERP 품목 조회: ready/u);
+    assert.match(agentContext, /inputs\/rocky-chat-/u);
+    assert.doesNotMatch(agentContext, /test-secret-key|123456|api-user/u);
+
+    const fileMatch = agentContext.match(/file=([^,)]+)/u);
+    assert.ok(fileMatch?.[1]);
+    const prepared = JSON.parse(
+      await readFile(path.join(workspaceRoot, ...fileMatch[1]!.split("/")), "utf8")
+    ) as { count: number; returnedCount: number; products: Array<{ code: string }> };
+    assert.equal(prepared.count, 2);
+    assert.equal(prepared.returnedCount, 2);
+    assert.deepEqual(prepared.products.map((product) => product.code), ["P-001", "P-002"]);
   } finally {
     await server.close();
   }

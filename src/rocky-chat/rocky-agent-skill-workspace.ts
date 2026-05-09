@@ -28,6 +28,25 @@ const IGNORED_PACKAGED_INPUT_FILENAMES = new Set([".DS_Store"]);
 const ROCKY_TASK_INPUTS_DIRECTORY = "inputs";
 const ROCKY_TASK_OUTPUTS_DIRECTORY = "outputs";
 
+export interface AgentEcountLookupInstruction {
+  configured: boolean;
+  preparedResults: AgentPreparedIntegrationSummary[];
+}
+
+export interface AgentPreparedIntegrationSummary {
+  provider: "ecount";
+  title: string;
+  status: "ready" | "failed" | "not-configured";
+  api: string | null;
+  count: number | null;
+  returnedCount: number | null;
+  checkedAt: string | null;
+  workspacePath: string | null;
+  message: string;
+  diagnostic: string | null;
+  source: "fresh" | "existing" | "settings";
+}
+
 function formatList(items: string[]): string {
   if (items.length === 0) {
     return "- 없음";
@@ -134,6 +153,32 @@ function formatPackagedSkillInputs(summaries: PackagedSkillInputSummary[]): stri
     .flatMap((summary) =>
       summary.files.map((file) => `- ${file} (스킬: ${summary.skillDisplayName})`)
     )
+    .join("\n");
+}
+
+function formatPreparedIntegrationResults(
+  summaries: AgentPreparedIntegrationSummary[]
+): string {
+  if (summaries.length === 0) {
+    return "- 없음";
+  }
+
+  return summaries
+    .map((summary) => {
+      const details = [
+        summary.api ? `api=${summary.api}` : null,
+        typeof summary.count === "number" ? `total=${summary.count}` : null,
+        typeof summary.returnedCount === "number"
+          ? `returned=${summary.returnedCount}`
+          : null,
+        summary.workspacePath ? `file=${summary.workspacePath}` : null,
+        summary.checkedAt ? `checked_at=${summary.checkedAt}` : null,
+        summary.diagnostic ? `diagnostic=${summary.diagnostic}` : null,
+      ].filter(Boolean);
+      return `- ${summary.title}: ${summary.status}; ${summary.message}${
+        details.length > 0 ? ` (${details.join(", ")})` : ""
+      }`;
+    })
     .join("\n");
 }
 
@@ -336,6 +381,7 @@ export function buildAgentTurnContextMarkdown(input: {
   dispatch: RockyDispatchRecord;
   attachments: RockyAttachmentRecord[];
   packagedSkillInputs?: PackagedSkillInputSummary[];
+  preparedIntegrations?: AgentPreparedIntegrationSummary[];
   timestamp: string;
 }): string {
   return [
@@ -358,6 +404,9 @@ export function buildAgentTurnContextMarkdown(input: {
     "스킬 포함 파일:",
     formatPackagedSkillInputs(input.packagedSkillInputs ?? []),
     "",
+    "연동 조회 결과:",
+    formatPreparedIntegrationResults(input.preparedIntegrations ?? []),
+    "",
     "파일 목록 답변 기준:",
     "- 사용자가 첨부 파일만 물으면 첨부 메타데이터를 기준으로 답합니다.",
     "- 사용자가 올라와 있는 파일, 사용 가능한 파일, 또는 파일 목록을 물으면 첨부 메타데이터와 스킬 포함 파일을 함께 구분해 답합니다.",
@@ -371,6 +420,7 @@ export async function writeAgentTurnContextFile(input: {
   chatId: string;
   dispatch: RockyDispatchRecord;
   attachments: RockyAttachmentRecord[];
+  preparedIntegrations?: AgentPreparedIntegrationSummary[];
   timestamp: string;
 }): Promise<string> {
   const relativePath = `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${input.dispatch.id}.md`;
@@ -386,6 +436,7 @@ export async function writeAgentTurnContextFile(input: {
       packagedSkillInputs: await listPackagedSkillInputSummaries(
         input.agent.workspaceRoot
       ),
+      preparedIntegrations: input.preparedIntegrations ?? [],
       timestamp: input.timestamp,
     }),
     "utf8"
@@ -416,6 +467,7 @@ export function buildAgentTurnSystemInstructions(input: {
   agent: AgentRecord;
   contextRelativePath: string;
   chatId: string;
+  ecountLookup?: AgentEcountLookupInstruction | null;
 }): string[] {
   const outputDirectory = rockyTaskOutputDirectory(input.chatId);
 
@@ -432,5 +484,20 @@ export function buildAgentTurnSystemInstructions(input: {
     "Do not expose internal skill identifiers, invocation strings, file paths, or storage categories in user-facing answers.",
     "Never use the literal phrases `workspace-local`, `호출 ID`, `SKILL.md`, `.agents/skills`, `system`, or `read-only` in user-facing skill inventory answers.",
     "When you apply one or more installed user-facing skills, append a final hidden HTML comment exactly like `<!-- rocky-used-skills: [\"Skill Display Name\"] -->`; keep this marker out of the visible answer text.",
+    ...(input.ecountLookup
+      ? input.ecountLookup.configured
+        ? [
+            "A Rocky-managed ECOUNT ERP lookup integration is configured for installed ECOUNT skills. The integration is read-only and is executed by Rocky before the turn when relevant.",
+            "Use the ECOUNT lookup files and summaries listed in the turn context as the source of truth. Do not call localhost, 127.0.0.1, or Rocky HTTP integration endpoints yourself.",
+            "If an ECOUNT lookup file is listed, read that file once and reuse it for summaries, examples, and follow-up analysis instead of attempting another lookup.",
+            "If the needed ECOUNT lookup result is absent, ask the user to request or refresh that lookup instead of trying a local HTTP call.",
+            "Rocky stores ECOUNT credentials. Never ask the user for ECOUNT API keys, passwords, or session IDs in chat, and never print secrets.",
+            "Do not create, update, delete, submit, or transmit ECOUNT ERP records.",
+          ]
+        : [
+            "An installed skill mentions ECOUNT ERP, but Rocky reports that ECOUNT connection settings are not configured.",
+            "For ECOUNT lookup requests, tell the user to complete the ECOUNT ERP connection test in the integration settings. Do not ask for API keys, passwords, or session IDs in chat.",
+          ]
+      : []),
   ];
 }

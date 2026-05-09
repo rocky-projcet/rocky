@@ -1,4 +1,4 @@
-import type { MdTemplateCategory } from "@/domains/template/types";
+import type { MdTemplateCategory } from "../../template/types.js";
 
 export type SkillKind =
   | "document"
@@ -20,8 +20,13 @@ export type SkillFieldKind =
   | "text"
   | "url-or-file"
   | "account-connect"
-  | "ecount-connection-test"
+  | "erp-integration-select"
   | "recipient-address";
+
+export interface SkillVisibilityCondition {
+  fieldId: string;
+  values: string[];
+}
 
 export interface SkillFieldOption {
   id: string;
@@ -56,6 +61,7 @@ export interface SkillStep {
   fields: SkillField[];
   /** When true, allow user to skip this step entirely. */
   skippable?: boolean;
+  showWhen?: SkillVisibilityCondition;
 }
 
 export interface SkillTemplate {
@@ -435,7 +441,7 @@ const DATA_TEMPLATE: SkillTemplate = {
     {
       id: "data-source",
       title: "데이터를 어디에서 가져올까요?",
-      helper: "엑셀 파일만 쓸 수도 있고, 이카운트 ERP 데이터를 함께 볼 수도 있어요.",
+      helper: "엑셀 파일만 쓸 수도 있고, 연결된 ERP 데이터를 함께 볼 수도 있어요.",
       fields: [
         {
           id: "dataSource",
@@ -448,35 +454,48 @@ const DATA_TEMPLATE: SkillTemplate = {
               description: "엑셀·CSV 파일을 올려서 분석합니다.",
             },
             {
-              id: "ecount-erp",
-              label: "이카운트 ERP",
-              description: "이카운트의 품목·거래처·재고·판매 데이터를 조회해 분석합니다.",
+              id: "erp",
+              label: "ERP",
+              description: "연결된 ERP에서 데이터를 조회해 분석합니다.",
             },
             {
-              id: "file-and-ecount",
-              label: "파일 + 이카운트 ERP",
-              description: "업로드 파일과 ERP 데이터를 대조합니다.",
+              id: "file-and-erp",
+              label: "파일 + ERP",
+              description: "업로드 파일과 연결된 ERP 데이터를 대조합니다.",
             },
           ],
         },
       ],
     },
     {
-      id: "ecount-erp",
-      title: "이카운트 ERP 조회 연동을 사용하나요?",
+      id: "erp-provider",
+      title: "사용할 ERP 연동을 선택해주세요",
       helper:
-        "이카운트 데이터를 쓰는 스킬이면 계정과 조회 범위를 적어주세요. 등록·수정은 추후 제공 예정입니다.",
-      skippable: true,
+        "스킬에서는 이미 연결된 연동만 선택합니다. 새 연결이나 연결 테스트는 연동 설정에서 진행합니다.",
+      showWhen: {
+        fieldId: "dataSource",
+        values: ["erp", "file-and-erp", "ecount-erp", "file-and-ecount"],
+      },
       fields: [
         {
-          id: "ecountConnectionTest",
-          kind: "ecount-connection-test",
-          label: "이카운트 연결 테스트",
-          helper:
-            "회사코드, 사용자 ID, API 인증키로 세션 발급까지 확인합니다. 인증키와 세션은 스킬 내용에 저장하지 않습니다.",
-          placeholder: "예: 본사 이카운트",
-          optional: true,
+          id: "erpIntegration",
+          kind: "erp-integration-select",
+          label: "ERP 연동",
+          helper: "사용 가능한 ERP 연동 목록에서 선택합니다.",
+          options: [{ id: "ecount", label: "이카운트 ERP" }],
         },
+      ],
+    },
+    {
+      id: "ecount-erp",
+      title: "이카운트 ERP 조회 범위를 정해주세요",
+      helper:
+        "이카운트 ERP는 조회와 분석만 허용합니다. 등록·수정은 추후 제공 예정입니다.",
+      showWhen: {
+        fieldId: "erpIntegration",
+        values: ["ecount"],
+      },
+      fields: [
         {
           id: "ecountDataScope",
           kind: "multi-select",

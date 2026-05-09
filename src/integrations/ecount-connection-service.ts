@@ -26,6 +26,43 @@ export interface EcountConnectionTester {
   testConnection(input: EcountConnectionTestInput): Promise<EcountConnectionTestResult>;
 }
 
+export interface EcountBasicProductRecord {
+  code: string | null;
+  name: string | null;
+  spec: string | null;
+  unit: string | null;
+  raw: Record<string, unknown>;
+}
+
+export interface EcountBasicProductsLookupInput {
+  limit?: number | null;
+  offset?: number | null;
+}
+
+export interface EcountBasicProductsLookupResult {
+  ok: boolean;
+  status: "connected" | "failed";
+  accountLabel: string | null;
+  zone: string | null;
+  checkedAt: string;
+  api: "InventoryBasic/GetBasicProductsList";
+  count: number;
+  returnedCount: number;
+  products: EcountBasicProductRecord[];
+  message: string;
+  diagnostics?: {
+    stage: "zone" | "login" | "read";
+    detail: string;
+  };
+}
+
+export interface EcountLookupServiceLike {
+  getBasicProductsList(
+    input: EcountConnectionTestInput,
+    options?: EcountBasicProductsLookupInput
+  ): Promise<EcountBasicProductsLookupResult>;
+}
+
 export interface EcountConnectionServiceOptions {
   fetchImpl?: typeof fetch;
   now?: () => string;
@@ -70,6 +107,115 @@ function firstMessage(value: unknown): string | null {
     ["Data", "Datas", "Message"],
     ["data", "message"],
   ]);
+}
+
+function firstDataCode(value: unknown): string | null {
+  return firstStringAt(value, [
+    ["Data", "Code"],
+    ["Data", "Datas", "Code"],
+    ["data", "code"],
+    ["Code"],
+  ]);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function firstArrayAt(value: unknown, paths: string[][]): unknown[] | null {
+  for (const path of paths) {
+    const entry = readPath(value, path);
+    if (Array.isArray(entry)) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function firstStringField(
+  record: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+function normalizeProductRecord(value: unknown): EcountBasicProductRecord | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    code: firstStringField(record, [
+      "PROD_CD",
+      "PROD_CODE",
+      "ITEM_CD",
+      "ITEM_CODE",
+      "CODE",
+    ]),
+    name: firstStringField(record, [
+      "PROD_DES",
+      "PROD_NAME",
+      "ITEM_DES",
+      "ITEM_NAME",
+      "NAME",
+    ]),
+    spec: firstStringField(record, [
+      "SIZE_DES",
+      "SIZE",
+      "SPEC",
+      "SPEC_DES",
+    ]),
+    unit: firstStringField(record, [
+      "UNIT",
+      "UNIT_CD",
+      "UNIT_DES",
+    ]),
+    raw: record,
+  };
+}
+
+function extractProductRows(payload: unknown): Record<string, unknown>[] {
+  const directRows = firstArrayAt(payload, [
+    ["Data", "Output"],
+    ["Data", "Datas", "Output"],
+    ["Data", "Result"],
+    ["Data", "Datas", "Result"],
+    ["Output"],
+    ["Result"],
+  ]);
+  if (directRows) {
+    return directRows
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  }
+
+  const output = asRecord(readPath(payload, ["Data", "Output"])) ??
+    asRecord(readPath(payload, ["Data", "Datas"]));
+  if (!output) {
+    return [];
+  }
+
+  for (const value of Object.values(output)) {
+    if (Array.isArray(value)) {
+      return value
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+    }
+  }
+
+  return [];
 }
 
 async function postJson(
@@ -157,6 +303,88 @@ export class EcountConnectionService implements EcountConnectionTester {
         message: "ECOUNT connection test failed.",
         diagnostics: {
           stage: detail.toLowerCase().includes("zone") ? "zone" : "login",
+          detail,
+        },
+      };
+    }
+  }
+
+  async getBasicProductsList(
+    input: EcountConnectionTestInput,
+    options: EcountBasicProductsLookupInput = {}
+  ): Promise<EcountBasicProductsLookupResult> {
+    const checkedAt = this.now();
+    const accountLabel = trimOptional(input.accountLabel);
+    const comCode = input.comCode.trim();
+    const userId = input.userId.trim();
+    const apiCertKey = input.apiCertKey.trim();
+    const lanType = trimOptional(input.lanType) ?? "ko-KR";
+    const limit =
+      typeof options.limit === "number" && Number.isFinite(options.limit)
+        ? Math.max(1, Math.floor(options.limit))
+        : null;
+    const offset =
+      typeof options.offset === "number" && Number.isFinite(options.offset)
+        ? Math.max(0, Math.floor(options.offset))
+        : 0;
+    let stage: "zone" | "login" | "read" = "zone";
+    let zone = trimOptional(input.zone);
+
+    try {
+      zone = await this.resolveZone(comCode, zone);
+      stage = "login";
+      const sessionId = await this.login({
+        comCode,
+        userId,
+        apiCertKey,
+        zone,
+        lanType,
+      });
+      stage = "read";
+      const payload = await postJson(
+        this.fetchImpl,
+        `https://sboapi${zone}.ecount.com/OAPI/V2/InventoryBasic/GetBasicProductsList?session_Id=${encodeURIComponent(sessionId ?? "")}`,
+        {}
+      );
+      const code = firstDataCode(payload);
+      if (code && code !== "00") {
+        throw new Error(firstMessage(payload) ?? `ECOUNT read returned code ${code}.`);
+      }
+
+      const rows = extractProductRows(payload);
+      const products = rows
+        .map((row) => normalizeProductRecord(row))
+        .filter((row): row is EcountBasicProductRecord => Boolean(row));
+      const offsetProducts = offset > 0 ? products.slice(offset) : products;
+      const limitedProducts = limit ? offsetProducts.slice(0, limit) : offsetProducts;
+
+      return {
+        ok: true,
+        status: "connected",
+        accountLabel,
+        zone,
+        checkedAt,
+        api: "InventoryBasic/GetBasicProductsList",
+        count: products.length,
+        returnedCount: limitedProducts.length,
+        products: limitedProducts,
+        message: `ECOUNT product lookup returned ${products.length} product(s).`,
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown ECOUNT error.";
+      return {
+        ok: false,
+        status: "failed",
+        accountLabel,
+        zone,
+        checkedAt,
+        api: "InventoryBasic/GetBasicProductsList",
+        count: 0,
+        returnedCount: 0,
+        products: [],
+        message: "ECOUNT product lookup failed.",
+        diagnostics: {
+          stage,
           detail,
         },
       };

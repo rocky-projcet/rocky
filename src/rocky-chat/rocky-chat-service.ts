@@ -35,6 +35,8 @@ import {
   type RockyOrchestrationSkill,
 } from "./rocky-skill-registry.js";
 import {
+  type AgentEcountLookupInstruction,
+  type AgentPreparedIntegrationSummary,
   buildAgentTurnSystemInstructions,
   buildRockyTurnSystemInstructions,
   rockyTaskAttachmentDirectory,
@@ -84,6 +86,14 @@ import type {
 import type { AgentSessionRecord } from "../sessions/session-types.js";
 import { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type { RuntimeSkillTemplateRecord } from "../skills/skill-template-store.js";
+import {
+  EcountSettingsService,
+  type EcountSettingsServiceLike,
+} from "../integrations/ecount-settings-service.js";
+import {
+  EcountConnectionService,
+  type EcountLookupServiceLike,
+} from "../integrations/ecount-connection-service.js";
 
 export interface RockyChatServiceOptions {
   stateRoot?: string;
@@ -92,6 +102,8 @@ export interface RockyChatServiceOptions {
   agentService?: RockyAgentServiceLike;
   sessionService?: RockySessionServiceLike;
   skillTemplateStore?: SkillTemplateStore;
+  ecountSettingsService?: EcountSettingsServiceLike;
+  ecountLookupService?: EcountLookupServiceLike;
 }
 
 type RockyAttachmentDraft = RockyAttachmentRecord & {
@@ -210,6 +222,31 @@ function withAgentSoul(message: string, soul: string | null | undefined): string
     return message;
   }
   return `# 직원 페르소나 (SOUL.md)\n${trimmedSoul}\n\n---\n\n${message}`;
+}
+
+function mentionsEcountIntegration(content: string): boolean {
+  return /ecount|이카운트/iu.test(content);
+}
+
+function shouldPrepareEcountProductLookup(message: string): boolean {
+  const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const productIntent = /품목|상품|product|item/u.test(normalized);
+  const lookupIntent = /조회|검색|목록|전체|확인|가져|보여|list|all|lookup|search/u.test(
+    normalized
+  );
+  return productIntent && lookupIntent;
+}
+
+function ecountProductLookupWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "ecount-products.json"
+  );
 }
 
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
@@ -464,6 +501,8 @@ export class RockyChatService {
   private readonly orchestrator: RockyOrchestratorService;
   private readonly agentLocalSkillService = new AgentLocalSkillService();
   private readonly skillTemplateStore: SkillTemplateStore;
+  private readonly ecountSettingsService: EcountSettingsServiceLike;
+  private readonly ecountLookupService: EcountLookupServiceLike;
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
@@ -477,6 +516,17 @@ export class RockyChatService {
         stateRoot: options.stateRoot,
         now: this.now,
         idGenerator: this.idGenerator,
+      });
+    this.ecountSettingsService =
+      options.ecountSettingsService ??
+      new EcountSettingsService({
+        stateRoot: options.stateRoot,
+        now: this.now,
+      });
+    this.ecountLookupService =
+      options.ecountLookupService ??
+      new EcountConnectionService({
+        now: this.now,
       });
     this.orchestrator = new RockyOrchestratorService({
       sessionService: options.sessionService,
@@ -1163,6 +1213,179 @@ export class RockyChatService {
     }
   }
 
+  private async agentHasEcountSkill(agent: AgentRecord): Promise<boolean> {
+    const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+    for (const skill of skills) {
+      try {
+        const content = await readFile(skill.skillPath, "utf8");
+        if (
+          mentionsEcountIntegration(skill.displayName) ||
+          mentionsEcountIntegration(skill.description ?? "") ||
+          mentionsEcountIntegration(content)
+        ) {
+          return true;
+        }
+      } catch {
+        if (
+          mentionsEcountIntegration(skill.displayName) ||
+          mentionsEcountIntegration(skill.description ?? "")
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private async readExistingEcountProductLookup(
+    agent: AgentRecord,
+    chatId: string
+  ): Promise<AgentPreparedIntegrationSummary | null> {
+    const workspacePath = ecountProductLookupWorkspacePath(chatId);
+    const absolutePath = path.join(agent.workspaceRoot, ...workspacePath.split("/"));
+    try {
+      const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as {
+        api?: string;
+        count?: number;
+        returnedCount?: number;
+        checkedAt?: string;
+        message?: string;
+      };
+      return {
+        provider: "ecount",
+        title: "ECOUNT ERP 품목 조회",
+        status: "ready",
+        api: typeof parsed.api === "string" ? parsed.api : null,
+        count: typeof parsed.count === "number" ? parsed.count : null,
+        returnedCount:
+          typeof parsed.returnedCount === "number" ? parsed.returnedCount : null,
+        checkedAt: typeof parsed.checkedAt === "string" ? parsed.checkedAt : null,
+        workspacePath,
+        message: parsed.message ?? "Previous ECOUNT product lookup result is available.",
+        diagnostic: null,
+        source: "existing",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async prepareEcountProductLookup(input: {
+    agent: AgentRecord;
+    chatId: string;
+    message: string;
+  }): Promise<AgentPreparedIntegrationSummary[]> {
+    const existing = await this.readExistingEcountProductLookup(
+      input.agent,
+      input.chatId
+    );
+    if (!shouldPrepareEcountProductLookup(input.message)) {
+      return existing ? [existing] : [];
+    }
+
+    const connectionInput = await this.ecountSettingsService.getConnectionInput();
+    if (!connectionInput) {
+      return [
+        {
+          provider: "ecount",
+          title: "ECOUNT ERP 품목 조회",
+          status: "not-configured",
+          api: "InventoryBasic/GetBasicProductsList",
+          count: null,
+          returnedCount: null,
+          checkedAt: null,
+          workspacePath: null,
+          message: "ECOUNT connection settings are not configured.",
+          diagnostic: null,
+          source: "settings",
+        },
+      ];
+    }
+
+    const result = await this.ecountLookupService.getBasicProductsList(connectionInput);
+    if (!result.ok) {
+      return [
+        {
+          provider: "ecount",
+          title: "ECOUNT ERP 품목 조회",
+          status: "failed",
+          api: result.api,
+          count: result.count,
+          returnedCount: result.returnedCount,
+          checkedAt: result.checkedAt,
+          workspacePath: null,
+          message: result.message,
+          diagnostic: result.diagnostics?.detail ?? null,
+          source: "fresh",
+        },
+      ];
+    }
+
+    const workspacePath = ecountProductLookupWorkspacePath(input.chatId);
+    const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(
+      absolutePath,
+      `${JSON.stringify(
+        {
+          provider: "ecount",
+          api: result.api,
+          accountLabel: result.accountLabel,
+          zone: result.zone,
+          checkedAt: result.checkedAt,
+          count: result.count,
+          returnedCount: result.returnedCount,
+          products: result.products,
+          message: result.message,
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    return [
+      {
+        provider: "ecount",
+        title: "ECOUNT ERP 품목 조회",
+        status: "ready",
+        api: result.api,
+        count: result.count,
+        returnedCount: result.returnedCount,
+        checkedAt: result.checkedAt,
+        workspacePath,
+        message: result.message,
+        diagnostic: null,
+        source: "fresh",
+      },
+    ];
+  }
+
+  private async resolveAgentEcountLookupInstruction(input: {
+    agent: AgentRecord;
+    chatId: string;
+    message: string;
+  }): Promise<AgentEcountLookupInstruction | null> {
+    if (!(await this.agentHasEcountSkill(input.agent))) {
+      return null;
+    }
+
+    let configured = false;
+    try {
+      configured = (await this.ecountSettingsService.getPublicSettings()).configured;
+    } catch {
+      configured = false;
+    }
+
+    return {
+      configured,
+      preparedResults: configured
+        ? await this.prepareEcountProductLookup(input)
+        : [],
+    };
+  }
+
   private async resolveUsedSkills(
     agent: AgentRecord,
     refs: string[]
@@ -1266,6 +1489,11 @@ export class RockyChatService {
       input.agent,
       input.selectedSkillId ? [input.selectedSkillId] : []
     );
+    const ecountLookup = await this.resolveAgentEcountLookupInstruction({
+      agent: input.agent,
+      chatId: input.chatId,
+      message: input.message,
+    });
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
@@ -1284,6 +1512,7 @@ export class RockyChatService {
       chatId: input.chatId,
       dispatch,
       attachments,
+      preparedIntegrations: ecountLookup?.preparedResults ?? [],
       timestamp: input.timestamp,
     });
     const startedOrchestration = await this.orchestrator.start({
@@ -1302,6 +1531,7 @@ export class RockyChatService {
         agent: input.agent,
         contextRelativePath,
         chatId: input.chatId,
+        ecountLookup,
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);

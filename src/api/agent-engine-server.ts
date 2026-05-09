@@ -104,6 +104,8 @@ export function createAgentEngineServer(
       agentService,
       sessionService,
       skillTemplateStore: options.skillTemplateStore,
+      ecountSettingsService: options.ecountSettingsService,
+      ecountLookupService: options.ecountLookupService,
       now: options.now,
       idGenerator: options.idGenerator,
     });
@@ -145,6 +147,7 @@ export function createAgentEngineServer(
     stateRoot: options.stateRoot,
     now: options.now,
     ecountConnectionTester: options.ecountConnectionTester,
+    ecountLookupService: options.ecountLookupService,
     ecountSettingsService: options.ecountSettingsService,
   });
   server.register(registerSessionRoutes, {

@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -16,7 +16,7 @@ import { Input } from "@/shared/ui/input";
 import { Progress } from "@/shared/ui/progress";
 import { cn } from "@/shared/lib/utils";
 import { agentEngineClient } from "@/shared/lib/api-client";
-import type { EcountConnectionTestRecord } from "@/shared/lib/agent-engine-client";
+import type { EcountConnectionSettingsRecord } from "@/shared/lib/agent-engine-client";
 import type { MdTemplateInputArtifact } from "@/domains/template/types";
 import { ConnectorDialog } from "@/domains/connector/connector-dialog";
 import {
@@ -50,6 +50,14 @@ function defaultAnswersFromTemplate(template: SkillTemplate): SkillWizardAnswers
   return defaults;
 }
 
+function isStepVisible(step: SkillStep, answers: SkillWizardAnswers): boolean {
+  if (!step.showWhen) {
+    return true;
+  }
+  const value = answers[step.showWhen.fieldId];
+  return typeof value === "string" && step.showWhen.values.includes(value);
+}
+
 export function SkillWizard({
   template,
   initialAnswers,
@@ -74,10 +82,12 @@ export function SkillWizard({
     ...(initialAnswers ?? {}),
   }));
 
-  const totalSteps = template.steps.length;
-  const step = template.steps[stepIndex];
-  const progress = ((stepIndex + 1) / totalSteps) * 100;
-  const isLastStep = stepIndex === totalSteps - 1;
+  const visibleSteps = template.steps.filter((candidate) => isStepVisible(candidate, answers));
+  const totalSteps = visibleSteps.length;
+  const safeStepIndex = Math.min(stepIndex, Math.max(totalSteps - 1, 0));
+  const step = visibleSteps[safeStepIndex];
+  const progress = totalSteps > 0 ? ((safeStepIndex + 1) / totalSteps) * 100 : 0;
+  const isLastStep = safeStepIndex === totalSteps - 1;
 
   function patchAnswer(fieldId: string, next: AnswerValue) {
     setAnswers((current) => ({ ...current, [fieldId]: next }));
@@ -92,7 +102,7 @@ export function SkillWizard({
   }
 
   function goBack() {
-    if (stepIndex === 0) {
+    if (safeStepIndex === 0) {
       onCancel();
       return;
     }
@@ -201,7 +211,7 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
     return typeof value === "string" && value.length > 0;
   }
 
-  if (field.kind === "ecount-connection-test") {
+  if (field.kind === "erp-integration-select") {
     return typeof value === "string" && value.length > 0;
   }
 
@@ -302,8 +312,8 @@ function SkillFieldView({
         <TextField field={field} value={value} onChange={onChange} />
       ) : field.kind === "account-connect" ? (
         <AccountConnectField value={value} answers={answers} onChange={onChange} />
-      ) : field.kind === "ecount-connection-test" ? (
-        <EcountConnectionTestField field={field} value={value} onChange={onChange} />
+      ) : field.kind === "erp-integration-select" ? (
+        <ErpIntegrationSelectField value={value} onChange={onChange} />
       ) : field.kind === "recipient-address" ? (
         <RecipientAddressField field={field} value={value} onChange={onChange} />
       ) : null}
@@ -439,178 +449,156 @@ function AccountConnectField({
   );
 }
 
-function safeEcountConnectionLabel(
-  result: EcountConnectionTestRecord,
-  accountLabel: string
-): string {
-  const label = result.accountLabel ?? (accountLabel.trim() || "이카운트 ERP");
-  return result.zone
-    ? `${label} · ZONE ${result.zone} · 로그인 테스트 통과`
-    : `${label} · 로그인 테스트 통과`;
+function formatDateTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("ko-KR", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
 }
 
-function EcountConnectionTestField({
-  field,
+function ErpIntegrationSelectField({
   value,
   onChange,
 }: {
-  field: SkillField;
   value: AnswerValue;
   onChange: (value: AnswerValue) => void;
 }) {
-  const verifiedLabel = typeof value === "string" && value.length > 0 ? value : "";
-  const [accountLabel, setAccountLabel] = useState("");
-  const [comCode, setComCode] = useState("");
-  const [userId, setUserId] = useState("");
-  const [apiCertKey, setApiCertKey] = useState("");
-  const [zone, setZone] = useState("");
-  const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<EcountConnectionTestRecord | null>(null);
+  const selected = typeof value === "string" ? value : "";
+  const [settings, setSettings] = useState<EcountConnectionSettingsRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const onChangeRef = useRef(onChange);
+  const selectedRef = useRef(selected);
 
-  function clearVerification() {
-    setResult(null);
-    if (verifiedLabel) {
-      onChange(null);
-    }
-  }
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
-  async function runTest() {
-    setTesting(true);
-    setResult(null);
-    try {
-      const next = await agentEngineClient.testEcountConnection({
-        accountLabel: accountLabel.trim() || null,
-        comCode: comCode.trim(),
-        userId: userId.trim(),
-        apiCertKey: apiCertKey.trim(),
-        zone: zone.trim() || null,
-        lanType: "ko-KR",
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void agentEngineClient
+      .getEcountConnectionSettings()
+      .then((next) => {
+        if (cancelled) return;
+        setSettings(next);
+        if (!next.configured && selectedRef.current === "ecount") {
+          onChangeRef.current(null);
+        }
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        setSettings(null);
+        setError(caught instanceof Error ? caught.message : "ERP 연동 상태를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
       });
-      setResult(next);
-      if (next.ok) {
-        onChange(safeEcountConnectionLabel(next, accountLabel));
-      } else {
-        onChange(null);
-      }
-    } catch (error) {
-      setResult({
-        ok: false,
-        status: "failed",
-        accountLabel: accountLabel.trim() || null,
-        comCode: comCode.trim(),
-        userId: userId.trim(),
-        zone: zone.trim() || null,
-        checkedAt: new Date().toISOString(),
-        message: "ECOUNT connection test failed.",
-        diagnostics: {
-          stage: "login",
-          detail: error instanceof Error ? error.message : "연결 테스트를 실행하지 못했습니다.",
-        },
-      });
-      onChange(null);
-    } finally {
-      setTesting(false);
-    }
-  }
 
-  const canTest = Boolean(comCode.trim() && userId.trim() && apiCertKey.trim());
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const ecountConfigured = settings?.configured === true;
+  const ecountLabel = settings?.accountLabel ?? "이카운트 ERP";
+  const ecountSelected = selected === "ecount";
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Input
-          value={accountLabel}
-          onChange={(event) => {
-            setAccountLabel(event.target.value);
-            clearVerification();
-          }}
-          placeholder={field.placeholder ?? "계정 별칭"}
-        />
-        <Input
-          value={zone}
-          onChange={(event) => {
-            setZone(event.target.value);
-            clearVerification();
-          }}
-          placeholder="ZONE (모르면 비워두기)"
-        />
-        <Input
-          value={comCode}
-          onChange={(event) => {
-            setComCode(event.target.value);
-            clearVerification();
-          }}
-          placeholder="회사코드"
-        />
-        <Input
-          value={userId}
-          onChange={(event) => {
-            setUserId(event.target.value);
-            clearVerification();
-          }}
-          placeholder="사용자 ID"
-        />
-        <Input
-          className="sm:col-span-2"
-          type="password"
-          value={apiCertKey}
-          onChange={(event) => {
-            setApiCertKey(event.target.value);
-            clearVerification();
-          }}
-          placeholder="API 인증키"
-        />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={runTest}
-          disabled={!canTest || testing}
-        >
-          <Plug className="size-4" />
-          {testing ? "테스트 중" : "연결 테스트"}
-        </Button>
-        {verifiedLabel ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-            <ShieldCheck className="size-3.5" />
-            검증 완료
-          </span>
-        ) : null}
-      </div>
-
-      {result ? (
-        <div
+      <button
+        type="button"
+        disabled={!ecountConfigured || loading}
+        onClick={() => {
+          if (ecountConfigured) {
+            onChange("ecount");
+          }
+        }}
+        className={cn(
+          "flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition",
+          ecountSelected
+            ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
+            : ecountConfigured
+              ? "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/50"
+              : "cursor-not-allowed border-border/60 bg-muted/30 opacity-75",
+        )}
+      >
+        <span
           className={cn(
-            "rounded-2xl border px-4 py-3 text-sm",
-            result.ok
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-              : "border-destructive/30 bg-destructive/10 text-destructive",
+            "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border",
+            ecountSelected
+              ? "border-foreground bg-foreground text-background"
+              : "border-border/80 text-transparent",
           )}
+          aria-hidden="true"
         >
-          <div className="flex items-start gap-2">
-            {result.ok ? (
-              <ShieldCheck className="mt-0.5 size-4 shrink-0" />
-            ) : (
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
-            )}
-            <div className="min-w-0">
-              <p className="font-medium">
-                {result.ok ? safeEcountConnectionLabel(result, accountLabel) : "연결 테스트 실패"}
-              </p>
-              <p className="mt-1 text-xs opacity-80">
-                {result.ok
-                  ? "세션 발급까지 확인했습니다. API 인증키와 세션 ID는 스킬에 저장하지 않습니다."
-                  : result.diagnostics?.detail ?? result.message}
-              </p>
-            </div>
-          </div>
+          <Check className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-foreground">이카운트 ERP</span>
+          <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+            {loading
+              ? "연동 상태를 확인하는 중입니다."
+              : ecountConfigured
+                ? [
+                    ecountLabel,
+                    settings?.zone ? `ZONE ${settings.zone}` : null,
+                    settings?.checkedAt ? `마지막 확인 ${formatDateTime(settings.checkedAt)}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : "아직 연결된 ECOUNT ERP 연동이 없습니다."}
+          </span>
+        </span>
+        {ecountConfigured ? (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            <ShieldCheck className="size-3.5" />
+            연결됨
+          </span>
+        ) : (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <AlertCircle className="size-3.5" />
+            설정 필요
+          </span>
+        )}
+      </button>
+
+      {error ? (
+        <p className="text-xs leading-5 text-destructive">{error}</p>
+      ) : null}
+
+      {!ecountConfigured && !loading ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-muted/25 px-4 py-3 text-xs leading-5 text-muted-foreground">
+          <p className="min-w-0 flex-1">
+            먼저 연동 화면에서 ECOUNT ERP 연결 테스트를 완료한 뒤 스킬에서 선택할 수 있습니다.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            render={<a href="/integrations" />}
+          >
+            <Plug className="size-4" />
+            연동 설정
+          </Button>
         </div>
       ) : null}
 
       <p className="text-xs leading-5 text-muted-foreground">
-        이 테스트는 읽기 전용 로그인 확인입니다. ERP 등록·수정 테스트는 실행하지 않습니다.
+        스킬에는 연동 참조만 저장합니다. API 키, 비밀번호, 세션 ID는 스킬 내용에 저장하지 않습니다.
       </p>
     </div>
   );

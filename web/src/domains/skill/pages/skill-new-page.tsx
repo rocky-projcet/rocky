@@ -965,8 +965,12 @@ function findInstructionAnswer(
 ): string | null {
   const direct = instructionAnswers.get(field.label);
   if (direct) return direct;
-  if (field.kind === "ecount-connection-test") {
-    return instructionAnswers.get("이카운트 계정") ?? null;
+  if (field.kind === "erp-integration-select") {
+    return (
+      instructionAnswers.get("ERP 연동") ??
+      instructionAnswers.get("이카운트 연결 테스트") ??
+      null
+    );
   }
   return null;
 }
@@ -1015,20 +1019,32 @@ function answerFromText(
       return answerLanguagePair(text);
     case "text":
     case "account-connect":
-    case "ecount-connection-test":
     case "recipient-address":
     case "file-upload":
     case "url-or-file":
       return text;
+    case "erp-integration-select":
+      return answerErpIntegration(text);
     default:
       return null;
   }
 }
 
 function answerSingleSelect(field: SkillField, text: string): SkillWizardAnswers[string] | null {
+  if (field.id === "dataSource") {
+    if (text === "이카운트 ERP" || text === "ERP") return "erp";
+    if (text === "파일 + 이카운트 ERP" || text === "파일 + ERP") return "file-and-erp";
+  }
   const option = field.options?.find((entry) => entry.label === text);
   if (option && !option.disabled) return option.id;
   return field.allowCustom ? { primary: "__custom", custom: text } : null;
+}
+
+function answerErpIntegration(text: string): SkillWizardAnswers[string] | null {
+  if (text.includes("이카운트") || text.toLowerCase().includes("ecount")) {
+    return "ecount";
+  }
+  return null;
 }
 
 function answerSingleSelectWithDetail(
@@ -1142,8 +1158,22 @@ function describeAnswer(template: SkillTemplate, fieldId: string, value: unknown
   return String(value);
 }
 
-function usesEcountDataSource(value: unknown): boolean {
-  return value === "ecount-erp" || value === "file-and-ecount";
+function usesErpDataSource(value: unknown): boolean {
+  return (
+    value === "erp" ||
+    value === "file-and-erp" ||
+    value === "ecount-erp" ||
+    value === "file-and-ecount"
+  );
+}
+
+function usesEcountIntegration(answers: SkillWizardAnswers): boolean {
+  const source = answers["dataSource"];
+  return (
+    (usesErpDataSource(source) && answers["erpIntegration"] === "ecount") ||
+    source === "ecount-erp" ||
+    source === "file-and-ecount"
+  );
 }
 
 function pickTitle(template: SkillTemplate, answers: SkillWizardAnswers): string {
@@ -1158,7 +1188,7 @@ function pickTitle(template: SkillTemplate, answers: SkillWizardAnswers): string
   if (template.kind === "data") {
     const kind = answers["analysisKind"];
     const label = describeAnswer(template, "analysisKind", kind);
-    return usesEcountDataSource(answers["dataSource"])
+    return usesEcountIntegration(answers)
       ? `이카운트 ERP ${label}`
       : label;
   }
@@ -1227,8 +1257,8 @@ function pickOutputFormatLabel(template: SkillTemplate, answers: SkillWizardAnsw
 
 function pickRequiredInputs(template: SkillTemplate, answers: SkillWizardAnswers): string[] {
   const inputs: string[] = [];
-  if (template.kind === "data" && usesEcountDataSource(answers["dataSource"])) {
-    inputs.push("이카운트 ERP 연결 계정 또는 회사코드 별칭");
+  if (template.kind === "data" && usesEcountIntegration(answers)) {
+    inputs.push("연결된 이카운트 ERP 연동");
     inputs.push("조회할 이카운트 ERP 메뉴와 데이터 범위");
     inputs.push("조회 기간, 창고, 거래처, 품목 등 필터 기준");
     inputs.push("ERP 등록·수정 요청은 실행하지 않고 제공 예정으로 안내");
@@ -1293,7 +1323,7 @@ function pickInstructions(template: SkillTemplate, answers: SkillWizardAnswers):
       if (
         template.kind === "data" &&
         field.id.startsWith("ecount") &&
-        !usesEcountDataSource(answers["dataSource"])
+        !usesEcountIntegration(answers)
       ) {
         continue;
       }
@@ -1311,7 +1341,7 @@ function pickInstructions(template: SkillTemplate, answers: SkillWizardAnswers):
       lines.push(`- ${field.label}: ${text}`);
     }
   }
-  if (template.kind === "data" && usesEcountDataSource(answers["dataSource"])) {
+  if (template.kind === "data" && usesEcountIntegration(answers)) {
     lines.push("- 이카운트 연동은 현재 조회와 분석만 허용합니다.");
     lines.push("- 이카운트 API 키, 비밀번호, 회사 인증 정보는 사용자 답변이나 스킬 본문에 평문으로 저장하지 않습니다.");
     lines.push("- 품목·거래처·주문·전표 등록, 수정, 삭제, 전송은 실행하지 않습니다. 사용자가 요청하면 제공 예정이라고 안내합니다.");

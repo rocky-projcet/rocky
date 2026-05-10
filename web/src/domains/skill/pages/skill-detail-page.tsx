@@ -178,37 +178,39 @@ export function SkillDetailPage() {
 
   return (
     <PageContainer>
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-              theme.chip,
-            )}
-          >
-            <ChipIcon className="size-3.5" />
-            {skill.triggerLabel}
-          </span>
-          <div className="mt-3">
-            <EditableTitle
-              value={skill.title}
-              onSave={(next) => updateTemplate(skill.id, { title: next })}
-            />
+      <div className="sticky top-0 z-20 -mx-8 flex flex-col gap-6 bg-background px-8 pb-4 pt-8 md:-mx-10 md:px-10 md:pb-5 md:pt-10">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+                theme.chip,
+              )}
+            >
+              <ChipIcon className="size-3.5" />
+              {skill.triggerLabel}
+            </span>
+            <div className="mt-3">
+              <EditableTitle
+                value={skill.title}
+                onSave={(next) => updateTemplate(skill.id, { title: next })}
+              />
+            </div>
+            <div className="mt-2 max-w-2xl">
+              <EditableDescription
+                value={skill.description}
+                onSave={(next) => updateTemplate(skill.id, { description: next })}
+              />
+            </div>
           </div>
-          <div className="mt-2 max-w-2xl">
-            <EditableDescription
-              value={skill.description}
-              onSave={(next) => updateTemplate(skill.id, { description: next })}
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={handleArchive}>
+              <Archive className="size-4" />
+              보관
+            </Button>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={handleArchive}>
-            <Archive className="size-4" />
-            보관
-          </Button>
-        </div>
-      </header>
+        </header>
+      </div>
 
       <section
         className={cn(

@@ -64,25 +64,32 @@ export function SkillTemplateDetailPage() {
 
   return (
     <PageContainer>
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-4">
-          <div className={cn("flex size-14 items-center justify-center rounded-2xl", theme.icon)}>
-            <Icon className="size-7" />
+      <div className="sticky top-0 z-20 -mx-8 flex flex-col gap-6 bg-background px-8 pb-4 pt-8 md:-mx-10 md:px-10 md:pb-5 md:pt-10">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div
+              className={cn(
+                "flex size-14 items-center justify-center rounded-2xl",
+                theme.icon,
+              )}
+            >
+              <Icon className="size-7" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+                {template.label}
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                {template.description}
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-normal text-foreground">
-              {template.label}
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              {template.description}
-            </p>
-          </div>
-        </div>
-        <Button render={<Link to={`/skills/new?kind=${template.kind}`} />}>
-          이 템플릿으로 스킬 만들기
-          <ArrowRight className="size-4" />
-        </Button>
-      </header>
+          <Button render={<Link to={`/skills/new?kind=${template.kind}`} />}>
+            이 템플릿으로 스킬 만들기
+            <ArrowRight className="size-4" />
+          </Button>
+        </header>
+      </div>
 
       <section>
         <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

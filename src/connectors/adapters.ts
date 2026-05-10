@@ -2,7 +2,16 @@ import type {
   ConnectorAdapter,
   ConnectorOAuthConfig,
 } from "./connector-runner.js";
-import type { ConnectorProvider } from "./connector-types.js";
+import type {
+  ConnectorCapabilityRecord,
+  ConnectorProvider,
+} from "./connector-types.js";
+
+function capability(input: Omit<ConnectorCapabilityRecord, "provider"> & {
+  provider: ConnectorProvider;
+}): ConnectorCapabilityRecord {
+  return input;
+}
 
 const threadsOAuth: ConnectorOAuthConfig = {
   supported: true,
@@ -175,6 +184,9 @@ const threadsAdapter: ConnectorAdapter = {
   label: "Threads",
   loginUrl: "https://www.threads.net/login",
   oauth: threadsOAuth,
+  browserLogin: {
+    supported: true,
+  },
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const session = cookies.find(
@@ -432,6 +444,50 @@ export function getConnectorAdapter(provider: ConnectorProvider): ConnectorAdapt
     });
   }
   return adapter;
+}
+
+export function getConnectorCapabilities(
+  provider: ConnectorProvider
+): ConnectorCapabilityRecord[] {
+  const adapter = getConnectorAdapter(provider);
+  if (adapter.capabilities && adapter.capabilities.length > 0) {
+    return adapter.capabilities;
+  }
+
+  const capabilities: ConnectorCapabilityRecord[] = [
+    capability({
+      id: `${provider}.account.read`,
+      provider,
+      label: "계정 상태 확인",
+      description: `${adapter.label} 연동 계정 상태를 확인합니다.`,
+      action: "read",
+      requiresBrowser: false,
+      requiresConnectedAccount: true,
+      requiresApproval: false,
+    }),
+  ];
+
+  const scopeText =
+    adapter.oauth.supported === true ? adapter.oauth.scopes.join(" ") : "";
+  const hasWriteScope = /write|manage|publish|upload|content_publish/iu.test(
+    scopeText
+  );
+  if (hasWriteScope || adapter.browserLogin?.supported === true) {
+    capabilities.push(
+      capability({
+        id: `${provider}.content.write`,
+        provider,
+        label: "콘텐츠 작성",
+        description: `${adapter.label} 콘텐츠를 작성하거나 발행합니다.`,
+        action: "write",
+        requiresBrowser: adapter.browserLogin?.supported === true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+      })
+    );
+  }
+
+  return capabilities;
 }
 
 export function listSupportedProviders(): ConnectorProvider[] {

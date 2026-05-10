@@ -105,6 +105,8 @@ export function createAgentEngineServer(
     detectBrowser: options.connectorBrowserDetector,
     startBrowserLogin: options.connectorBrowserLoginStarter,
     publishBrowserDraft: options.connectorBrowserDraftPublisher,
+    readBrowserProfile: options.connectorBrowserProfileReader,
+    readBrowserFollowerList: options.connectorBrowserFollowerListReader,
     baseEnv: options.connectorBaseEnv,
     fetchImpl: options.connectorFetch,
   });
@@ -137,6 +139,7 @@ export function createAgentEngineServer(
   server.register(registerAgentRoutes, {
     agentService,
     sessionService,
+    connectorService,
     nativeFileOpener: options.nativeFileOpener,
     nativeFolderOpener: options.nativeFolderOpener,
   });

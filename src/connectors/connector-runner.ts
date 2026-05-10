@@ -5,7 +5,11 @@ import {
   type Page,
 } from "playwright";
 
-import type { ChromiumChannel, ConnectorProvider } from "./connector-types.js";
+import type {
+  ChromiumChannel,
+  ConnectorCapabilityRecord,
+  ConnectorProvider,
+} from "./connector-types.js";
 import { launchSystemBrowserContext } from "./system-browser-context.js";
 
 export type ConnectorOAuthTokenAuth = "body" | "basic";
@@ -57,6 +61,7 @@ export interface ConnectorAdapter {
   loginUrl: string;
   oauth: ConnectorOAuthConfig;
   browserLogin?: ConnectorBrowserLoginConfig;
+  capabilities?: ConnectorCapabilityRecord[];
   /**
    * Inspect the browser page to determine whether the user has finished
    * logging in. Should be cheap; called repeatedly. Returns null until the

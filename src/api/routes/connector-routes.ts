@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 
 import { listSupportedProviders } from "../../connectors/adapters.js";
 import type {
+  ConnectorExecuteCapabilityInput,
   ConnectorPublishDraftInput,
   ConnectorProvider,
   ConnectorServiceLike,
@@ -60,6 +61,28 @@ function parsePublishDraftBody(body: unknown): ConnectorPublishDraftInput {
         ? input.visibility
         : undefined,
   };
+}
+
+function parseExecuteCapabilityBody(
+  capabilityId: string,
+  body: unknown,
+): ConnectorExecuteCapabilityInput {
+  if (body === undefined || body === null) {
+    return { capabilityId };
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("커넥터 capability 실행 요청은 JSON object여야 합니다.");
+  }
+
+  const input = body as Record<string, unknown>;
+  const args = input.args;
+  if (args === undefined || args === null) {
+    return { capabilityId };
+  }
+  if (typeof args !== "object" || Array.isArray(args)) {
+    throw badRequest("커넥터 capability 실행 args는 JSON object여야 합니다.");
+  }
+  return { capabilityId, args: args as Record<string, unknown> };
 }
 
 export const registerConnectorRoutes: FastifyPluginAsync<
@@ -123,6 +146,33 @@ export const registerConnectorRoutes: FastifyPluginAsync<
     );
     sendJson(reply, result.ok ? 200 : 409, result);
   });
+
+  server.get("/connectors/:provider/profile", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    const result = await options.connectorService.readProfile(parsed);
+    sendJson(reply, result.ok ? 200 : 409, result);
+  });
+
+  server.post(
+    "/connectors/:provider/capabilities/:capabilityId/execute",
+    async (request, reply) => {
+      const { provider, capabilityId } = request.params as {
+        provider: string;
+        capabilityId: string;
+      };
+      const parsed = parseProvider(provider);
+      const normalizedCapabilityId = capabilityId.trim();
+      if (!normalizedCapabilityId) {
+        throw badRequest("실행할 capability id가 필요합니다.");
+      }
+      const result = await options.connectorService.executeCapability(
+        parsed,
+        parseExecuteCapabilityBody(normalizedCapabilityId, request.body),
+      );
+      sendJson(reply, result.ok ? 200 : 409, result);
+    },
+  );
 
   server.post("/connectors/:provider/disconnect", async (request, reply) => {
     const { provider } = request.params as { provider: string };

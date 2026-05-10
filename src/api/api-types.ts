@@ -36,6 +36,10 @@ import type {
 } from "../connectors/connector-service.js";
 import type { ConnectorBrowserDraftPublisher } from "../connectors/browser-draft-publisher.js";
 import type {
+  ConnectorBrowserFollowerListReader,
+  ConnectorBrowserProfileReader,
+} from "../connectors/browser-profile-reader.js";
+import type {
   RuntimeKind,
   RuntimeEvent,
   RuntimeOllamaLaunchTarget,
@@ -271,6 +275,8 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   connectorBrowserDetector?: ConnectorBrowserDetector;
   connectorBrowserLoginStarter?: ConnectorBrowserLoginStarter;
   connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
+  connectorBrowserProfileReader?: ConnectorBrowserProfileReader;
+  connectorBrowserFollowerListReader?: ConnectorBrowserFollowerListReader;
   connectorBaseEnv?: NodeJS.ProcessEnv;
   connectorFetch?: typeof fetch;
 }

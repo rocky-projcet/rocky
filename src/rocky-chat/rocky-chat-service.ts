@@ -37,6 +37,7 @@ import {
 import {
   type AgentEcountLookupInstruction,
   type AgentConnectorSummary,
+  type AgentConnectorProfileSummary,
   type AgentPreparedIntegrationSummary,
   buildAgentTurnSystemInstructions,
   buildRockyTurnSystemInstructions,
@@ -102,8 +103,11 @@ import {
 import type {
   ConnectorPublishDraftInput,
   ConnectorPublishDraftResult,
+  ConnectorProvider,
   ConnectorServiceLike,
 } from "../connectors/connector-types.js";
+import { listAgentConnectorIntegrations } from "../connectors/agent-connector-integrations.js";
+import { getConnectorAdapter, listSupportedProviders } from "../connectors/adapters.js";
 
 export interface RockyChatServiceOptions {
   stateRoot?: string;
@@ -366,6 +370,15 @@ function ecountDatasetLookupWorkspacePath(chatId: string, dataset: string): stri
   );
 }
 
+function threadsFollowerLookupWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "threads",
+    "followers.json"
+  );
+}
+
 function legacyEcountProductLookupWorkspacePath(chatId: string): string {
   return path.posix.join(
     rockyTaskInputDirectory(chatId),
@@ -612,6 +625,24 @@ function hasDeleteSignal(message: string): boolean {
   return /삭제|지워|제거|delete|remove/u.test(compactText(message).toLowerCase());
 }
 
+function shouldPrepareThreadsFollowerLookup(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /팔로워|followers?|follower\s+names?/iu.test(compact);
+}
+
+function hasAvailableConnectorCapability(
+  summary: AgentConnectorSummary,
+  capabilityId: string
+): boolean {
+  return summary.capabilities.some(
+    (capability) =>
+      capability.id === capabilityId &&
+      (capability.status === undefined || capability.status === "available") &&
+      capability.action === "read" &&
+      !capability.requiresApproval
+  );
+}
+
 function formatSkillList(skillIds: string[]): string {
   if (skillIds.length === 0) {
     return "- 없음";
@@ -636,12 +667,16 @@ function shouldAttemptTistoryDraftPublish(input: {
   if (!input.output || input.output.includes(TISTORY_DRAFT_PUBLISH_MARKER)) {
     return false;
   }
-  const combined = `${input.request}\n${input.output}`;
-  const tistorySignal = /티스토리|tistory/iu.test(combined);
+  const request = compactText(input.request).toLowerCase();
+  const tistorySignal = /티스토리|tistory/iu.test(request);
   const publishIntent = /발행|업로드|올려|게시|임시저장|다시\s*발행|publish|upload|draft/iu.test(
-    combined
+    request
   );
-  return tistorySignal && publishIntent;
+  const negativeIntent =
+    /하지\s*마|하지\s*말|금지|취소|하지\s*않|do not|don't|dont|no\s+(?:publish|upload|post|draft)/iu.test(
+      request
+    );
+  return tistorySignal && publishIntent && !negativeIntent;
 }
 
 function extractMarkdownWorkspacePaths(text: string): string[] {
@@ -1525,6 +1560,20 @@ export class RockyChatService {
     return template.skill.displayName.trim() || template.title;
   }
 
+  private isThreadsConnectorTemplateSkill(
+    template: RuntimeSkillTemplateRecord
+  ): boolean {
+    return /threads|쓰레드|스레드/iu.test(
+      [
+        template.skill.id,
+        template.skill.displayName,
+        template.title,
+        template.description,
+        template.skill.skillMarkdown,
+      ].join("\n"),
+    );
+  }
+
   private async savedSkillTemplateBySkillId(): Promise<
     Map<string, RuntimeSkillTemplateRecord>
   > {
@@ -1542,6 +1591,16 @@ export class RockyChatService {
       installed.description !== template.skill.description
     ) {
       return true;
+    }
+
+    if (this.isThreadsConnectorTemplateSkill(template)) {
+      const skillDir = path.dirname(installed.skillPath);
+      if (!(await this.fileExists(path.join(skillDir, "connector-capabilities.json")))) {
+        return true;
+      }
+      if (!(await this.fileExists(path.join(skillDir, "scripts", "threads-crud.mjs")))) {
+        return true;
+      }
     }
 
     try {
@@ -1623,28 +1682,61 @@ export class RockyChatService {
     return contexts;
   }
 
-  private async listAgentConnectorSummaries(): Promise<AgentConnectorSummary[]> {
+  private async listAgentConnectorSummaries(
+    agent: AgentRecord
+  ): Promise<AgentConnectorSummary[]> {
     if (!this.connectorService) {
       return [];
     }
 
     try {
-      const tistory = await this.connectorService.getState("tistory");
-      if (tistory.status !== "connected") {
-        return [];
-      }
-      return [
-        {
-          provider: "tistory",
-          label: "Tistory",
-          status: tistory.status,
-          loginMode: tistory.loginMode,
-          accountLabel: tistory.accountLabel,
-          connectedAt: tistory.connectedAt,
+      const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+      const integrations = await listAgentConnectorIntegrations({
+        skills,
+        connectorService: this.connectorService,
+      });
+      const summaries = integrations.map((integration): AgentConnectorSummary => ({
+        provider: integration.provider,
+        label: integration.label,
+        status: integration.status,
+        loginMode: integration.loginMode,
+        accountLabel: integration.accountLabel,
+        connectedAt: integration.connectedAt,
+        browserAccess: integration.browserAccess,
+        capabilities: integration.capabilities,
+        requiredBySkills: integration.requiredBySkills,
+        draftPublishing:
+          integration.provider === "tistory" &&
+          integration.status === "connected" &&
+          integration.loginMode === "custom-browser"
+            ? "server-managed"
+            : null,
+      }));
+      const seen = new Set(summaries.map((summary) => summary.provider));
+      for (const provider of listSupportedProviders()) {
+        if (seen.has(provider)) {
+          continue;
+        }
+        const state = await this.connectorService.getState(provider);
+        if (state.status !== "connected") {
+          continue;
+        }
+        summaries.push({
+          provider,
+          label: getConnectorAdapter(provider).label,
+          status: state.status,
+          loginMode: state.loginMode,
+          accountLabel: state.accountLabel,
+          connectedAt: state.connectedAt,
+          browserAccess: state.browserAccess,
+          capabilities: state.capabilities,
           draftPublishing:
-            tistory.loginMode === "custom-browser" ? "server-managed" : null,
-        },
-      ];
+            provider === "tistory" && state.loginMode === "custom-browser"
+              ? "server-managed"
+              : null,
+        });
+      }
+      return summaries;
     } catch {
       return [];
     }
@@ -2039,6 +2131,80 @@ export class RockyChatService {
     };
   }
 
+  private async prepareAgentConnectorLookups(input: {
+    agent: AgentRecord;
+    chatId: string;
+    message: string;
+    connectorSummaries: AgentConnectorSummary[];
+  }): Promise<AgentPreparedIntegrationSummary[]> {
+    if (!this.connectorService || !shouldPrepareThreadsFollowerLookup(input.message)) {
+      return [];
+    }
+
+    const threads = input.connectorSummaries.find(
+      (summary) =>
+        summary.provider === "threads" &&
+        summary.status === "connected" &&
+        hasAvailableConnectorCapability(summary, "threads.followers.read")
+    );
+    if (!threads) {
+      return [];
+    }
+
+    const result = await this.connectorService.executeCapability("threads", {
+      capabilityId: "threads.followers.read",
+      args: { limit: 200 },
+    });
+    const workspacePath = threadsFollowerLookupWorkspacePath(input.chatId);
+    const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+    const count = result.followers?.items.length ?? null;
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(
+      absolutePath,
+      `${JSON.stringify(
+        {
+          provider: "threads",
+          dataset: "followers",
+          title: "Threads 팔로워 목록",
+          ok: result.ok,
+          status: result.status,
+          capabilityId: result.capabilityId,
+          accountLabel: result.accountLabel,
+          checkedAt: result.checkedAt,
+          count,
+          followers: result.followers?.items ?? [],
+          url: result.followers?.url ?? null,
+          rawText: result.followers?.rawText ?? null,
+          message: result.message,
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    return [
+      {
+        provider: "threads",
+        dataset: "followers",
+        title: "Threads 팔로워 목록",
+        status: result.ok
+          ? "ready"
+          : result.status === "unsupported"
+            ? "unsupported"
+            : "failed",
+        api: null,
+        count,
+        returnedCount: count,
+        checkedAt: result.checkedAt,
+        workspacePath,
+        message: result.message,
+        diagnostic: result.ok ? null : result.message,
+        source: "fresh",
+      },
+    ];
+  }
+
   private async resolveUsedSkills(
     agent: AgentRecord,
     refs: string[]
@@ -2148,12 +2314,28 @@ export class RockyChatService {
       message: input.message,
       selectedSkillId: input.selectedSkillId,
     });
-    const connectorSummaries = await this.listAgentConnectorSummaries();
+    const connectorSummaries = await this.listAgentConnectorSummaries(input.agent);
+    const connectorProfileResults: AgentConnectorProfileSummary[] = [];
+    const preparedConnectorLookups = await this.prepareAgentConnectorLookups({
+      agent: input.agent,
+      chatId: input.chatId,
+      message: input.message,
+      connectorSummaries,
+    });
+    const preparedIntegrations = [
+      ...(ecountLookup?.preparedResults ?? []),
+      ...preparedConnectorLookups,
+    ];
     const hasTistoryDraftPublisher = connectorSummaries.some(
       (summary) =>
         summary.provider === "tistory" &&
         summary.status === "connected" &&
         summary.draftPublishing === "server-managed"
+    );
+    const hasConnectedBrowserConnector = connectorSummaries.some(
+      (summary) =>
+        summary.status === "connected" &&
+        summary.loginMode === "custom-browser"
     );
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
@@ -2173,7 +2355,8 @@ export class RockyChatService {
       chatId: input.chatId,
       dispatch,
       attachments,
-      preparedIntegrations: ecountLookup?.preparedResults ?? [],
+      preparedIntegrations,
+      connectorProfileResults,
       connectorSummaries,
       timestamp: input.timestamp,
     });
@@ -2195,6 +2378,9 @@ export class RockyChatService {
         chatId: input.chatId,
         ecountLookup,
         hasTistoryDraftPublisher,
+        hasConnectedBrowserConnector,
+        hasConnectorProfileResults: connectorProfileResults.length > 0,
+        hasPreparedIntegrationResults: preparedIntegrations.length > 0,
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);

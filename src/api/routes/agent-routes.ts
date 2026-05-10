@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 
 import type { AgentServiceLike, SessionServiceLike } from "../api-types.js";
+import { listAgentConnectorIntegrations } from "../../connectors/agent-connector-integrations.js";
+import type { ConnectorServiceLike } from "../../connectors/connector-types.js";
 import {
   AgentLocalSkillService,
   type AgentLocalSkillFileInput,
@@ -37,6 +39,7 @@ interface AgentRoutesOptions extends FastifyPluginOptions {
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
   agentLocalSkillService?: AgentLocalSkillService;
+  connectorService?: ConnectorServiceLike;
 }
 
 function isRuntimeKind(value: unknown): value is RuntimeKind {
@@ -605,6 +608,31 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
     const { agentId } = request.params as { agentId: string };
     const agent = await options.agentService.getAgent(agentId);
     sendJson(reply, 200, await agentLocalSkillService.listAgentLocalSkills(agent));
+  });
+
+  server.get("/agents/:agentId/integrations", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    let skills = await agentLocalSkillService.listAgentLocalSkills(agent);
+    let repairedConnectorFiles = false;
+    for (const skill of skills) {
+      repairedConnectorFiles =
+        (await agentLocalSkillService.ensureAgentLocalSkillConnectorFiles(
+          agent,
+          skill.id,
+        )) || repairedConnectorFiles;
+    }
+    if (repairedConnectorFiles) {
+      skills = await agentLocalSkillService.listAgentLocalSkills(agent);
+    }
+    sendJson(
+      reply,
+      200,
+      await listAgentConnectorIntegrations({
+        skills,
+        connectorService: options.connectorService,
+      })
+    );
   });
 
   server.put(

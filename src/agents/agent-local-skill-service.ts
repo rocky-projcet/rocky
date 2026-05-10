@@ -134,6 +134,240 @@ function resolveSkillFilePath(skillDir: string, relativeFilePath: string): strin
   return path.join(skillDir, normalized);
 }
 
+const THREADS_CONNECTOR_CAPABILITY_MANIFEST = `${JSON.stringify(
+  {
+    provider: "threads",
+    capabilities: [
+      {
+        id: "threads.profile.read",
+        label: "프로필 조회",
+        description: "Rocky가 보관한 Threads 브라우저 세션으로 현재 계정 프로필을 읽습니다.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        scriptPath: "scripts/threads-crud.mjs",
+        usage: "node scripts/threads-crud.mjs profile.read",
+      },
+      {
+        id: "threads.followers.read",
+        label: "팔로워 목록 조회",
+        description: "Rocky가 보관한 Threads 브라우저 세션으로 팔로워 화면의 이름 목록을 읽습니다.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        scriptPath: "scripts/threads-crud.mjs",
+        usage: "node scripts/threads-crud.mjs followers.read --limit 50",
+      },
+      {
+        id: "threads.following.read",
+        label: "팔로잉 목록 조회",
+        description: "Threads 팔로잉 화면의 이름 목록을 읽습니다.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "planned",
+      },
+      {
+        id: "threads.posts.read",
+        label: "게시물 목록 조회",
+        description: "Threads 프로필 게시물 목록을 읽습니다.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "planned",
+      },
+      {
+        id: "threads.posts.publish",
+        label: "게시물 작성",
+        description: "Threads 게시물을 작성합니다.",
+        action: "write",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+        status: "planned",
+      },
+      {
+        id: "threads.posts.update",
+        label: "게시물 수정",
+        description: "Threads 게시물을 수정합니다.",
+        action: "write",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+        status: "planned",
+      },
+      {
+        id: "threads.posts.delete",
+        label: "게시물 삭제",
+        description: "Threads 게시물을 삭제합니다.",
+        action: "write",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+        status: "planned",
+      },
+    ],
+  },
+  null,
+  2,
+)}\n`;
+
+const THREADS_CONNECTOR_SCRIPT = `#!/usr/bin/env node
+const operation = process.argv[2] || "help";
+const supported = new Map([
+  ["profile.read", "threads.profile.read"],
+  ["followers.read", "threads.followers.read"],
+]);
+
+if (operation === "help" || operation === "--help" || operation === "-h") {
+  printUsage();
+  process.exit(0);
+}
+
+const capabilityId = supported.get(operation);
+if (!capabilityId) {
+  console.error(JSON.stringify({
+    ok: false,
+    message: "Unsupported Threads skill operation.",
+    operation,
+    supported: Array.from(supported.keys()),
+  }, null, 2));
+  process.exit(2);
+}
+
+const args = parseArgs(process.argv.slice(3));
+const baseUrl = (
+  process.env.ROCKY_CONNECTOR_BASE_URL ||
+  process.env.ROCKY_API_BASE_URL ||
+  process.env.ROCKY_AGENT_ENGINE_URL ||
+  "http://127.0.0.1:3000"
+).replace(/\\/+$/u, "");
+
+try {
+  const response = await fetch(
+    new URL("/connectors/threads/capabilities/" + encodeURIComponent(capabilityId) + "/execute", baseUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ args }),
+    },
+  );
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok || !payload || payload.ok === false) {
+    console.error(JSON.stringify(payload || {
+      ok: false,
+      statusCode: response.status,
+      message: response.statusText,
+    }, null, 2));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(payload, null, 2));
+} catch (error) {
+  const cause = error instanceof Error && error.cause ? String(error.cause) : null;
+  console.error(JSON.stringify({
+    ok: false,
+    message: error instanceof Error ? error.message : String(error),
+    cause,
+    hint: cause && /EPERM|Operation not permitted/iu.test(cause)
+      ? "This execution session cannot access the local Rocky connector endpoint. Run with local network permission or execute the read through the Rocky backend host."
+      : "Set ROCKY_CONNECTOR_BASE_URL when Rocky backend is not listening on http://127.0.0.1:3000.",
+  }, null, 2));
+  process.exit(1);
+}
+
+function parseArgs(argv) {
+  const args = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === "--limit") {
+      const raw = argv[index + 1];
+      index += 1;
+      const limit = Number.parseInt(raw, 10);
+      if (Number.isFinite(limit) && limit > 0) {
+        args.limit = Math.min(limit, 200);
+      }
+    }
+  }
+  return args;
+}
+
+function printUsage() {
+  console.log([
+    "Usage:",
+    "  node scripts/threads-crud.mjs profile.read",
+    "  node scripts/threads-crud.mjs followers.read --limit 50",
+    "",
+    "Environment:",
+    "  ROCKY_CONNECTOR_BASE_URL=http://127.0.0.1:3000",
+  ].join("\\n"));
+}
+`;
+
+function augmentConnectorSkillFiles(
+  skillId: string,
+  files: AgentLocalSkillFileInput[],
+): AgentLocalSkillFileInput[] {
+  if (!shouldAugmentThreadsConnectorSkill(skillId, files)) {
+    return files;
+  }
+
+  const next = [...files];
+  const paths = new Set(
+    next.map((file) =>
+      typeof file?.path === "string" ? normalizeSkillInputPath(file.path) : "",
+    ),
+  );
+  if (!paths.has("connector-capabilities.json")) {
+    next.push({
+      path: "connector-capabilities.json",
+      content: THREADS_CONNECTOR_CAPABILITY_MANIFEST,
+    });
+  }
+  if (!paths.has("scripts/threads-crud.mjs")) {
+    next.push({
+      path: "scripts/threads-crud.mjs",
+      content: THREADS_CONNECTOR_SCRIPT,
+    });
+  }
+  return next;
+}
+
+function shouldAugmentThreadsConnectorSkill(
+  skillId: string,
+  files: AgentLocalSkillFileInput[],
+): boolean {
+  const skillFile = files.find(
+    (file) =>
+      typeof file?.path === "string" &&
+      normalizeSkillInputPath(file.path) === "SKILL.md",
+  );
+  const skillMarkdown = skillFile ? readSkillInputText(skillFile) : "";
+  const signal = `${skillId}\n${skillMarkdown}`;
+  return /threads|쓰레드|스레드/iu.test(signal);
+}
+
+function normalizeSkillInputPath(filePath: string): string {
+  return filePath.trim().replace(/\\/gu, "/");
+}
+
+function readSkillInputText(file: AgentLocalSkillFileInput): string {
+  if (file.encoding === "base64") {
+    try {
+      return Buffer.from(file.content, "base64").toString("utf8");
+    } catch {
+      return "";
+    }
+  }
+  return file.content;
+}
+
 function resolveNativeCodexSkillDir(agent: AgentRecord, skillId: string): string {
   return path.join(agent.runtimeHome, ".codex", "skills", skillId);
 }
@@ -207,6 +441,43 @@ export class AgentLocalSkillService {
     await ensureWorkspaceSkillBridge(agent.workspaceRoot);
     const skills = await listWorkspaceLocalSkills(agent.workspaceRoot);
     return Promise.all(skills.map((skill) => toRecord(agent, skill)));
+  }
+
+  async ensureAgentLocalSkillConnectorFiles(
+    agent: AgentRecord,
+    skillId: string,
+  ): Promise<boolean> {
+    const id = validateSkillId(skillId);
+    const skills = await this.listAgentLocalSkills(agent);
+    const skill = skills.find((entry) => entry.id === id);
+    if (!skill) {
+      return false;
+    }
+
+    let skillMarkdown: string;
+    try {
+      skillMarkdown = await readFile(skill.skillPath, "utf8");
+    } catch {
+      return false;
+    }
+
+    const skillInput = [{ path: "SKILL.md", content: skillMarkdown }];
+    if (!shouldAugmentThreadsConnectorSkill(id, skillInput)) {
+      return false;
+    }
+
+    const skillDir = path.dirname(skill.skillPath);
+    if (
+      (await exists(path.join(skillDir, "connector-capabilities.json"))) &&
+      (await exists(path.join(skillDir, "scripts", "threads-crud.mjs")))
+    ) {
+      return false;
+    }
+
+    await this.upsertAgentLocalSkill(agent, id, skillInput, {
+      replace: false,
+    });
+    return true;
   }
 
   async deleteAgentLocalSkill(
@@ -327,7 +598,9 @@ export class AgentLocalSkillService {
       });
     }
 
-    for (const file of files) {
+    const filesToInstall = augmentConnectorSkillFiles(id, files);
+
+    for (const file of filesToInstall) {
       if (!file || typeof file !== "object") {
         throw badRequest("Skill file entries must be objects.");
       }

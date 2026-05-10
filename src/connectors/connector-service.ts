@@ -2,11 +2,21 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { getConnectorAdapter, listSupportedProviders } from "./adapters.js";
+import {
+  getConnectorAdapter,
+  getConnectorCapabilities,
+  listSupportedProviders,
+} from "./adapters.js";
 import {
   publishBrowserDraft,
   type ConnectorBrowserDraftPublisher,
 } from "./browser-draft-publisher.js";
+import {
+  readBrowserFollowerList,
+  readBrowserProfile,
+  type ConnectorBrowserFollowerListReader,
+  type ConnectorBrowserProfileReader,
+} from "./browser-profile-reader.js";
 import {
   detectChromium,
   startHeadedLogin,
@@ -18,16 +28,23 @@ import {
 import {
   type ChromiumChannel,
   type ConnectorDiagnosticsRecord,
+  type ConnectorExecuteCapabilityInput,
+  type ConnectorExecuteCapabilityResult,
+  type ConnectorReadFollowerListResult,
   type ConnectorLoginMode,
   type ConnectorOAuthCallbackInput,
   type ConnectorOAuthCallbackResult,
+  type ConnectorProfileRecord,
   type ConnectorPublishDraftInput,
   type ConnectorPublishDraftResult,
+  type ConnectorReadProfileResult,
   type ConnectorProvider,
   type ConnectorServiceLike,
   type ConnectorStartLoginInput,
   type ConnectorState,
   type ConnectorStatus,
+  type ConnectorBrowserAccessRecord,
+  type ConnectorCapabilityRecord,
 } from "./connector-types.js";
 
 export interface ConnectorServiceOptions {
@@ -37,6 +54,8 @@ export interface ConnectorServiceOptions {
   detectBrowser?: ConnectorBrowserDetector;
   startBrowserLogin?: ConnectorBrowserLoginStarter;
   publishBrowserDraft?: ConnectorBrowserDraftPublisher;
+  readBrowserProfile?: ConnectorBrowserProfileReader;
+  readBrowserFollowerList?: ConnectorBrowserFollowerListReader;
   baseEnv?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
@@ -77,6 +96,8 @@ export class ConnectorService implements ConnectorServiceLike {
   private readonly detectBrowser: ConnectorBrowserDetector;
   private readonly startBrowserLogin: ConnectorBrowserLoginStarter;
   private readonly publishBrowserDraft: ConnectorBrowserDraftPublisher;
+  private readonly readBrowserProfile: ConnectorBrowserProfileReader;
+  private readonly readBrowserFollowerList: ConnectorBrowserFollowerListReader;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly fetchImpl: typeof fetch;
   private readonly hydratePromise: Promise<void>;
@@ -93,6 +114,9 @@ export class ConnectorService implements ConnectorServiceLike {
     this.detectBrowser = options.detectBrowser ?? detectChromium;
     this.startBrowserLogin = options.startBrowserLogin ?? startHeadedLogin;
     this.publishBrowserDraft = options.publishBrowserDraft ?? publishBrowserDraft;
+    this.readBrowserProfile = options.readBrowserProfile ?? readBrowserProfile;
+    this.readBrowserFollowerList =
+      options.readBrowserFollowerList ?? readBrowserFollowerList;
     this.baseEnv = options.baseEnv ?? process.env;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.states = listSupportedProviders().reduce(
@@ -108,7 +132,7 @@ export class ConnectorService implements ConnectorServiceLike {
   async getState(provider: ConnectorProvider): Promise<ConnectorState> {
     await this.ensureHydrated();
     this.assertSupported(provider);
-    return { ...this.states[provider] };
+    return decorateConnectorState(provider, this.states[provider]);
   }
 
   async startLogin(
@@ -119,6 +143,14 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     const adapter = getConnectorAdapter(provider);
     const oauth = adapter.oauth;
+
+    if (adapter.browserLogin?.supported === true) {
+      return this.startCustomBrowserLogin(
+        provider,
+        adapter,
+        "브라우저 세션 기반 연동을 사용합니다.",
+      );
+    }
 
     if (oauth.supported === false) {
       return this.startCustomBrowserLogin(provider, adapter, oauth.unavailableReason);
@@ -139,7 +171,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginMode: null,
         lastError: credentials.message,
       });
-      return { ...this.states[provider] };
+      return decorateConnectorState(provider, this.states[provider]);
     }
 
     const state = randomUrlSafe(32);
@@ -183,7 +215,7 @@ export class ConnectorService implements ConnectorServiceLike {
       lastError: openError,
     });
 
-    return { ...this.states[provider] };
+    return decorateConnectorState(provider, this.states[provider]);
   }
 
   private async startCustomBrowserLogin(
@@ -203,7 +235,7 @@ export class ConnectorService implements ConnectorServiceLike {
           adapter.browserLogin?.unavailableReason ??
           unavailableReason,
       });
-      return { ...this.states[provider] };
+      return decorateConnectorState(provider, this.states[provider]);
     }
 
     await this.cancelActiveBrowserSession(provider);
@@ -218,7 +250,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginMode: null,
         lastError: diagnostics.message,
       });
-      return { ...this.states[provider] };
+      return decorateConnectorState(provider, this.states[provider]);
     }
 
     this.transition(provider, {
@@ -262,7 +294,7 @@ export class ConnectorService implements ConnectorServiceLike {
       });
     }
 
-    return { ...this.states[provider] };
+    return decorateConnectorState(provider, this.states[provider]);
   }
 
   async handleOAuthCallback(
@@ -287,7 +319,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth 승인 실패",
         message,
-        state: { ...this.states[provider] },
+        state: decorateConnectorState(provider, this.states[provider]),
       };
     }
 
@@ -305,7 +337,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth callback 오류",
         message,
-        state: { ...this.states[provider] },
+        state: decorateConnectorState(provider, this.states[provider]),
       };
     }
 
@@ -324,7 +356,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth state 오류",
         message,
-        state: { ...this.states[provider] },
+        state: decorateConnectorState(provider, this.states[provider]),
       };
     }
 
@@ -357,7 +389,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth 연동 완료",
         message: `${accountLabel} 연결을 확인했습니다. 이 창은 닫아도 됩니다.`,
-        state: { ...this.states[provider] },
+        state: decorateConnectorState(provider, this.states[provider]),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -373,7 +405,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth 토큰 교환 실패",
         message,
-        state: { ...this.states[provider] },
+        state: decorateConnectorState(provider, this.states[provider]),
       };
     }
   }
@@ -486,6 +518,292 @@ export class ConnectorService implements ConnectorServiceLike {
     }
   }
 
+  async executeCapability(
+    provider: ConnectorProvider,
+    input: ConnectorExecuteCapabilityInput,
+  ): Promise<ConnectorExecuteCapabilityResult> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    const adapter = getConnectorAdapter(provider);
+    const capabilityId = input.capabilityId.trim();
+    const capability = getConnectorExecutionCapabilities(provider).find(
+      (record) => record.id === capabilityId,
+    );
+    const checkedAt = this.now();
+
+    if (!capability) {
+      return {
+        ok: false,
+        provider,
+        capabilityId,
+        action: null,
+        status: "unsupported",
+        resultType: "none",
+        accountLabel: this.states[provider].accountLabel,
+        profile: null,
+        followers: null,
+        draft: null,
+        message: `${adapter.label}에서 지원하지 않는 capability입니다: ${capabilityId}`,
+        checkedAt,
+      };
+    }
+
+    if (capability.requiresApproval || capability.action === "write") {
+      return {
+        ok: false,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: "requires-approval",
+        resultType: "none",
+        accountLabel: this.states[provider].accountLabel,
+        profile: null,
+        followers: null,
+        draft: null,
+        message: `${capability.label} capability는 사용자 승인 후 실행해야 합니다.`,
+        checkedAt,
+      };
+    }
+
+    if (/\.profile\.read$/u.test(capability.id)) {
+      const result = await this.readProfile(provider);
+      return {
+        ok: result.ok,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: result.ok ? "completed" : "failed",
+        resultType: "profile",
+        accountLabel: result.accountLabel,
+        profile: result.profile,
+        followers: null,
+        draft: null,
+        message: result.message,
+        checkedAt: result.checkedAt,
+      };
+    }
+
+    if (capability.id === "threads.followers.read") {
+      const limit = readPositiveInteger(input.args?.limit);
+      const result = await this.readFollowerList(provider, {
+        limit,
+      });
+      return {
+        ok: result.ok,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: result.ok ? "completed" : "failed",
+        resultType: "followers",
+        accountLabel: result.accountLabel,
+        profile: null,
+        followers: result.followers,
+        draft: null,
+        message: result.message,
+        checkedAt: result.checkedAt,
+      };
+    }
+
+    return {
+      ok: false,
+      provider,
+      capabilityId,
+      action: capability.action,
+      status: "unsupported",
+      resultType: "none",
+      accountLabel: this.states[provider].accountLabel,
+      profile: null,
+      followers: null,
+      draft: null,
+      message: `${capability.label} capability 실행 핸들러가 아직 준비되지 않았습니다.`,
+      checkedAt,
+    };
+  }
+
+  async readProfile(provider: ConnectorProvider): Promise<ConnectorReadProfileResult> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    const adapter = getConnectorAdapter(provider);
+    const checkedAt = this.now();
+
+    const oauth = adapter.oauth;
+    if (oauth.supported === true && oauth.userInfo) {
+      const oauthSession = await this.readStoredOAuthToken(provider);
+      if (oauthSession) {
+        const payload = await this.fetchOAuthUserInfo(oauth, oauthSession.tokenPayload);
+        if (payload) {
+          return {
+            ok: true,
+            provider,
+            status: "profile-read",
+            accountLabel: oauthSession.accountLabel,
+            profile: profileFromOAuthPayload(provider, payload, oauthSession.accountLabel),
+            message: `${adapter.label} OAuth 프로필을 조회했습니다.`,
+            checkedAt,
+          };
+        }
+      }
+    }
+
+    const session = await this.readStoredBrowserSession(provider);
+    if (!session) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: this.states[provider].accountLabel,
+        profile: null,
+        message: `${adapter.label} 연결 세션이 필요합니다.`,
+        checkedAt,
+      };
+    }
+
+    const diagnostics = await this.detectBrowser();
+    if (!diagnostics.available || !diagnostics.channel) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        profile: null,
+        message: diagnostics.message,
+        checkedAt: this.now(),
+      };
+    }
+
+    try {
+      const result = await this.readBrowserProfile({
+        provider,
+        accountLabel: session.accountLabel,
+        storageStateJson: session.storageStateJson,
+        browserProfileDir: session.browserProfileDir,
+        browserDebuggingPort: session.browserDebuggingPort,
+        channel: diagnostics.channel,
+        now: this.now,
+      });
+      if (!result.ok && isInvalidBrowserSessionMessage(result.message)) {
+        await this.removeStorage(provider);
+        this.transition(provider, {
+          status: "failed",
+          message: "커스텀 브라우저 계정 연동을 다시 진행해 주세요.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: result.message,
+        });
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isInvalidBrowserSessionMessage(message)) {
+        await this.removeStorage(provider);
+        this.transition(provider, {
+          status: "failed",
+          message: "커스텀 브라우저 계정 연동을 다시 진행해 주세요.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: message,
+        });
+      }
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        profile: null,
+        message,
+        checkedAt: this.now(),
+      };
+    }
+  }
+
+  async readFollowerList(
+    provider: ConnectorProvider,
+    input: { limit?: number | null } = {},
+  ): Promise<ConnectorReadFollowerListResult> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    const adapter = getConnectorAdapter(provider);
+    const checkedAt = this.now();
+    const session = await this.readStoredBrowserSession(provider);
+    if (!session) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: this.states[provider].accountLabel,
+        followers: null,
+        message: `${adapter.label} 연결 세션이 필요합니다.`,
+        checkedAt,
+      };
+    }
+
+    const diagnostics = await this.detectBrowser();
+    if (!diagnostics.available || !diagnostics.channel) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        followers: null,
+        message: diagnostics.message,
+        checkedAt: this.now(),
+      };
+    }
+
+    try {
+      const result = await this.readBrowserFollowerList({
+        provider,
+        accountLabel: session.accountLabel,
+        storageStateJson: session.storageStateJson,
+        browserProfileDir: session.browserProfileDir,
+        browserDebuggingPort: session.browserDebuggingPort,
+        channel: diagnostics.channel,
+        limit: input.limit,
+        now: this.now,
+      });
+      if (!result.ok && isInvalidBrowserSessionMessage(result.message)) {
+        await this.removeStorage(provider);
+        this.transition(provider, {
+          status: "failed",
+          message: "커스텀 브라우저 계정 연동을 다시 진행해 주세요.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: result.message,
+        });
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isInvalidBrowserSessionMessage(message)) {
+        await this.removeStorage(provider);
+        this.transition(provider, {
+          status: "failed",
+          message: "커스텀 브라우저 계정 연동을 다시 진행해 주세요.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: message,
+        });
+      }
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        followers: null,
+        message,
+        checkedAt: this.now(),
+      };
+    }
+  }
+
   async cancelLogin(provider: ConnectorProvider): Promise<ConnectorState> {
     await this.ensureHydrated();
     this.assertSupported(provider);
@@ -504,7 +822,7 @@ export class ConnectorService implements ConnectorServiceLike {
         lastError: null,
       });
     }
-    return { ...this.states[provider] };
+    return decorateConnectorState(provider, this.states[provider]);
   }
 
   async disconnect(provider: ConnectorProvider): Promise<ConnectorState> {
@@ -521,7 +839,7 @@ export class ConnectorService implements ConnectorServiceLike {
       loginMode: null,
       lastError: null,
     });
-    return { ...this.states[provider] };
+    return decorateConnectorState(provider, this.states[provider]);
   }
 
   async getDiagnostics(): Promise<ConnectorDiagnosticsRecord> {
@@ -584,6 +902,23 @@ export class ConnectorService implements ConnectorServiceLike {
     try {
       const raw = await readFile(browserSessionPath, "utf8");
       return parseStoredBrowserConnection(raw, provider);
+    } catch {
+      return null;
+    }
+  }
+
+  private async readStoredOAuthToken(
+    provider: ConnectorProvider,
+  ): Promise<{
+    accountLabel: string;
+    connectedAt: string;
+    tokenPayload: Record<string, unknown>;
+    scopes: string[];
+  } | null> {
+    const tokenPath = path.join(this.providerDir(provider), OAUTH_TOKEN_FILE);
+    try {
+      const raw = await readFile(tokenPath, "utf8");
+      return parseStoredOAuthToken(raw, provider);
     } catch {
       return null;
     }
@@ -815,6 +1150,15 @@ export class ConnectorService implements ConnectorServiceLike {
     config: Extract<ConnectorOAuthConfig, { supported: true }>,
     tokenPayload: Record<string, unknown>,
   ): Promise<string | null> {
+    const payload = await this.fetchOAuthUserInfo(config, tokenPayload);
+    if (!payload) return null;
+    return readStringPath(payload, config.userInfo?.labelPath ?? []);
+  }
+
+  private async fetchOAuthUserInfo(
+    config: Extract<ConnectorOAuthConfig, { supported: true }>,
+    tokenPayload: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
     if (!config.userInfo) return null;
     const accessToken = readAccessToken(tokenPayload);
     if (!accessToken) return null;
@@ -837,7 +1181,7 @@ export class ConnectorService implements ConnectorServiceLike {
       const response = await this.fetchImpl(url, { headers });
       const payload = await readJsonResponse(response);
       if (!response.ok) return null;
-      return readStringPath(payload, config.userInfo.labelPath ?? []);
+      return payload;
     } catch {
       return null;
     }
@@ -922,7 +1266,119 @@ function buildIdleState(provider: ConnectorProvider, now: string): ConnectorStat
     loginUrl: null,
     loginMode: null,
     lastError: null,
+    browserAccess: buildBrowserAccess(provider, "idle", null),
+    capabilities: [],
     updatedAt: now,
+  };
+}
+
+function decorateConnectorState(
+  provider: ConnectorProvider,
+  state: ConnectorState
+): ConnectorState {
+  return {
+    ...state,
+    browserAccess: buildBrowserAccess(provider, state.status, state.loginMode),
+    capabilities: getConnectorCapabilities(provider),
+  };
+}
+
+function getConnectorExecutionCapabilities(
+  provider: ConnectorProvider,
+): ConnectorCapabilityRecord[] {
+  const byId = new Map<string, ConnectorCapabilityRecord>();
+  for (const capability of [
+    ...getConnectorCapabilities(provider),
+    ...getConnectorSkillBridgeCapabilities(provider),
+  ]) {
+    byId.set(capability.id, capability);
+  }
+  return [...byId.values()];
+}
+
+function getConnectorSkillBridgeCapabilities(
+  provider: ConnectorProvider,
+): ConnectorCapabilityRecord[] {
+  if (provider !== "threads") {
+    return [];
+  }
+  return [
+    {
+      id: "threads.profile.read",
+      provider,
+      label: "프로필 조회",
+      description: "Rocky가 보관한 Threads 브라우저 세션으로 현재 계정 프로필을 읽습니다.",
+      action: "read",
+      requiresBrowser: true,
+      requiresConnectedAccount: true,
+      requiresApproval: false,
+      status: "available",
+      source: "backend",
+    },
+    {
+      id: "threads.followers.read",
+      provider,
+      label: "팔로워 목록 조회",
+      description: "Rocky가 보관한 Threads 브라우저 세션으로 팔로워 화면의 이름 목록을 읽습니다.",
+      action: "read",
+      requiresBrowser: true,
+      requiresConnectedAccount: true,
+      requiresApproval: false,
+      status: "available",
+      source: "backend",
+    },
+  ];
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(1, Math.trunc(value));
+}
+
+function buildBrowserAccess(
+  provider: ConnectorProvider,
+  status: ConnectorStatus,
+  loginMode: ConnectorLoginMode | null
+): ConnectorBrowserAccessRecord {
+  const adapter = getConnectorAdapter(provider);
+  if (adapter.browserLogin?.supported !== true) {
+    return {
+      status: "not-applicable",
+      policy: null,
+      readAllowed: true,
+      writeAllowedAfterApproval: false,
+      message: "브라우저 화면 권한이 필요하지 않은 연동입니다.",
+    };
+  }
+
+  if (status === "connected" && loginMode === "custom-browser") {
+    return {
+      status: "granted",
+      policy: "persistent",
+      readAllowed: true,
+      writeAllowedAfterApproval: true,
+      message: "지속 브라우저 화면 권한이 허용되어 있습니다.",
+    };
+  }
+
+  if (status === "failed") {
+    return {
+      status: "unavailable",
+      policy: "persistent",
+      readAllowed: false,
+      writeAllowedAfterApproval: false,
+      message: "브라우저 연동을 다시 연결해야 합니다.",
+    };
+  }
+
+  return {
+    status: "needs-login",
+    policy: "persistent",
+    readAllowed: false,
+    writeAllowedAfterApproval: false,
+    message: "브라우저 연동 로그인이 필요합니다.",
   };
 }
 
@@ -1056,6 +1512,80 @@ function readStringPath(payload: unknown, pathSegments: string[]): string | null
     current = (current as Record<string, unknown>)[segment];
   }
   return readString(current);
+}
+
+function profileFromOAuthPayload(
+  provider: ConnectorProvider,
+  payload: Record<string, unknown>,
+  accountLabel: string,
+): ConnectorProfileRecord {
+  const username =
+    readString(payload.username) ??
+    readStringPath(payload, ["data", "username"]) ??
+    readStringPath(payload, ["data", "user", "display_name"]);
+  const displayName =
+    readString(payload.name) ??
+    readString(payload.display_name) ??
+    readStringPath(payload, ["data", "user", "display_name"]) ??
+    username ??
+    accountLabel;
+  const id =
+    readString(payload.id) ??
+    readString(payload.open_id) ??
+    readStringPath(payload, ["data", "user", "open_id"]);
+
+  return {
+    id,
+    username,
+    displayName,
+    bio: readString(payload.biography) ?? readString(payload.bio),
+    followersText: null,
+    url:
+      provider === "threads" && username
+        ? `https://www.threads.net/@${username.replace(/^@/u, "")}`
+        : null,
+    rawText: null,
+  };
+}
+
+function parseStoredOAuthToken(
+  raw: string,
+  provider: ConnectorProvider,
+): {
+  accountLabel: string;
+  connectedAt: string;
+  tokenPayload: Record<string, unknown>;
+  scopes: string[];
+} | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      provider?: unknown;
+      accountLabel?: unknown;
+      connectedAt?: unknown;
+      tokenPayload?: unknown;
+      scopes?: unknown;
+    };
+    if (
+      parsed.provider !== provider ||
+      typeof parsed.accountLabel !== "string" ||
+      typeof parsed.connectedAt !== "string" ||
+      !parsed.tokenPayload ||
+      typeof parsed.tokenPayload !== "object" ||
+      Array.isArray(parsed.tokenPayload)
+    ) {
+      return null;
+    }
+    return {
+      accountLabel: parsed.accountLabel,
+      connectedAt: parsed.connectedAt,
+      tokenPayload: parsed.tokenPayload as Record<string, unknown>,
+      scopes: Array.isArray(parsed.scopes)
+        ? parsed.scopes.filter((scope): scope is string => typeof scope === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 function parseStoredOAuthConnection(

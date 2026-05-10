@@ -24,6 +24,39 @@ export type ConnectorLoginMode =
   | "external-browser"
   | "managed-browser";
 
+export type ConnectorCapabilityAction = "read" | "write";
+
+export interface ConnectorCapabilityRecord {
+  id: string;
+  provider: ConnectorProvider;
+  label: string;
+  description: string;
+  action: ConnectorCapabilityAction;
+  requiresBrowser: boolean;
+  requiresConnectedAccount: boolean;
+  requiresApproval: boolean;
+  status?: "available" | "planned" | "unsupported";
+  source?: "backend" | "skill";
+  sourceSkillId?: string | null;
+  sourceSkillName?: string | null;
+  scriptPath?: string | null;
+  usage?: string | null;
+}
+
+export type ConnectorBrowserAccessStatus =
+  | "not-applicable"
+  | "needs-login"
+  | "granted"
+  | "unavailable";
+
+export interface ConnectorBrowserAccessRecord {
+  status: ConnectorBrowserAccessStatus;
+  policy: "persistent" | "per-run" | null;
+  readAllowed: boolean;
+  writeAllowedAfterApproval: boolean;
+  message: string;
+}
+
 export interface ConnectorStartLoginInput {
   redirectBaseUrl?: string | null;
 }
@@ -62,6 +95,81 @@ export interface ConnectorPublishDraftResult {
   checkedAt: string;
 }
 
+export interface ConnectorProfileRecord {
+  id: string | null;
+  username: string | null;
+  displayName: string | null;
+  bio: string | null;
+  followersText: string | null;
+  url: string | null;
+  rawText: string | null;
+}
+
+export interface ConnectorReadProfileResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "profile-read" | "failed";
+  accountLabel: string | null;
+  profile: ConnectorProfileRecord | null;
+  message: string;
+  checkedAt: string;
+}
+
+export interface ConnectorFollowerRecord {
+  username: string | null;
+  displayName: string | null;
+  profileUrl: string | null;
+  rawText: string;
+}
+
+export interface ConnectorFollowerListRecord {
+  items: ConnectorFollowerRecord[];
+  url: string | null;
+  rawText: string | null;
+}
+
+export interface ConnectorReadFollowerListResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "followers-read" | "failed";
+  accountLabel: string | null;
+  followers: ConnectorFollowerListRecord | null;
+  message: string;
+  checkedAt: string;
+}
+
+export interface ConnectorExecuteCapabilityInput {
+  capabilityId: string;
+  args?: Record<string, unknown>;
+}
+
+export type ConnectorExecuteCapabilityStatus =
+  | "completed"
+  | "failed"
+  | "unsupported"
+  | "requires-approval";
+
+export type ConnectorExecuteCapabilityResultType =
+  | "profile"
+  | "followers"
+  | "draft"
+  | "none";
+
+export interface ConnectorExecuteCapabilityResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  capabilityId: string;
+  action: ConnectorCapabilityAction | null;
+  status: ConnectorExecuteCapabilityStatus;
+  resultType: ConnectorExecuteCapabilityResultType;
+  accountLabel: string | null;
+  profile: ConnectorProfileRecord | null;
+  followers: ConnectorFollowerListRecord | null;
+  draft: ConnectorPublishDraftResult | null;
+  message: string;
+  checkedAt: string;
+}
+
 export interface ConnectorState {
   provider: ConnectorProvider;
   status: ConnectorStatus;
@@ -71,7 +179,24 @@ export interface ConnectorState {
   loginUrl: string | null;
   loginMode: ConnectorLoginMode | null;
   lastError: string | null;
+  browserAccess: ConnectorBrowserAccessRecord;
+  capabilities: ConnectorCapabilityRecord[];
   updatedAt: string;
+}
+
+export interface AgentConnectorIntegrationRecord {
+  provider: ConnectorProvider;
+  label: string;
+  status: ConnectorStatus;
+  loginMode: ConnectorLoginMode | null;
+  accountLabel: string | null;
+  connectedAt: string | null;
+  browserAccess: ConnectorBrowserAccessRecord;
+  capabilities: ConnectorCapabilityRecord[];
+  requiredBySkills: Array<{
+    id: string;
+    displayName: string;
+  }>;
 }
 
 export type ChromiumChannel = "chrome" | "msedge" | "chromium";
@@ -97,6 +222,11 @@ export interface ConnectorServiceLike {
     provider: ConnectorProvider,
     input: ConnectorPublishDraftInput,
   ): Promise<ConnectorPublishDraftResult>;
+  executeCapability(
+    provider: ConnectorProvider,
+    input: ConnectorExecuteCapabilityInput,
+  ): Promise<ConnectorExecuteCapabilityResult>;
+  readProfile(provider: ConnectorProvider): Promise<ConnectorReadProfileResult>;
   cancelLogin(provider: ConnectorProvider): Promise<ConnectorState>;
   disconnect(provider: ConnectorProvider): Promise<ConnectorState>;
   getDiagnostics(): Promise<ConnectorDiagnosticsRecord>;

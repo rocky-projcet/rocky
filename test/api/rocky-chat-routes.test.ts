@@ -27,6 +27,10 @@ import type {
   ConnectorBrowserDetector,
 } from "../../src/connectors/connector-service.js";
 import type { ConnectorBrowserDraftPublisher } from "../../src/connectors/browser-draft-publisher.js";
+import type {
+  ConnectorBrowserFollowerListReader,
+  ConnectorBrowserProfileReader,
+} from "../../src/connectors/browser-profile-reader.js";
 
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
@@ -155,6 +159,8 @@ function createRockyChatTestServer(
     ecountLookupService?: EcountLookupServiceLike;
     connectorBrowserDetector?: ConnectorBrowserDetector;
     connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
+    connectorBrowserProfileReader?: ConnectorBrowserProfileReader;
+    connectorBrowserFollowerListReader?: ConnectorBrowserFollowerListReader;
   } = {}
 ) {
   const agents: AgentRecord[] = [];
@@ -186,6 +192,8 @@ function createRockyChatTestServer(
     ecountLookupService: options.ecountLookupService,
     connectorBrowserDetector: options.connectorBrowserDetector,
     connectorBrowserDraftPublisher: options.connectorBrowserDraftPublisher,
+    connectorBrowserProfileReader: options.connectorBrowserProfileReader,
+    connectorBrowserFollowerListReader: options.connectorBrowserFollowerListReader,
     agentService: {
       async createAgent(input) {
         const agentId = input?.id ?? "rocky-core";
@@ -1443,6 +1451,7 @@ test("rocky chat reports used agent skills without exposing internal ids", async
 test("rocky chat includes connected Tistory draft publisher context for agent skills", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await mkdir(path.join(stateRoot, "connectors", "threads"), { recursive: true });
   await writeFile(
     path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
     JSON.stringify(
@@ -1450,6 +1459,19 @@ test("rocky chat includes connected Tistory draft publisher context for agent sk
         provider: "tistory",
         accountLabel: "Tistory 계정",
         connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(stateRoot, "connectors", "threads", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "threads",
+        accountLabel: "Threads 계정",
+        connectedAt: "2026-05-10T11:30:00.000Z",
         storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
       },
       null,
@@ -1500,9 +1522,15 @@ test("rocky chat includes connected Tistory draft publisher context for agent sk
     assert.match(agentContext, /계정 연동 상태/u);
     assert.match(agentContext, /Tistory: connected/u);
     assert.match(agentContext, /draft_publish=server-managed/u);
+    assert.match(agentContext, /Threads: connected/u);
     assert.ok(
       sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
         instruction.includes("Rocky server submits the Tistory draft after this turn")
+      )
+    );
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Rocky-managed browser account connectors may be connected")
       )
     );
     assert.equal(
@@ -1510,6 +1538,251 @@ test("rocky chat includes connected Tistory draft publisher context for agent sk
         instruction.includes("127.0.0.1:3000/connectors/tistory/publish-draft")
       ),
       false
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat does not attempt Tistory draft publish for read-only connector checks", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  const { agents, completedRunSummaries, server } =
+    createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  completedRunSummaries.push(
+    "Tistory 연동은 연결되어 있고, 게시 기능은 별도 승인 후에만 실행됩니다."
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "티스토리 연동 목록을 확인해줘. 게시나 수정은 하지 마.",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+
+    assert.doesNotMatch(refreshed.messages[1]?.text ?? "", /Tistory 발행 결과/u);
+    assert.doesNotMatch(
+      refreshed.messages[1]?.text ?? "",
+      /rocky-tistory-draft-publish/u,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat injects Threads skill capabilities for follower requests", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "threads"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "threads", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "threads",
+        accountLabel: "64342357840",
+        connectedAt: "2026-05-10T02:49:54.141Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  let followerReaderCalls = 0;
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBrowserDetector: async () => ({
+        available: true,
+        channel: "chromium",
+        message: "Playwright 번들 Chromium 사용",
+      }),
+      connectorBrowserFollowerListReader: async (input) => {
+        followerReaderCalls += 1;
+        assert.equal(input.provider, "threads");
+        assert.equal(input.accountLabel, "64342357840");
+        assert.equal(input.limit, 200);
+        return {
+          ok: true,
+          provider: "threads",
+          status: "followers-read",
+          accountLabel: input.accountLabel,
+          followers: {
+            items: [
+              {
+                username: "pixelberry",
+                displayName: "Pixel Berry",
+                profileUrl: "https://www.threads.net/@pixelberry",
+                rawText: "Pixel Berry @pixelberry",
+              },
+            ],
+            url: "https://www.threads.net/@rocky_threads/followers",
+            rawText: "Pixel Berry\n@pixelberry",
+          },
+          message: "Threads 팔로워 1명을 연결된 브라우저 세션으로 조회했습니다.",
+          checkedAt: input.now(),
+        };
+      },
+    });
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "threads-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "threads-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "threads-agent",
+      name: "Threads Agent",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const skillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-sns-threads"
+  );
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    "---\nname: md-sns-threads\n---\n# SNS · Threads 콘텐츠\n",
+  );
+  const templateResponse = await server.inject({
+    method: "PUT",
+    url: "/skills/template.threads",
+    payload: {
+      id: "template.threads",
+      source: "user",
+      category: "content",
+      title: "SNS · Threads 콘텐츠",
+      description: "Threads 콘텐츠와 계정 상태를 확인합니다.",
+      triggerLabel: "Threads",
+      requiredInputs: ["요청"],
+      outputFormatLabel: "텍스트",
+      defaultInstructions: "Threads 요청을 처리합니다.",
+      skill: {
+        id: "md-sns-threads",
+        displayName: "SNS · Threads 콘텐츠",
+        description: "Use when the user asks for Threads content or account checks.",
+        invocation: "$md-sns-threads",
+        skillMarkdown: "---\nname: md-sns-threads\n---\n# SNS · Threads 콘텐츠\n",
+        openAiYaml: [
+          "interface:",
+          '  display_name: "SNS · Threads 콘텐츠"',
+          '  short_description: "Threads 콘텐츠와 계정 상태를 확인합니다."',
+          '  default_prompt: "Use $md-sns-threads for Threads requests."',
+          "",
+        ].join("\n"),
+        syncStatus: "local",
+        workspacePath: null,
+      },
+      sortOrder: 1,
+      createdAt: "2026-05-10T00:00:00.000Z",
+      updatedAt: "2026-05-10T00:01:00.000Z",
+    },
+  });
+  assert.equal(templateResponse.statusCode, 200);
+  completedRunSummaries.push("Threads 팔로워 목록을 확인했습니다.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "팔로워 확인해줘",
+        agentId: "threads-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /계정 연동 상태/u);
+    assert.match(agentContext, /연동 조회 결과/u);
+    assert.match(agentContext, /Threads 팔로워 목록: ready/u);
+    assert.match(
+      agentContext,
+      /file=inputs\/rocky-chat-.*\/integrations\/threads\/followers\.json/u,
+    );
+    assert.match(agentContext, /Threads: connected/u);
+    assert.match(
+      agentContext,
+      /threads\.followers\.read:read:status=available:skill_id=md-sns-threads:skill=SNS · Threads 콘텐츠:script=scripts\/threads-crud\.mjs/u,
+    );
+    await access(path.join(skillRoot, "connector-capabilities.json"));
+    await access(path.join(skillRoot, "scripts", "threads-crud.mjs"));
+    const followerLookupPath = path.join(
+      workspaceRoot,
+      "inputs",
+      created.id,
+      "integrations",
+      "threads",
+      "followers.json"
+    );
+    const followerLookup = JSON.parse(await readFile(followerLookupPath, "utf8"));
+    assert.equal(followerLookup.followers[0]?.username, "pixelberry");
+    assert.equal(followerReaderCalls, 1);
+    assert.doesNotMatch(agentContext, /Threads: ready/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Prepared integration lookup results may be listed")
+      )
     );
   } finally {
     await server.close();

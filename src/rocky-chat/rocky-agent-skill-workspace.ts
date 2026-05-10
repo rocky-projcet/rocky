@@ -9,6 +9,11 @@ import {
 
 import type { AgentRecord } from "../agents/agent-types.js";
 import type {
+  ConnectorBrowserAccessRecord,
+  ConnectorCapabilityRecord,
+  ConnectorProfileRecord,
+} from "../connectors/connector-types.js";
+import type {
   RockyAttachmentRecord,
   RockyChatDomain,
   RockyDispatchRecord,
@@ -34,7 +39,7 @@ export interface AgentEcountLookupInstruction {
 }
 
 export interface AgentPreparedIntegrationSummary {
-  provider: "ecount";
+  provider: "ecount" | "threads";
   dataset: string;
   title: string;
   status: "ready" | "failed" | "unsupported" | "not-configured";
@@ -55,7 +60,23 @@ export interface AgentConnectorSummary {
   loginMode: string | null;
   accountLabel: string | null;
   connectedAt: string | null;
+  browserAccess: ConnectorBrowserAccessRecord;
+  capabilities: ConnectorCapabilityRecord[];
   draftPublishing: "server-managed" | null;
+  requiredBySkills?: Array<{
+    id: string;
+    displayName: string;
+  }>;
+}
+
+export interface AgentConnectorProfileSummary {
+  provider: string;
+  label: string;
+  status: "ready" | "failed" | "not-connected" | "unsupported";
+  accountLabel: string | null;
+  profile: ConnectorProfileRecord | null;
+  message: string;
+  checkedAt: string | null;
 }
 
 function formatList(items: string[]): string {
@@ -193,6 +214,33 @@ function formatPreparedIntegrationResults(
     .join("\n");
 }
 
+function formatConnectorProfileResults(
+  summaries: AgentConnectorProfileSummary[]
+): string {
+  if (summaries.length === 0) {
+    return "- 없음";
+  }
+
+  return summaries
+    .map((summary) => {
+      const profile = summary.profile;
+      const details = [
+        summary.accountLabel ? `account=${summary.accountLabel}` : null,
+        profile?.id ? `id=${profile.id}` : null,
+        profile?.username ? `username=${profile.username}` : null,
+        profile?.displayName ? `display_name=${profile.displayName}` : null,
+        profile?.bio ? `bio=${profile.bio}` : null,
+        profile?.followersText ? `followers=${profile.followersText}` : null,
+        profile?.url ? `url=${profile.url}` : null,
+        summary.checkedAt ? `checked_at=${summary.checkedAt}` : null,
+      ].filter(Boolean);
+      return `- ${summary.label}: ${summary.status}; ${summary.message}${
+        details.length > 0 ? ` (${details.join(", ")})` : ""
+      }`;
+    })
+    .join("\n");
+}
+
 function formatConnectorSummaries(summaries: AgentConnectorSummary[]): string {
   if (summaries.length === 0) {
     return "- 없음";
@@ -204,7 +252,29 @@ function formatConnectorSummaries(summaries: AgentConnectorSummary[]): string {
         summary.loginMode ? `mode=${summary.loginMode}` : null,
         summary.accountLabel ? `account=${summary.accountLabel}` : null,
         summary.connectedAt ? `connected_at=${summary.connectedAt}` : null,
+        `browser=${summary.browserAccess.status}${
+          summary.browserAccess.policy ? `:${summary.browserAccess.policy}` : ""
+        }`,
         summary.draftPublishing ? `draft_publish=${summary.draftPublishing}` : null,
+        summary.capabilities.length > 0
+          ? `capabilities=${summary.capabilities
+              .map((capability) =>
+                `${capability.id}:${capability.action}${
+                  capability.requiresApproval ? ":approval" : ""
+                }${capability.status ? `:status=${capability.status}` : ""}${
+                  capability.sourceSkillId ? `:skill_id=${capability.sourceSkillId}` : ""}${
+                  capability.sourceSkillName ? `:skill=${capability.sourceSkillName}` : ""
+                }${capability.scriptPath ? `:script=${capability.scriptPath}` : ""}${
+                  capability.usage ? `:usage=${capability.usage}` : ""
+                }`
+              )
+              .join("|")}`
+          : null,
+        summary.requiredBySkills && summary.requiredBySkills.length > 0
+          ? `required_by=${summary.requiredBySkills
+              .map((skill) => skill.displayName)
+              .join("|")}`
+          : null,
       ].filter(Boolean);
       return `- ${summary.label}: ${summary.status}${
         details.length > 0 ? ` (${details.join(", ")})` : ""
@@ -413,6 +483,7 @@ export function buildAgentTurnContextMarkdown(input: {
   attachments: RockyAttachmentRecord[];
   packagedSkillInputs?: PackagedSkillInputSummary[];
   preparedIntegrations?: AgentPreparedIntegrationSummary[];
+  connectorProfileResults?: AgentConnectorProfileSummary[];
   connectorSummaries?: AgentConnectorSummary[];
   timestamp: string;
 }): string {
@@ -439,6 +510,9 @@ export function buildAgentTurnContextMarkdown(input: {
     "연동 조회 결과:",
     formatPreparedIntegrationResults(input.preparedIntegrations ?? []),
     "",
+    "커넥터 프로필 조회 결과:",
+    formatConnectorProfileResults(input.connectorProfileResults ?? []),
+    "",
     "계정 연동 상태:",
     formatConnectorSummaries(input.connectorSummaries ?? []),
     "",
@@ -456,6 +530,7 @@ export async function writeAgentTurnContextFile(input: {
   dispatch: RockyDispatchRecord;
   attachments: RockyAttachmentRecord[];
   preparedIntegrations?: AgentPreparedIntegrationSummary[];
+  connectorProfileResults?: AgentConnectorProfileSummary[];
   connectorSummaries?: AgentConnectorSummary[];
   timestamp: string;
 }): Promise<string> {
@@ -473,6 +548,7 @@ export async function writeAgentTurnContextFile(input: {
         input.agent.workspaceRoot
       ),
       preparedIntegrations: input.preparedIntegrations ?? [],
+      connectorProfileResults: input.connectorProfileResults ?? [],
       connectorSummaries: input.connectorSummaries ?? [],
       timestamp: input.timestamp,
     }),
@@ -506,6 +582,9 @@ export function buildAgentTurnSystemInstructions(input: {
   chatId: string;
   ecountLookup?: AgentEcountLookupInstruction | null;
   hasTistoryDraftPublisher?: boolean;
+  hasConnectedBrowserConnector?: boolean;
+  hasConnectorProfileResults?: boolean;
+  hasPreparedIntegrationResults?: boolean;
 }): string[] {
   const outputDirectory = rockyTaskOutputDirectory(input.chatId);
 
@@ -538,6 +617,12 @@ export function buildAgentTurnSystemInstructions(input: {
             "For ECOUNT lookup requests, tell the user to complete the ECOUNT ERP connection test in the integration settings. Do not ask for API keys, passwords, or session IDs in chat.",
           ]
       : []),
+    ...(input.hasPreparedIntegrationResults
+      ? [
+          "Prepared integration lookup results may be listed in the turn context. Use those results and files as the source of truth before attempting any connector capability script for the same read.",
+          "If a prepared connector lookup file is listed, read that file once and reuse it for summaries and follow-up analysis instead of calling localhost, 127.0.0.1, or Rocky HTTP connector endpoints.",
+        ]
+      : []),
     ...(input.hasTistoryDraftPublisher
       ? [
           "A Rocky-managed Tistory account connector is connected for this turn. The connected account summary and server-managed draft publishing status are listed in the turn context.",
@@ -546,6 +631,21 @@ export function buildAgentTurnSystemInstructions(input: {
           "The Tistory connector currently saves drafts only. Do not claim public publishing unless Rocky server appends an explicit public publishing result.",
           "If Rocky server appends a Tistory draft result, report that result and keep the publish-ready file path.",
           "Never print browser cookies, session storage, OAuth tokens, API keys, or connector secret values.",
+        ]
+      : []),
+    ...(input.hasConnectedBrowserConnector
+      ? [
+          "Rocky-managed browser account connectors may be connected for this turn. Use the connector summary in the turn context as the source of truth for connected account state.",
+          "When a connector capability lists a skill script, read the owning installed skill instructions and use that script for the provider-specific work instead of asking Rocky backend for a new one-off connector endpoint. The script path is relative to `.agents/skills/<skill_id>/`.",
+          "Use only connector capabilities with no status or status=available for execution. Treat status=planned or status=unsupported as documentation, not executable functionality.",
+          "Connector capabilities marked as read can be used without extra approval. Connector capabilities marked as write or approval require explicit user approval before posting, editing, deleting, submitting, or otherwise exposing changes externally.",
+          "Do not ask the user for connector passwords, two-factor authentication codes, browser cookies, session storage, OAuth tokens, or API keys in chat.",
+          "If a connected browser session is expired, logged out, or asks for two-factor authentication again, tell the user to re-authenticate from Rocky account integrations.",
+        ]
+      : []),
+    ...(input.hasConnectorProfileResults
+      ? [
+          "Connector profile read results may be listed in the turn context. Use those prepared results as the source of truth and do not invoke desktop browser automation to re-check the same profile.",
         ]
       : []),
   ];

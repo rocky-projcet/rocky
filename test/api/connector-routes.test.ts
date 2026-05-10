@@ -164,6 +164,177 @@ test("connector OAuth reports missing app credentials without marking connected"
   }
 });
 
+test("connector custom browser login connects Threads without OAuth credentials", async () => {
+  let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
+  let profileReaderCalls = 0;
+  let followerReaderCalls = 0;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-10T11:30:00.000Z",
+    connectorBaseEnv: {},
+    connectorBrowserDetector: async () => ({
+      available: true,
+      channel: "chrome",
+      message: "시스템 Chrome 사용",
+    }),
+    connectorBrowserLoginStarter: async (input) => {
+      assert.equal(input.adapter.provider, "threads");
+      assert.equal(input.adapter.loginUrl, "https://www.threads.net/login");
+      assert.equal(input.channel, "chrome");
+      assert.equal(
+        input.userDataDir,
+        path.join(stateRoot, "connectors", "threads", "browser-profile"),
+      );
+      onEvent = input.onEvent;
+      return {
+        cancel: async () => {},
+      };
+    },
+    connectorBrowserProfileReader: async (input) => {
+      profileReaderCalls += 1;
+      assert.equal(input.provider, "threads");
+      assert.equal(input.accountLabel, "Threads 계정");
+      assert.equal(input.channel, "chrome");
+      return {
+        ok: true,
+        provider: "threads",
+        status: "profile-read",
+        accountLabel: input.accountLabel,
+        profile: {
+          id: "64342357840",
+          username: "rocky_threads",
+          displayName: "Rocky Threads",
+          bio: "테스트 프로필",
+          followersText: "팔로워 12명",
+          url: "https://www.threads.net/@rocky_threads",
+          rawText: null,
+        },
+        message: "Threads 프로필을 연결된 브라우저 세션으로 조회했습니다.",
+        checkedAt: input.now(),
+      };
+    },
+    connectorBrowserFollowerListReader: async (input) => {
+      followerReaderCalls += 1;
+      assert.equal(input.provider, "threads");
+      assert.equal(input.accountLabel, "Threads 계정");
+      assert.equal(input.channel, "chrome");
+      assert.equal(input.limit, 10);
+      return {
+        ok: true,
+        provider: "threads",
+        status: "followers-read",
+        accountLabel: input.accountLabel,
+        followers: {
+          items: [
+            {
+              username: "pixelberry",
+              displayName: "Pixel Berry",
+              profileUrl: "https://www.threads.net/@pixelberry",
+              rawText: "Pixel Berry @pixelberry",
+            },
+          ],
+          url: "https://www.threads.net/@rocky_threads/followers",
+          rawText: "Pixel Berry\n@pixelberry",
+        },
+        message: "Threads 팔로워 1명을 연결된 브라우저 세션으로 조회했습니다.",
+        checkedAt: input.now(),
+      };
+    },
+    nativeUrlOpener: async () => {
+      throw new Error("should not open OAuth URL");
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/threads/login",
+    });
+    assert.equal(response.statusCode, 202);
+    const body = response.json<ConnectorState>();
+    assert.equal(body.status, "connecting");
+    assert.equal(body.loginMode, "custom-browser");
+    assert.equal(body.loginUrl, null);
+    assert.equal(body.lastError, null);
+    assert.ok(onEvent);
+
+    onEvent({
+      kind: "connected",
+      accountLabel: "Threads 계정",
+      storageStateJson: JSON.stringify({
+        cookies: [{ name: "sessionid", value: "session", domain: ".threads.net" }],
+        origins: [],
+      }),
+    });
+
+    const connected = await waitForConnectorState(
+      server,
+      "threads",
+      (state) => state.status === "connected",
+    );
+    assert.equal(connected.accountLabel, "Threads 계정");
+    assert.equal(connected.connectedAt, "2026-05-10T11:30:00.000Z");
+    assert.equal(connected.loginMode, "custom-browser");
+    assert.equal(connected.browserAccess.status, "granted");
+    assert.equal(connected.browserAccess.policy, "persistent");
+    assert.ok(
+      connected.capabilities.some(
+        (capability) =>
+          capability.id === "threads.account.read" &&
+          capability.action === "read" &&
+          capability.requiresApproval === false,
+      ),
+    );
+    assert.ok(
+      connected.capabilities.some(
+        (capability) =>
+          capability.id === "threads.content.write" &&
+          capability.action === "write" &&
+        capability.requiresApproval === true,
+      ),
+    );
+
+    const profileResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/threads/profile",
+    });
+    assert.equal(profileResponse.statusCode, 200);
+    const profileBody = profileResponse.json();
+    assert.equal(profileBody.ok, true);
+    assert.equal(profileBody.profile.username, "rocky_threads");
+    assert.equal(profileReaderCalls, 1);
+
+    const executeFollowersResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/threads/capabilities/threads.followers.read/execute",
+      payload: {
+        args: {
+          limit: 10,
+        },
+      },
+    });
+    assert.equal(executeFollowersResponse.statusCode, 200);
+    const followersBody = executeFollowersResponse.json();
+    assert.equal(followersBody.ok, true);
+    assert.equal(followersBody.resultType, "followers");
+    assert.equal(followersBody.followers.items[0].username, "pixelberry");
+    assert.equal(followerReaderCalls, 1);
+
+    const executeWriteResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/threads/capabilities/threads.content.write/execute",
+    });
+    assert.equal(executeWriteResponse.statusCode, 409);
+    const executeWriteBody = executeWriteResponse.json();
+    assert.equal(executeWriteBody.ok, false);
+    assert.equal(executeWriteBody.status, "requires-approval");
+    assert.equal(profileReaderCalls, 1);
+  } finally {
+    await server.close();
+  }
+});
+
 test("connector custom browser login connects Tistory only after session detection", async () => {
   let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
   let publishedDraft:

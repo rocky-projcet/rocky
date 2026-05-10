@@ -351,7 +351,7 @@ export function SkillNewPage() {
 
   return (
     <PageContainer>
-      <header className="flex flex-wrap items-center justify-between gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 pt-10">
         <div className="flex items-center gap-3">
           <div className={cn("flex size-10 items-center justify-center rounded-xl", chosenTheme.icon)}>
             <ChosenIcon className="size-5" />

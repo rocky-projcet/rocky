@@ -177,7 +177,7 @@ export function AgentNewPage() {
 
   return (
     <PageContainer>
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 pt-10">
         <div className="space-y-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>

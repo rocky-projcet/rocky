@@ -311,6 +311,15 @@ function resolvePlaywrightBrowsersPath(
   return path.join(baseHome, ".cache", "ms-playwright");
 }
 
+function resolveCurrentHome(baseEnv?: NodeJS.ProcessEnv): string | null {
+  const home =
+    baseEnv?.HOME?.trim() ||
+    baseEnv?.USERPROFILE?.trim() ||
+    os.homedir();
+
+  return home ? path.resolve(home) : null;
+}
+
 function resolveSandboxMode(session: RuntimeSession): string | null {
   if (session.config.fullAuto) {
     return "workspace-write";
@@ -368,11 +377,11 @@ function normalizeAuthSource({
     };
   }
 
-  const currentHome = baseEnv?.HOME;
+  const currentHome = resolveCurrentHome(baseEnv);
   return {
     kind: "current-home",
     authProfileId: null,
-    sourceHome: currentHome ? path.resolve(currentHome) : null,
+    sourceHome: currentHome,
   };
 }
 
@@ -397,7 +406,7 @@ export function shouldUseSharedHomeForWritableSandbox({
     return false;
   }
 
-  const baseHome = baseEnv.HOME;
+  const baseHome = resolveCurrentHome(baseEnv);
   if (!baseHome) {
     return false;
   }
@@ -437,7 +446,7 @@ export async function prepareCodexRuntimeEnvironment({
     baseEnv,
     seedAuthFromCurrentHome,
   });
-  const baseHome = baseEnv.HOME ? path.resolve(baseEnv.HOME) : null;
+  const baseHome = resolveCurrentHome(baseEnv);
   const managedAuthHome =
     normalizedAuthSource.kind === "managed-home"
       ? normalizedAuthSource.sourceHome

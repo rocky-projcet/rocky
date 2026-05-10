@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -35,6 +35,10 @@ import {
   type RockyOrchestrationSkill,
 } from "./rocky-skill-registry.js";
 import {
+  type AgentEcountLookupInstruction,
+  type AgentConnectorSummary,
+  type AgentConnectorProfileSummary,
+  type AgentPreparedIntegrationSummary,
   buildAgentTurnSystemInstructions,
   buildRockyTurnSystemInstructions,
   rockyTaskAttachmentDirectory,
@@ -84,6 +88,26 @@ import type {
 import type { AgentSessionRecord } from "../sessions/session-types.js";
 import { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type { RuntimeSkillTemplateRecord } from "../skills/skill-template-store.js";
+import {
+  EcountSettingsService,
+  type EcountSettingsServiceLike,
+} from "../integrations/ecount-settings-service.js";
+import {
+  EcountConnectionService,
+  normalizeEcountDatasetId,
+  type EcountDatasetId,
+  type EcountDatasetQueryInput,
+  type EcountDatasetQueryResult,
+  type EcountLookupServiceLike,
+} from "../integrations/ecount-connection-service.js";
+import type {
+  ConnectorPublishDraftInput,
+  ConnectorPublishDraftResult,
+  ConnectorProvider,
+  ConnectorServiceLike,
+} from "../connectors/connector-types.js";
+import { listAgentConnectorIntegrations } from "../connectors/agent-connector-integrations.js";
+import { getConnectorAdapter, listSupportedProviders } from "../connectors/adapters.js";
 
 export interface RockyChatServiceOptions {
   stateRoot?: string;
@@ -92,6 +116,9 @@ export interface RockyChatServiceOptions {
   agentService?: RockyAgentServiceLike;
   sessionService?: RockySessionServiceLike;
   skillTemplateStore?: SkillTemplateStore;
+  ecountSettingsService?: EcountSettingsServiceLike;
+  ecountLookupService?: EcountLookupServiceLike;
+  connectorService?: ConnectorServiceLike;
 }
 
 type RockyAttachmentDraft = RockyAttachmentRecord & {
@@ -212,10 +239,266 @@ function withAgentSoul(message: string, soul: string | null | undefined): string
   return `# 직원 페르소나 (SOUL.md)\n${trimmedSoul}\n\n---\n\n${message}`;
 }
 
+function mentionsEcountIntegration(content: string): boolean {
+  return /ecount|이카운트/iu.test(content);
+}
+
+const ECOUNT_DATASET_KEYWORDS: Array<{
+  dataset: EcountDatasetId;
+  keywords: RegExp[];
+}> = [
+  {
+    dataset: "warehouseInventory",
+    keywords: [/창고\s*별\s*재고/u, /warehouse\s*inventory/iu, /location\s*inventory/iu],
+  },
+  {
+    dataset: "accounting",
+    keywords: [/매출\s*[·/]\s*매입/u, /매출매입/u, /회계/u, /accounting/iu, /invoice/iu],
+  },
+  {
+    dataset: "products",
+    keywords: [/품목/u, /상품/u, /\bproducts?\b/iu, /\bitems?\b/iu],
+  },
+  {
+    dataset: "inventory",
+    keywords: [/재고\s*현황/u, /\binventory\b/iu, /inventory\s*balance/iu],
+  },
+  {
+    dataset: "customers",
+    keywords: [/거래처/u, /\bcustomers?\b/iu, /\bvendors?\b/iu],
+  },
+  {
+    dataset: "sales",
+    keywords: [/판매/u, /매출\s*분석/u, /\bsales?\b/iu],
+  },
+  {
+    dataset: "orders",
+    keywords: [/주문서/u, /주문/u, /\borders?\b/iu, /sales\s*order/iu],
+  },
+  {
+    dataset: "purchases",
+    keywords: [/구매/u, /발주서/u, /\bpurchases?\b/iu, /purchase\s*order/iu],
+  },
+];
+
+const DEFAULT_ECOUNT_SKILL_DATASETS: EcountDatasetId[] = [
+  "products",
+  "inventory",
+  "customers",
+  "sales",
+  "warehouseInventory",
+  "orders",
+  "purchases",
+  "accounting",
+];
+
+const ECOUNT_DATASET_LABELS: Record<EcountDatasetId, string> = {
+  products: "품목",
+  inventory: "재고현황",
+  customers: "거래처",
+  sales: "판매",
+  warehouseInventory: "창고별 재고",
+  orders: "주문서",
+  purchases: "구매",
+  accounting: "매출·매입",
+};
+
+function ecountDatasetTitle(dataset: EcountDatasetId | string): string {
+  return `ECOUNT ERP ${
+    ECOUNT_DATASET_LABELS[dataset as EcountDatasetId] ?? dataset
+  } 조회`;
+}
+
+function uniqueEcountDatasets(datasets: Array<EcountDatasetId | string>): EcountDatasetId[] {
+  const seen = new Set<EcountDatasetId>();
+  for (const dataset of datasets) {
+    const normalized = normalizeEcountDatasetId(String(dataset));
+    if (!DEFAULT_ECOUNT_SKILL_DATASETS.includes(normalized as EcountDatasetId)) {
+      continue;
+    }
+    const typed = normalized as EcountDatasetId;
+    if (seen.has(typed)) {
+      continue;
+    }
+    seen.add(typed);
+  }
+  return DEFAULT_ECOUNT_SKILL_DATASETS.filter((dataset) => seen.has(dataset));
+}
+
+function extractEcountDatasets(content: string): EcountDatasetId[] {
+  const datasets: EcountDatasetId[] = [];
+  for (const entry of ECOUNT_DATASET_KEYWORDS) {
+    if (entry.keywords.some((keyword) => keyword.test(content))) {
+      datasets.push(entry.dataset);
+    }
+  }
+  return uniqueEcountDatasets(datasets);
+}
+
+function shouldPrepareEcountLookup(input: {
+  message: string;
+  hasSelectedEcountSkill: boolean;
+  messageDatasets: EcountDatasetId[];
+}): boolean {
+  const normalized = input.message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const explicitIntegrationIntent = /ecount|이카운트|erp/u.test(normalized);
+  const lookupIntent = /조회|검색|목록|전체|확인|가져|보여|새로고침|refresh|list|all|lookup|search/u.test(
+    normalized
+  );
+  const actionIntent = /진행|실행|시작|분석|보고서|pdf|해줘|해주세요|yes|예/u.test(
+    normalized
+  );
+  if (input.messageDatasets.length > 0 && (lookupIntent || actionIntent)) {
+    return true;
+  }
+  if (input.hasSelectedEcountSkill && (lookupIntent || actionIntent || explicitIntegrationIntent)) {
+    return true;
+  }
+  return explicitIntegrationIntent && lookupIntent;
+}
+
+function ecountDatasetLookupWorkspacePath(chatId: string, dataset: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "ecount",
+    `${dataset}.json`
+  );
+}
+
+function threadsFollowerLookupWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "threads",
+    "followers.json"
+  );
+}
+
+function legacyEcountProductLookupWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "ecount-products.json"
+  );
+}
+
+function ecountQueryOptionsForDataset(dataset: EcountDatasetId): Omit<EcountDatasetQueryInput, "dataset"> {
+  return dataset === "products" ? {} : { filters: { period: "recent-30-days" } };
+}
+
+function ecountResultToPreparedSummary(
+  result: EcountDatasetQueryResult,
+  workspacePath: string | null,
+  source: AgentPreparedIntegrationSummary["source"]
+): AgentPreparedIntegrationSummary {
+  return {
+    provider: "ecount",
+    dataset: String(result.dataset),
+    title: result.title,
+    status: result.status,
+    api: result.api,
+    count: result.count,
+    returnedCount: result.returnedCount,
+    checkedAt: result.checkedAt,
+    workspacePath,
+    message: result.message,
+    diagnostic: result.diagnostics?.detail ?? null,
+    source,
+  };
+}
+
+function ecountProductLookupToDatasetResult(
+  result: Awaited<ReturnType<EcountLookupServiceLike["getBasicProductsList"]>>
+): EcountDatasetQueryResult {
+  return {
+    ok: result.ok,
+    provider: "ecount",
+    dataset: "products",
+    title: "ECOUNT ERP 품목 조회",
+    status: result.ok ? "ready" : "failed",
+    accountLabel: result.accountLabel,
+    zone: result.zone,
+    checkedAt: result.checkedAt,
+    api: result.api,
+    count: result.count,
+    returnedCount: result.returnedCount,
+    records: result.products.map((product) => ({
+      code: product.code,
+      name: product.name,
+      spec: product.spec,
+      unit: product.unit,
+      raw: product.raw,
+    })),
+    message: result.message,
+    diagnostics: result.diagnostics,
+  };
+}
+
+function unsupportedEcountDatasetResult(dataset: EcountDatasetId): EcountDatasetQueryResult {
+  return {
+    ok: false,
+    provider: "ecount",
+    dataset,
+    title: `ECOUNT ERP ${dataset} 조회`,
+    status: "unsupported",
+    accountLabel: null,
+    zone: null,
+    checkedAt: new Date().toISOString(),
+    api: null,
+    count: 0,
+    returnedCount: 0,
+    records: [],
+    message: `ECOUNT ${dataset} lookup is not supported by the current read-only backend.`,
+    diagnostics: {
+      stage: "capability",
+      detail: "The current ECOUNT lookup service does not implement this dataset.",
+    },
+  };
+}
+
+function latestUsedSkillId(chat: RockyChatRecord): string | null {
+  for (const message of [...chat.messages].reverse()) {
+    const skillId = message.usedSkills[0]?.id;
+    if (skillId) {
+      return skillId;
+    }
+  }
+  return null;
+}
+
+function shouldUseSkillScopeForEcountLookup(message: string): boolean {
+  const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  return /진행|실행|시작|분석|보고서|pdf|새로고침|refresh|erp|이카운트|ecount/u.test(
+    normalized
+  );
+}
+
+function shouldPrepareEcountProductLookup(message: string): boolean {
+  const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const productIntent = /품목|상품|product|item/u.test(normalized);
+  const lookupIntent = /조회|검색|목록|전체|확인|가져|보여|list|all|lookup|search/u.test(
+    normalized
+  );
+  return productIntent && lookupIntent;
+}
+
+function ecountProductLookupWorkspacePath(chatId: string): string {
+  return legacyEcountProductLookupWorkspacePath(chatId);
+}
+
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
 const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
+const TISTORY_DRAFT_PUBLISH_MARKER = "<!-- rocky-tistory-draft-publish:";
 
 function requestMessageOrAttachmentDefault(input: {
   message: string;
@@ -342,6 +625,24 @@ function hasDeleteSignal(message: string): boolean {
   return /삭제|지워|제거|delete|remove/u.test(compactText(message).toLowerCase());
 }
 
+function shouldPrepareThreadsFollowerLookup(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /팔로워|followers?|follower\s+names?/iu.test(compact);
+}
+
+function hasAvailableConnectorCapability(
+  summary: AgentConnectorSummary,
+  capabilityId: string
+): boolean {
+  return summary.capabilities.some(
+    (capability) =>
+      capability.id === capabilityId &&
+      (capability.status === undefined || capability.status === "available") &&
+      capability.action === "read" &&
+      !capability.requiresApproval
+  );
+}
+
 function formatSkillList(skillIds: string[]): string {
   if (skillIds.length === 0) {
     return "- 없음";
@@ -352,6 +653,156 @@ function formatSkillList(skillIds: string[]): string {
 
 function usedSkillMarkerPattern(): RegExp {
   return /<!--\s*rocky-used-skills:\s*(\[[\s\S]*?\])\s*-->/giu;
+}
+
+interface TistoryPublishReadyDraft {
+  workspacePath: string;
+  input: ConnectorPublishDraftInput;
+}
+
+function shouldAttemptTistoryDraftPublish(input: {
+  request: string;
+  output: string | null;
+}): boolean {
+  if (!input.output || input.output.includes(TISTORY_DRAFT_PUBLISH_MARKER)) {
+    return false;
+  }
+  const request = compactText(input.request).toLowerCase();
+  const tistorySignal = /티스토리|tistory/iu.test(request);
+  const publishIntent = /발행|업로드|올려|게시|임시저장|다시\s*발행|publish|upload|draft/iu.test(
+    request
+  );
+  const negativeIntent =
+    /하지\s*마|하지\s*말|금지|취소|하지\s*않|do not|don't|dont|no\s+(?:publish|upload|post|draft)/iu.test(
+      request
+    );
+  return tistorySignal && publishIntent && !negativeIntent;
+}
+
+function extractMarkdownWorkspacePaths(text: string): string[] {
+  const paths = new Set<string>();
+  const pattern = /(?:^|[\s(["'`])((?:\.\/)?outputs\/[^\s)"'`<>]+?\.md)/giu;
+  for (const match of text.matchAll(pattern)) {
+    const raw = match[1]?.trim();
+    if (!raw) {
+      continue;
+    }
+    paths.add(raw.replace(/^[.][/\\]/u, "").replace(/[.,;:]+$/u, ""));
+  }
+  return [...paths];
+}
+
+function normalizeWorkspaceRelativePath(value: string): string | null {
+  const trimmed = value.trim().replace(/^[.][/\\]/u, "");
+  if (!trimmed || path.isAbsolute(trimmed)) {
+    return null;
+  }
+  const normalized = path.posix.normalize(trimmed.replaceAll("\\", "/"));
+  if (
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.includes("/../")
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function parseTistoryPublishReadyMarkdown(input: {
+  workspacePath: string;
+  markdown: string;
+}): TistoryPublishReadyDraft | null {
+  const titleSection = findMarkdownSection(input.markdown, /제목/u);
+  const bodySection = findMarkdownSection(input.markdown, /본문|원고|내용/u);
+  const tagsSection = findMarkdownSection(input.markdown, /태그|tags?/iu);
+  const title =
+    firstContentLine(titleSection) ??
+    input.markdown.match(/^#\s+(.+)$/mu)?.[1]?.trim() ??
+    null;
+  const contentMarkdown = stripSectionDecorations(bodySection ?? "").trim();
+
+  if (!title || !contentMarkdown) {
+    return null;
+  }
+
+  return {
+    workspacePath: input.workspacePath,
+    input: {
+      title,
+      contentMarkdown,
+      tags: splitTistoryTags(tagsSection ?? ""),
+      visibility: "draft",
+    },
+  };
+}
+
+function findMarkdownSection(markdown: string, headingPattern: RegExp): string | null {
+  const headings = [...markdown.matchAll(/^#{1,3}\s+(.+?)\s*$/gmu)];
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index];
+    const title = heading[1] ?? "";
+    if (!headingPattern.test(title)) {
+      continue;
+    }
+    const start = (heading.index ?? 0) + heading[0].length;
+    const next = headings[index + 1];
+    const end = next?.index ?? markdown.length;
+    return stripSectionDecorations(markdown.slice(start, end));
+  }
+  return null;
+}
+
+function stripSectionDecorations(value: string): string {
+  return value
+    .split(/\r?\n/u)
+    .filter((line) => !/^[-*_]{3,}\s*$/u.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
+function firstContentLine(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  return (
+    stripSectionDecorations(value)
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find(Boolean) ?? null
+  );
+}
+
+function splitTistoryTags(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[,\n]/u)
+        .map((tag) => tag.trim().replace(/^#+/u, ""))
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function appendTistoryDraftPublishResult(input: {
+  output: string;
+  draft: TistoryPublishReadyDraft;
+  result: ConnectorPublishDraftResult;
+}): string {
+  const lines = [
+    input.output.trimEnd(),
+    "",
+    "---",
+    "",
+    "Tistory 발행 결과:",
+    `- 상태: ${input.result.ok ? "임시저장 완료" : "임시저장 실패"}`,
+    `- 원고: ${input.draft.workspacePath}`,
+    input.result.url ? `- URL: ${input.result.url}` : null,
+    `- 메시지: ${input.result.message}`,
+    `${TISTORY_DRAFT_PUBLISH_MARKER} ${input.result.checkedAt} -->`,
+  ].filter((line): line is string => line !== null);
+
+  return lines.join("\n");
 }
 
 function extractUsedSkillRefs(text: string): {
@@ -464,6 +915,9 @@ export class RockyChatService {
   private readonly orchestrator: RockyOrchestratorService;
   private readonly agentLocalSkillService = new AgentLocalSkillService();
   private readonly skillTemplateStore: SkillTemplateStore;
+  private readonly ecountSettingsService: EcountSettingsServiceLike;
+  private readonly ecountLookupService: EcountLookupServiceLike;
+  private readonly connectorService: ConnectorServiceLike | null;
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
@@ -478,6 +932,18 @@ export class RockyChatService {
         now: this.now,
         idGenerator: this.idGenerator,
       });
+    this.ecountSettingsService =
+      options.ecountSettingsService ??
+      new EcountSettingsService({
+        stateRoot: options.stateRoot,
+        now: this.now,
+      });
+    this.ecountLookupService =
+      options.ecountLookupService ??
+      new EcountConnectionService({
+        now: this.now,
+      });
+    this.connectorService = options.connectorService ?? null;
     this.orchestrator = new RockyOrchestratorService({
       sessionService: options.sessionService,
       now: this.now,
@@ -939,6 +1405,7 @@ export class RockyChatService {
       ? await this.requireRunnableAgent(existingAgentId)
       : null;
     const reusableSessionId = this.findReusableSessionId(existing);
+    const followupSkillId = latestUsedSkillId(existing);
     const routed = targetAgent
       ? await this.handleAgentMessage({
           agent: targetAgent,
@@ -946,7 +1413,7 @@ export class RockyChatService {
           messageId: userMessageId,
           message,
           runtimeMessage: withAgentSoul(message, targetAgent.soul),
-          selectedSkillId: null,
+          selectedSkillId: followupSkillId,
           attachments: [...existing.attachments, ...attachmentDrafts],
           domain,
           intent,
@@ -1070,8 +1537,8 @@ export class RockyChatService {
     };
   }
 
-  private async findAgentById(agentId: string): Promise<AgentRecord | null> {
-    if (!this.agentService) {
+  private async findAgentById(agentId: string | null): Promise<AgentRecord | null> {
+    if (!this.agentService || !agentId) {
       return null;
     }
 
@@ -1093,6 +1560,20 @@ export class RockyChatService {
     return template.skill.displayName.trim() || template.title;
   }
 
+  private isThreadsConnectorTemplateSkill(
+    template: RuntimeSkillTemplateRecord
+  ): boolean {
+    return /threads|쓰레드|스레드/iu.test(
+      [
+        template.skill.id,
+        template.skill.displayName,
+        template.title,
+        template.description,
+        template.skill.skillMarkdown,
+      ].join("\n"),
+    );
+  }
+
   private async savedSkillTemplateBySkillId(): Promise<
     Map<string, RuntimeSkillTemplateRecord>
   > {
@@ -1110,6 +1591,16 @@ export class RockyChatService {
       installed.description !== template.skill.description
     ) {
       return true;
+    }
+
+    if (this.isThreadsConnectorTemplateSkill(template)) {
+      const skillDir = path.dirname(installed.skillPath);
+      if (!(await this.fileExists(path.join(skillDir, "connector-capabilities.json")))) {
+        return true;
+      }
+      if (!(await this.fileExists(path.join(skillDir, "scripts", "threads-crud.mjs")))) {
+        return true;
+      }
     }
 
     try {
@@ -1161,6 +1652,557 @@ export class RockyChatService {
         // Keep the request runnable even if a stale local skill cannot be refreshed.
       }
     }
+  }
+
+  private async listAgentEcountSkillContexts(
+    agent: AgentRecord,
+    selectedSkillId: string | null
+  ): Promise<Array<{ skill: AgentLocalSkillRecord; content: string }>> {
+    const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+    const contexts: Array<{ skill: AgentLocalSkillRecord; content: string }> = [];
+    for (const skill of skills) {
+      if (selectedSkillId && skill.id !== selectedSkillId) {
+        continue;
+      }
+      let content = "";
+      try {
+        content = await readFile(skill.skillPath, "utf8");
+      } catch {
+        content = "";
+      }
+      if (
+        mentionsEcountIntegration(skill.displayName) ||
+        mentionsEcountIntegration(skill.description ?? "") ||
+        mentionsEcountIntegration(content)
+      ) {
+        contexts.push({ skill, content });
+      }
+    }
+
+    return contexts;
+  }
+
+  private async listAgentConnectorSummaries(
+    agent: AgentRecord
+  ): Promise<AgentConnectorSummary[]> {
+    if (!this.connectorService) {
+      return [];
+    }
+
+    try {
+      const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+      const integrations = await listAgentConnectorIntegrations({
+        skills,
+        connectorService: this.connectorService,
+      });
+      const summaries = integrations.map((integration): AgentConnectorSummary => ({
+        provider: integration.provider,
+        label: integration.label,
+        status: integration.status,
+        loginMode: integration.loginMode,
+        accountLabel: integration.accountLabel,
+        connectedAt: integration.connectedAt,
+        browserAccess: integration.browserAccess,
+        capabilities: integration.capabilities,
+        requiredBySkills: integration.requiredBySkills,
+        draftPublishing:
+          integration.provider === "tistory" &&
+          integration.status === "connected" &&
+          integration.loginMode === "custom-browser"
+            ? "server-managed"
+            : null,
+      }));
+      const seen = new Set(summaries.map((summary) => summary.provider));
+      for (const provider of listSupportedProviders()) {
+        if (seen.has(provider)) {
+          continue;
+        }
+        const state = await this.connectorService.getState(provider);
+        if (state.status !== "connected") {
+          continue;
+        }
+        summaries.push({
+          provider,
+          label: getConnectorAdapter(provider).label,
+          status: state.status,
+          loginMode: state.loginMode,
+          accountLabel: state.accountLabel,
+          connectedAt: state.connectedAt,
+          browserAccess: state.browserAccess,
+          capabilities: state.capabilities,
+          draftPublishing:
+            provider === "tistory" && state.loginMode === "custom-browser"
+              ? "server-managed"
+              : null,
+        });
+      }
+      return summaries;
+    } catch {
+      return [];
+    }
+  }
+
+  private async maybePublishTistoryDraftAfterAgentTurn(input: {
+    agent: AgentRecord;
+    chatId: string;
+    request: string;
+    orchestration: RockyOrchestrationRecord;
+  }): Promise<RockyOrchestrationRecord> {
+    if (
+      !this.connectorService ||
+      input.orchestration.status !== "completed" ||
+      !shouldAttemptTistoryDraftPublish({
+        request: input.request,
+        output: input.orchestration.output,
+      })
+    ) {
+      return input.orchestration;
+    }
+
+    const draft = await this.findTistoryPublishReadyDraft({
+      agent: input.agent,
+      chatId: input.chatId,
+      output: input.orchestration.output ?? "",
+    });
+    if (!draft) {
+      const checkedAt = this.now();
+      return {
+        ...input.orchestration,
+        output: appendTistoryDraftPublishResult({
+          output: input.orchestration.output ?? "",
+          draft: {
+            workspacePath: rockyTaskOutputDirectory(input.chatId),
+            input: {
+              title: "Tistory draft",
+              contentMarkdown: "Tistory draft",
+              tags: [],
+              visibility: "draft",
+            },
+          },
+          result: {
+            ok: false,
+            provider: "tistory",
+            status: "failed",
+            accountLabel: null,
+            url: null,
+            message:
+              "Tistory 발행용 Markdown에서 제목, 본문, 태그 섹션을 찾지 못했습니다.",
+            checkedAt,
+          },
+        }),
+        updatedAt: checkedAt,
+      };
+    }
+
+    const result = await this.connectorService.publishDraft("tistory", draft.input);
+    return {
+      ...input.orchestration,
+      output: appendTistoryDraftPublishResult({
+        output: input.orchestration.output ?? "",
+        draft,
+        result,
+      }),
+      updatedAt: result.checkedAt,
+    };
+  }
+
+  private async findTistoryPublishReadyDraft(input: {
+    agent: AgentRecord;
+    chatId: string;
+    output: string;
+  }): Promise<TistoryPublishReadyDraft | null> {
+    const candidates = [
+      ...extractMarkdownWorkspacePaths(input.output),
+      ...(await this.listMarkdownWorkspacePaths(
+        input.agent.workspaceRoot,
+        rockyTaskOutputDirectory(input.chatId)
+      )),
+    ];
+
+    for (const candidate of [...new Set(candidates)]) {
+      const relativePath = normalizeWorkspaceRelativePath(candidate);
+      if (!relativePath) {
+        continue;
+      }
+      const absolutePath = this.workspaceAbsolutePath(
+        input.agent.workspaceRoot,
+        relativePath
+      );
+      if (!absolutePath) {
+        continue;
+      }
+
+      let markdown = "";
+      try {
+        markdown = await readFile(absolutePath, "utf8");
+      } catch {
+        continue;
+      }
+      const draft = parseTistoryPublishReadyMarkdown({
+        workspacePath: relativePath,
+        markdown,
+      });
+      if (draft) {
+        return draft;
+      }
+    }
+
+    return null;
+  }
+
+  private async listMarkdownWorkspacePaths(
+    workspaceRoot: string,
+    relativeRoot: string
+  ): Promise<string[]> {
+    const normalizedRoot = normalizeWorkspaceRelativePath(relativeRoot);
+    if (!normalizedRoot) {
+      return [];
+    }
+    const absoluteRoot = this.workspaceAbsolutePath(workspaceRoot, normalizedRoot);
+    if (!absoluteRoot) {
+      return [];
+    }
+
+    const results: string[] = [];
+    const visit = async (absoluteDirectory: string, relativeDirectory: string) => {
+      let entries;
+      try {
+        entries = await readdir(absoluteDirectory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const relativePath = path.posix.join(relativeDirectory, entry.name);
+        const absolutePath = path.join(absoluteDirectory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath, relativePath);
+          continue;
+        }
+        if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+          results.push(relativePath);
+        }
+      }
+    };
+
+    await visit(absoluteRoot, normalizedRoot);
+    return results;
+  }
+
+  private workspaceAbsolutePath(
+    workspaceRoot: string,
+    relativePath: string
+  ): string | null {
+    const root = path.resolve(workspaceRoot);
+    const absolutePath = path.resolve(root, ...relativePath.split("/"));
+    if (absolutePath !== root && !absolutePath.startsWith(`${root}${path.sep}`)) {
+      return null;
+    }
+    return absolutePath;
+  }
+
+  private async readExistingEcountLookups(
+    agent: AgentRecord,
+    chatId: string,
+    datasets: EcountDatasetId[]
+  ): Promise<AgentPreparedIntegrationSummary[]> {
+    const paths = new Map<string, string>();
+    for (const dataset of datasets) {
+      paths.set(dataset, ecountDatasetLookupWorkspacePath(chatId, dataset));
+    }
+
+    if (datasets.includes("products")) {
+      paths.set("products:legacy", legacyEcountProductLookupWorkspacePath(chatId));
+    }
+
+    if (datasets.length === 0) {
+      const integrationDir = path.join(
+        agent.workspaceRoot,
+        ...path.posix.join(rockyTaskInputDirectory(chatId), "integrations", "ecount").split("/")
+      );
+      try {
+        for (const fileName of await readdir(integrationDir)) {
+          if (!fileName.endsWith(".json")) {
+            continue;
+          }
+          const dataset = fileName.replace(/\.json$/u, "");
+          paths.set(dataset, path.posix.join(rockyTaskInputDirectory(chatId), "integrations", "ecount", fileName));
+        }
+      } catch {
+        // No prepared standard integration directory for this chat yet.
+      }
+      paths.set("products:legacy", legacyEcountProductLookupWorkspacePath(chatId));
+    }
+
+    const summaries: AgentPreparedIntegrationSummary[] = [];
+    const seenDatasets = new Set<string>();
+    for (const [key, workspacePath] of paths) {
+      const absolutePath = path.join(agent.workspaceRoot, ...workspacePath.split("/"));
+      try {
+        const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as {
+          dataset?: string;
+          title?: string;
+          status?: "ready" | "failed" | "unsupported";
+          api?: string | null;
+          count?: number;
+          returnedCount?: number;
+          checkedAt?: string;
+          message?: string;
+          diagnostics?: { detail?: string };
+        };
+        const dataset = parsed.dataset ?? (key === "products:legacy" ? "products" : key);
+        if (seenDatasets.has(dataset)) {
+          continue;
+        }
+        seenDatasets.add(dataset);
+        summaries.push({
+          provider: "ecount",
+          dataset,
+          title: parsed.title ?? ecountDatasetTitle(dataset),
+          status: parsed.status ?? "ready",
+          api: typeof parsed.api === "string" ? parsed.api : null,
+          count: typeof parsed.count === "number" ? parsed.count : null,
+          returnedCount:
+            typeof parsed.returnedCount === "number" ? parsed.returnedCount : null,
+          checkedAt: typeof parsed.checkedAt === "string" ? parsed.checkedAt : null,
+          workspacePath,
+          message: parsed.message ?? "Previous ECOUNT lookup result is available.",
+          diagnostic: parsed.diagnostics?.detail ?? null,
+          source: "existing",
+        });
+      } catch {
+        // Ignore missing or stale lookup files.
+      }
+    }
+    return summaries;
+  }
+
+  private async queryEcountDataset(
+    connectionInput: Awaited<ReturnType<EcountSettingsServiceLike["getConnectionInput"]>>,
+    query: EcountDatasetQueryInput
+  ): Promise<EcountDatasetQueryResult> {
+    if (!connectionInput) {
+      return unsupportedEcountDatasetResult(query.dataset as EcountDatasetId);
+    }
+    if (this.ecountLookupService.queryDataset) {
+      return this.ecountLookupService.queryDataset(connectionInput, query);
+    }
+    const dataset = normalizeEcountDatasetId(String(query.dataset));
+    if (dataset === "products") {
+      return ecountProductLookupToDatasetResult(
+        await this.ecountLookupService.getBasicProductsList(connectionInput, {
+          limit: query.limit,
+          offset: query.offset,
+        })
+      );
+    }
+    return {
+      ...unsupportedEcountDatasetResult(dataset as EcountDatasetId),
+      checkedAt: this.now(),
+    };
+  }
+
+  private async prepareEcountLookups(input: {
+    agent: AgentRecord;
+    chatId: string;
+    message: string;
+    selectedSkillId: string | null;
+    skillContexts: Array<{ skill: AgentLocalSkillRecord; content: string }>;
+  }): Promise<AgentPreparedIntegrationSummary[]> {
+    const messageDatasets = extractEcountDatasets(input.message);
+    const skillDatasets = uniqueEcountDatasets(
+      input.skillContexts.flatMap((context) => extractEcountDatasets(context.content))
+    );
+    const useSkillScope =
+      input.skillContexts.length > 0 &&
+      (messageDatasets.length === 0 || shouldUseSkillScopeForEcountLookup(input.message));
+    const requestedDatasets = uniqueEcountDatasets(
+      useSkillScope
+        ? skillDatasets.length > 0
+          ? skillDatasets
+          : DEFAULT_ECOUNT_SKILL_DATASETS
+        : messageDatasets
+    );
+    const shouldPrepare = shouldPrepareEcountLookup({
+      message: input.message,
+      hasSelectedEcountSkill: Boolean(input.selectedSkillId && input.skillContexts.length > 0),
+      messageDatasets,
+    });
+    const existing = await this.readExistingEcountLookups(
+      input.agent,
+      input.chatId,
+      requestedDatasets
+    );
+    if (!shouldPrepare) {
+      return existing;
+    }
+
+    const datasets: EcountDatasetId[] = requestedDatasets.length > 0
+      ? requestedDatasets
+      : shouldPrepareEcountProductLookup(input.message)
+        ? ["products"]
+        : DEFAULT_ECOUNT_SKILL_DATASETS;
+    const connectionInput = await this.ecountSettingsService.getConnectionInput();
+    if (!connectionInput) {
+      return datasets.map((dataset) => ({
+          provider: "ecount",
+          dataset,
+          title: ecountDatasetTitle(dataset),
+          status: "not-configured",
+          api: null,
+          count: null,
+          returnedCount: null,
+          checkedAt: null,
+          workspacePath: null,
+          message: "ECOUNT connection settings are not configured.",
+          diagnostic: null,
+          source: "settings",
+        }));
+    }
+
+    const summaries: AgentPreparedIntegrationSummary[] = [];
+    for (const dataset of datasets) {
+      const query: EcountDatasetQueryInput = {
+        ...ecountQueryOptionsForDataset(dataset),
+        dataset,
+      };
+      const result = await this.queryEcountDataset(connectionInput, query);
+      const workspacePath = ecountDatasetLookupWorkspacePath(input.chatId, dataset);
+      const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+      await mkdir(path.dirname(absolutePath), { recursive: true });
+      await writeFile(
+        absolutePath,
+        `${JSON.stringify(
+          {
+            provider: "ecount",
+            dataset: result.dataset,
+            title: result.title,
+            status: result.status,
+            api: result.api,
+            accountLabel: result.accountLabel,
+            zone: result.zone,
+            checkedAt: result.checkedAt,
+            count: result.count,
+            returnedCount: result.returnedCount,
+            records: result.records,
+            message: result.message,
+            diagnostics: result.diagnostics ?? null,
+            filters: query.filters ?? null,
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      summaries.push(ecountResultToPreparedSummary(result, workspacePath, "fresh"));
+    }
+    return summaries;
+  }
+
+  private async resolveAgentEcountLookupInstruction(input: {
+    agent: AgentRecord;
+    chatId: string;
+    message: string;
+    selectedSkillId: string | null;
+  }): Promise<AgentEcountLookupInstruction | null> {
+    const skillContexts = await this.listAgentEcountSkillContexts(
+      input.agent,
+      input.selectedSkillId
+    );
+    if (skillContexts.length === 0) {
+      return null;
+    }
+
+    let configured = false;
+    try {
+      configured = (await this.ecountSettingsService.getPublicSettings()).configured;
+    } catch {
+      configured = false;
+    }
+
+    return {
+      configured,
+      preparedResults: configured
+        ? await this.prepareEcountLookups({
+            ...input,
+            skillContexts,
+          })
+        : [],
+    };
+  }
+
+  private async prepareAgentConnectorLookups(input: {
+    agent: AgentRecord;
+    chatId: string;
+    message: string;
+    connectorSummaries: AgentConnectorSummary[];
+  }): Promise<AgentPreparedIntegrationSummary[]> {
+    if (!this.connectorService || !shouldPrepareThreadsFollowerLookup(input.message)) {
+      return [];
+    }
+
+    const threads = input.connectorSummaries.find(
+      (summary) =>
+        summary.provider === "threads" &&
+        summary.status === "connected" &&
+        hasAvailableConnectorCapability(summary, "threads.followers.read")
+    );
+    if (!threads) {
+      return [];
+    }
+
+    const result = await this.connectorService.executeCapability("threads", {
+      capabilityId: "threads.followers.read",
+      args: { limit: 200 },
+    });
+    const workspacePath = threadsFollowerLookupWorkspacePath(input.chatId);
+    const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+    const count = result.followers?.items.length ?? null;
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(
+      absolutePath,
+      `${JSON.stringify(
+        {
+          provider: "threads",
+          dataset: "followers",
+          title: "Threads 팔로워 목록",
+          ok: result.ok,
+          status: result.status,
+          capabilityId: result.capabilityId,
+          accountLabel: result.accountLabel,
+          checkedAt: result.checkedAt,
+          count,
+          followers: result.followers?.items ?? [],
+          url: result.followers?.url ?? null,
+          rawText: result.followers?.rawText ?? null,
+          message: result.message,
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    return [
+      {
+        provider: "threads",
+        dataset: "followers",
+        title: "Threads 팔로워 목록",
+        status: result.ok
+          ? "ready"
+          : result.status === "unsupported"
+            ? "unsupported"
+            : "failed",
+        api: null,
+        count,
+        returnedCount: count,
+        checkedAt: result.checkedAt,
+        workspacePath,
+        message: result.message,
+        diagnostic: result.ok ? null : result.message,
+        source: "fresh",
+      },
+    ];
   }
 
   private async resolveUsedSkills(
@@ -1266,6 +2308,35 @@ export class RockyChatService {
       input.agent,
       input.selectedSkillId ? [input.selectedSkillId] : []
     );
+    const ecountLookup = await this.resolveAgentEcountLookupInstruction({
+      agent: input.agent,
+      chatId: input.chatId,
+      message: input.message,
+      selectedSkillId: input.selectedSkillId,
+    });
+    const connectorSummaries = await this.listAgentConnectorSummaries(input.agent);
+    const connectorProfileResults: AgentConnectorProfileSummary[] = [];
+    const preparedConnectorLookups = await this.prepareAgentConnectorLookups({
+      agent: input.agent,
+      chatId: input.chatId,
+      message: input.message,
+      connectorSummaries,
+    });
+    const preparedIntegrations = [
+      ...(ecountLookup?.preparedResults ?? []),
+      ...preparedConnectorLookups,
+    ];
+    const hasTistoryDraftPublisher = connectorSummaries.some(
+      (summary) =>
+        summary.provider === "tistory" &&
+        summary.status === "connected" &&
+        summary.draftPublishing === "server-managed"
+    );
+    const hasConnectedBrowserConnector = connectorSummaries.some(
+      (summary) =>
+        summary.status === "connected" &&
+        summary.loginMode === "custom-browser"
+    );
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
@@ -1284,6 +2355,9 @@ export class RockyChatService {
       chatId: input.chatId,
       dispatch,
       attachments,
+      preparedIntegrations,
+      connectorProfileResults,
+      connectorSummaries,
       timestamp: input.timestamp,
     });
     const startedOrchestration = await this.orchestrator.start({
@@ -1302,9 +2376,20 @@ export class RockyChatService {
         agent: input.agent,
         contextRelativePath,
         chatId: input.chatId,
+        ecountLookup,
+        hasTistoryDraftPublisher,
+        hasConnectedBrowserConnector,
+        hasConnectorProfileResults: connectorProfileResults.length > 0,
+        hasPreparedIntegrationResults: preparedIntegrations.length > 0,
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);
+    const finalizedOrchestration = await this.maybePublishTistoryDraftAfterAgentTurn({
+      agent: input.agent,
+      chatId: input.chatId,
+      request: input.message,
+      orchestration: sanitized.orchestration,
+    });
     const reportedUsedSkills = await this.resolveUsedSkills(
       input.agent,
       sanitized.usedSkillRefs
@@ -1312,8 +2397,8 @@ export class RockyChatService {
     const usedSkills = mergeUsedSkills(selectedUsedSkills, reportedUsedSkills);
     const startedDispatch: RockyDispatchRecord = {
       ...dispatch,
-      orchestration: sanitized.orchestration,
-      executionStarted: Boolean(sanitized.orchestration.runId),
+      orchestration: finalizedOrchestration,
+      executionStarted: Boolean(finalizedOrchestration.runId),
     };
 
     return {
@@ -1327,7 +2412,7 @@ export class RockyChatService {
         intent: input.intent,
         worker,
         dispatchId: startedDispatch.id,
-        orchestration: sanitized.orchestration,
+        orchestration: finalizedOrchestration,
         usedSkills,
         timestamp: input.timestamp,
       }),
@@ -2197,12 +3282,23 @@ export class RockyChatService {
         if (!dispatch.orchestration) {
           return dispatch;
         }
+        if (dispatch.orchestration.output?.includes(TISTORY_DRAFT_PUBLISH_MARKER)) {
+          return dispatch;
+        }
 
         const refreshedOrchestration = await this.orchestrator.refresh(
           dispatch.orchestration
         );
         const sanitized = this.sanitizeOrchestrationOutput(refreshedOrchestration);
-        const orchestration = sanitized.orchestration;
+        const agent = await this.findAgentById(sanitized.orchestration.agentId);
+        const orchestration = agent
+          ? await this.maybePublishTistoryDraftAfterAgentTurn({
+              agent,
+              chatId: hydrated.id,
+              request: dispatch.originalRequest,
+              orchestration: sanitized.orchestration,
+            })
+          : sanitized.orchestration;
         if (JSON.stringify(orchestration) !== JSON.stringify(dispatch.orchestration)) {
           changed = true;
         }

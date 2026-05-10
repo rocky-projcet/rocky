@@ -46,6 +46,8 @@ function fieldKindDescription(field: SkillField): string {
       return "직접 입력";
     case "account-connect":
       return "계정 연결 (로그인)";
+    case "erp-integration-select":
+      return "ERP 연동 선택";
     case "recipient-address":
       return "받는 곳 입력";
   }

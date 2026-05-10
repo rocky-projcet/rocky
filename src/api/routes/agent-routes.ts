@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 
 import type { AgentServiceLike, SessionServiceLike } from "../api-types.js";
+import { listAgentConnectorIntegrations } from "../../connectors/agent-connector-integrations.js";
+import type { ConnectorServiceLike } from "../../connectors/connector-types.js";
 import {
   AgentLocalSkillService,
   type AgentLocalSkillFileInput,
@@ -37,6 +39,7 @@ interface AgentRoutesOptions extends FastifyPluginOptions {
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
   agentLocalSkillService?: AgentLocalSkillService;
+  connectorService?: ConnectorServiceLike;
 }
 
 function isRuntimeKind(value: unknown): value is RuntimeKind {
@@ -85,6 +88,9 @@ function parseCreateAgentBody(body: unknown): {
   soul?: string | null;
   color?: string | null;
   defaultRuntime?: RuntimeKind;
+  skillPolicy?: {
+    automaticSkillCreation: boolean;
+  };
 } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw badRequest("Request body must be a JSON object.");
@@ -103,6 +109,9 @@ function parseCreateAgentBody(body: unknown): {
     soul?: string | null;
     color?: string | null;
     defaultRuntime?: RuntimeKind;
+    skillPolicy?: {
+      automaticSkillCreation: boolean;
+    };
   } = {
     name: name.trim(),
   };
@@ -153,7 +162,31 @@ function parseCreateAgentBody(body: unknown): {
     }
   }
 
+  if ("skillPolicy" in input) {
+    parsed.skillPolicy = parseSkillPolicy(input.skillPolicy);
+  }
+
   return parsed;
+}
+
+function parseSkillPolicy(value: unknown): {
+  automaticSkillCreation: boolean;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw badRequest("skillPolicy must be a JSON object when provided.");
+  }
+
+  const input = value as Record<string, unknown>;
+  if (
+    input.automaticSkillCreation !== undefined &&
+    typeof input.automaticSkillCreation !== "boolean"
+  ) {
+    throw badRequest("skillPolicy.automaticSkillCreation must be a boolean.");
+  }
+
+  return {
+    automaticSkillCreation: input.automaticSkillCreation === true,
+  };
 }
 
 function parseWorkspaceQuery(
@@ -307,6 +340,9 @@ function parseUpdateAgentBody(body: unknown): {
   stopRunningSessions?: boolean;
   color?: string | null;
   defaultRuntime?: RuntimeKind;
+  skillPolicy?: {
+    automaticSkillCreation: boolean;
+  };
 } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw badRequest("Request body must be a JSON object.");
@@ -321,6 +357,9 @@ function parseUpdateAgentBody(body: unknown): {
     stopRunningSessions?: boolean;
     color?: string | null;
     defaultRuntime?: RuntimeKind;
+    skillPolicy?: {
+      automaticSkillCreation: boolean;
+    };
   } = {};
 
   if ("name" in input) {
@@ -385,12 +424,17 @@ function parseUpdateAgentBody(body: unknown): {
     }
   }
 
+  if ("skillPolicy" in input) {
+    parsed.skillPolicy = parseSkillPolicy(input.skillPolicy);
+  }
+
   if (
     !("name" in parsed) &&
     !("description" in parsed) &&
     !("lifecycle" in parsed) &&
     !("color" in parsed) &&
-    !("defaultRuntime" in parsed)
+    !("defaultRuntime" in parsed) &&
+    !("skillPolicy" in parsed)
   ) {
     throw badRequest("Agent update requests must include a supported change.");
   }
@@ -564,6 +608,31 @@ export const registerAgentRoutes: FastifyPluginAsync<AgentRoutesOptions> = async
     const { agentId } = request.params as { agentId: string };
     const agent = await options.agentService.getAgent(agentId);
     sendJson(reply, 200, await agentLocalSkillService.listAgentLocalSkills(agent));
+  });
+
+  server.get("/agents/:agentId/integrations", async (request, reply) => {
+    const { agentId } = request.params as { agentId: string };
+    const agent = await options.agentService.getAgent(agentId);
+    let skills = await agentLocalSkillService.listAgentLocalSkills(agent);
+    let repairedConnectorFiles = false;
+    for (const skill of skills) {
+      repairedConnectorFiles =
+        (await agentLocalSkillService.ensureAgentLocalSkillConnectorFiles(
+          agent,
+          skill.id,
+        )) || repairedConnectorFiles;
+    }
+    if (repairedConnectorFiles) {
+      skills = await agentLocalSkillService.listAgentLocalSkills(agent);
+    }
+    sendJson(
+      reply,
+      200,
+      await listAgentConnectorIntegrations({
+        skills,
+        connectorService: options.connectorService,
+      })
+    );
   });
 
   server.put(

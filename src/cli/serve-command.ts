@@ -9,6 +9,10 @@ export async function handleServeCommand(context: CliContext): Promise<number> {
     context.stderr.write("serve requires --port to be an integer between 0 and 65535\n");
     return 1;
   }
+  const internalHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  process.env.AGENT_ENGINE_INTERNAL_BASE_URL =
+    process.env.AGENT_ENGINE_INTERNAL_BASE_URL ??
+    `http://${internalHost}:${port}`;
 
   const server = createAgentEngineServer({
     stateRoot: context.values["state-root"],

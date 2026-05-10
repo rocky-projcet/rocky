@@ -6,7 +6,7 @@ import {
 
 function RedirectTemplateEditToSkill() {
   const { templateId } = useParams<{ templateId: string }>();
-  return <Navigate to={`/skills/${encodeURIComponent(templateId ?? "")}`} replace />;
+  return <Navigate to={`/skills/${encodeURIComponent(templateId ?? "")}/edit`} replace />;
 }
 
 import { AppShell } from "../shared/components/app-shell";
@@ -21,6 +21,7 @@ import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
 import { HomePage, RockyTaskDetailPage } from "../domains/rocky/pages/home-page";
 import { SearchPage } from "../domains/rocky/pages/search-page";
 import { FavoritesPage } from "../domains/favorite/favorites-page";
+import { IntegrationsPage } from "../domains/connector/pages/integrations-page";
 import { TasksPage } from "../domains/rocky/pages/tasks-page";
 import {
   TemplateBuilderPage,
@@ -50,6 +51,10 @@ export const router = createBrowserRouter([
       {
         path: "favorites",
         element: <FavoritesPage />,
+      },
+      {
+        path: "integrations",
+        element: <IntegrationsPage />,
       },
       {
         path: "tasks",
@@ -98,6 +103,10 @@ export const router = createBrowserRouter([
       {
         path: "skills/archived",
         element: <SkillsArchivedPage />,
+      },
+      {
+        path: "skills/:skillId/edit",
+        element: <SkillNewPage />,
       },
       {
         path: "skills/:skillId",

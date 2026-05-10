@@ -4,12 +4,8 @@ import {
   ExternalLink,
   Loader2,
   Lock,
-  Plug,
-  RefreshCw,
-  TerminalSquare,
   Unplug,
   X,
-  XCircle,
 } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
@@ -26,7 +22,6 @@ import type { ConnectorProvider } from "@/shared/lib/agent-engine-client";
 
 import {
   useConnectorCancelMutation,
-  useConnectorDiagnosticsQuery,
   useConnectorDisconnectMutation,
   useConnectorLoginMutation,
   useConnectorStateQuery,
@@ -48,14 +43,13 @@ export function ConnectorDialog({
   onConnected,
 }: ConnectorDialogProps) {
   const stateQuery = useConnectorStateQuery(provider);
-  const diagnosticsQuery = useConnectorDiagnosticsQuery(open);
   const loginMutation = useConnectorLoginMutation(provider);
   const cancelMutation = useConnectorCancelMutation(provider);
   const disconnectMutation = useConnectorDisconnectMutation(provider);
 
   const state = stateQuery.data;
-  const diagnostics = diagnosticsQuery.data;
   const status = state?.status ?? "idle";
+  const loginMode = state?.loginMode ?? null;
   const isConnecting = status === "connecting";
   const isConnected = status === "connected";
 
@@ -75,8 +69,15 @@ export function ConnectorDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const chromiumMissing =
-    diagnostics !== undefined && diagnostics.available === false;
+  const startLogin = () => {
+    loginMutation.mutate();
+  };
+
+  const openLoginUrl = () => {
+    if (state?.loginUrl) {
+      window.open(state.loginUrl, "_blank", "noopener,noreferrer");
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -84,21 +85,13 @@ export function ConnectorDialog({
         <DialogHeader className="gap-2">
           <DialogTitle className="text-lg">{providerLabel} 연동</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            로그인은 별도 브라우저 창에서 직접 진행합니다. 완료되면 세션이 이 기기에만 저장돼요.
+            공식 OAuth 또는 커스텀 브라우저 확인이 완료된 경우에만 연결됨으로 표시합니다.
           </DialogDescription>
         </DialogHeader>
 
         <PrivacyNotice />
 
-        {chromiumMissing ? (
-          <ChromiumMissingPanel
-            message={diagnostics?.message ?? ""}
-            onRecheck={() => {
-              void diagnosticsQuery.refetch();
-            }}
-            isRechecking={diagnosticsQuery.isFetching}
-          />
-        ) : isConnected ? (
+        {isConnected ? (
           <ConnectedView
             accountLabel={state?.accountLabel ?? null}
             connectedAt={state?.connectedAt ?? null}
@@ -109,6 +102,10 @@ export function ConnectorDialog({
           <ConnectingView
             message={state?.message ?? "로그인 창에서 진행 중…"}
             providerLabel={providerLabel}
+            loginMode={loginMode}
+            loginUrl={state?.loginUrl ?? null}
+            lastError={state?.lastError ?? null}
+            onOpenLoginUrl={openLoginUrl}
             onCancel={() => cancelMutation.mutate()}
             cancelling={cancelMutation.isPending}
           />
@@ -116,10 +113,9 @@ export function ConnectorDialog({
           <IdleView
             providerLabel={providerLabel}
             lastError={state?.lastError ?? null}
-            onLogin={() => loginMutation.mutate()}
+            onLogin={startLogin}
             starting={loginMutation.isPending}
             onClose={() => onOpenChange(false)}
-            channelLabel={diagnostics?.channel ?? null}
           />
         )}
       </DialogContent>
@@ -132,9 +128,8 @@ function PrivacyNotice() {
     <div className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
       <Lock className="mt-0.5 size-3.5 shrink-0 text-foreground" />
       <p>
-        로그인은 이 컴퓨터에서 띄우는 브라우저 창에서 직접 이뤄지고, 세션은 이
-        컴퓨터에만 저장됩니다. Rocky 서버나 외부로 이메일·비밀번호가 전송되지
-        않아요.
+        공식 OAuth는 callback 코드를 토큰으로 교환합니다. 공식 API가 없는 서비스는
+        별도 브라우저에서 로그인 완료를 감지하고 세션 상태만 저장합니다.
       </p>
     </div>
   );
@@ -146,14 +141,12 @@ function IdleView({
   onLogin,
   starting,
   onClose,
-  channelLabel,
 }: {
   providerLabel: string;
   lastError: string | null;
   onLogin: () => void;
   starting: boolean;
   onClose: () => void;
-  channelLabel: string | null;
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -163,9 +156,8 @@ function IdleView({
         </div>
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
-        버튼을 누르면 별도의 {channelLabel === "msedge" ? "Edge" : "Chrome"} 창이
-        열립니다. 그 창에서 평소처럼 {providerLabel}에 로그인해 주세요. 캡차·2단계
-        인증이 있다면 그 창에서 그대로 푸시면 돼요. 완료되면 창이 자동으로 닫힙니다.
+        버튼을 누르면 {providerLabel} 계정 연결을 시작합니다. 공식 OAuth가 있는
+        서비스는 승인 화면을, 없는 서비스는 커스텀 로그인 브라우저를 엽니다.
       </p>
       <DialogFooter className="flex flex-row items-center justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose} disabled={starting}>
@@ -173,7 +165,7 @@ function IdleView({
         </Button>
         <Button type="button" onClick={onLogin} disabled={starting}>
           {starting ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
-          {providerLabel} 창에서 로그인
+          계정 연결
         </Button>
       </DialogFooter>
     </div>
@@ -183,14 +175,23 @@ function IdleView({
 function ConnectingView({
   message,
   providerLabel,
+  loginMode,
+  loginUrl,
+  lastError,
+  onOpenLoginUrl,
   onCancel,
   cancelling,
 }: {
   message: string;
   providerLabel: string;
+  loginMode: string | null;
+  loginUrl: string | null;
+  lastError: string | null;
+  onOpenLoginUrl: () => void;
   onCancel: () => void;
   cancelling: boolean;
 }) {
+  const customBrowser = loginMode === "custom-browser";
   return (
     <div className="flex flex-col gap-3">
       <div
@@ -199,14 +200,31 @@ function ConnectingView({
           "border-foreground/15 bg-muted/40 text-foreground",
         )}
       >
-        <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+        <ExternalLink className="mt-0.5 size-3.5 shrink-0" />
         <span>{message}</span>
       </div>
+      {lastError ? (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive">
+          {lastError}
+        </div>
+      ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
-        {providerLabel} 창에서 로그인을 마치고 창을 그대로 두시면 자동으로 감지해서
-        세션을 저장합니다. 도중에 그만두려면 아래 취소를 누르고 창을 닫으세요.
+        {customBrowser
+          ? `${providerLabel} 로그인 창에서 로그인을 마치면 연결됨으로 바뀝니다. 창을 닫으면 연결이 취소될 수 있습니다.`
+          : `${providerLabel} 승인 화면에서 권한을 허용하면 callback에서 토큰을 교환하고 연결됨으로 바뀝니다.`}
       </p>
       <DialogFooter className="flex flex-row items-center justify-end gap-2">
+        {loginUrl ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onOpenLoginUrl}
+            disabled={cancelling}
+          >
+            <ExternalLink className="size-4" />
+            다시 열기
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
@@ -258,46 +276,6 @@ function ConnectedView({
             <Unplug className="size-4" />
           )}
           연결 해제
-        </Button>
-      </DialogFooter>
-    </div>
-  );
-}
-
-function ChromiumMissingPanel({
-  message,
-  onRecheck,
-  isRechecking,
-}: {
-  message: string;
-  onRecheck: () => void;
-  isRechecking: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive">
-        <XCircle className="mt-0.5 size-3.5 shrink-0" />
-        <span>자동 연동을 위한 브라우저를 찾지 못했어요.</span>
-      </div>
-      <div className="rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
-        <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-          <TerminalSquare className="size-3.5" />
-          해결 방법
-        </p>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {message || "Chrome 또는 Edge가 설치되지 않았거나 Playwright Chromium이 누락됐어요."}
-        </p>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          시스템에 Chrome이 있다면 다른 작업 없이 그대로 동작해요. 그래도 안 되면 한 번만 실행해 주세요:
-        </p>
-        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border/70 bg-card px-3 py-2 font-mono text-xs text-foreground">
-          npx playwright install chromium
-        </pre>
-      </div>
-      <DialogFooter className="flex flex-row items-center justify-end gap-2">
-        <Button onClick={onRecheck} disabled={isRechecking}>
-          {isRechecking ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-          다시 확인
         </Button>
       </DialogFooter>
     </div>

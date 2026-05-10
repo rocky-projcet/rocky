@@ -7,6 +7,7 @@ import {
   Home,
   LayoutTemplate,
   ListTodo,
+  Plug,
   Search,
   Sparkles,
   Star,
@@ -73,6 +74,10 @@ function isFavoritesRoute(pathname: string): boolean {
   return pathname.startsWith("/favorites");
 }
 
+function isIntegrationsRoute(pathname: string): boolean {
+  return pathname.startsWith("/integrations");
+}
+
 function isTasksListRoute(pathname: string): boolean {
   return pathname === "/tasks" || pathname.startsWith("/tasks?");
 }
@@ -121,6 +126,7 @@ function AppShellInner() {
   const templatesRoute = isTemplatesRoute(location.pathname);
   const searchRoute = isSearchRoute(location.pathname);
   const favoritesRoute = isFavoritesRoute(location.pathname);
+  const integrationsRoute = isIntegrationsRoute(location.pathname);
   const skillsRoute = isSkillsRoute(location.pathname) && !fromArchiveContext;
   const agentsRoute = isAgentsRoute(location.pathname) && !fromArchiveContext;
   const tasksListRoute = isTasksListRoute(location.pathname);
@@ -178,6 +184,16 @@ function AppShellInner() {
                   >
                     <Search />
                     <span>검색</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="연동"
+                    isActive={integrationsRoute}
+                    render={<NavLink to="/integrations" />}
+                  >
+                    <Plug />
+                    <span>연동</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>

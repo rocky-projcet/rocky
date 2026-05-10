@@ -188,6 +188,50 @@ test("agent create dialog omits id and default runtime fields", async ({ page })
   await expect(page.getByRole("heading", { name: agentName, exact: true })).toBeVisible();
 });
 
+test("agent detail shows every connector capability for installed Threads skills", async ({
+  page,
+  request,
+}) => {
+  const unique = Date.now();
+  const agentId = `playwright-threads-${unique}`;
+  const createAgentResponse = await request.post("/api/agents", {
+    data: {
+      id: agentId,
+      name: `playwright-threads-${unique}`,
+      defaultRuntime: "codex-cli",
+    },
+  });
+  expect(createAgentResponse.ok()).toBeTruthy();
+
+  const installSkillResponse = await request.put(`/api/agents/${agentId}/skills/md-sns-threads`, {
+    data: {
+      replace: true,
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: md-sns-threads\n---\n# SNS · Threads 콘텐츠\nUse when the user asks for Threads content or account checks.\n",
+        },
+      ],
+    },
+  });
+  expect(installSkillResponse.ok()).toBeTruthy();
+
+  await page.goto(`/agents/${agentId}`);
+
+  const integrationSection = page.locator("section").filter({
+    has: page.getByRole("heading", { name: /필요한 연동/ }),
+  });
+  const integrationCard = integrationSection.getByRole("listitem").filter({ hasText: "Threads" });
+  await expect(integrationCard.getByText("팔로워 목록 조회")).toBeVisible();
+  await expect(integrationCard.getByText("팔로잉 목록 조회")).toBeVisible();
+  await expect(integrationCard.getByText("게시물 목록 조회")).toBeVisible();
+  await expect(integrationCard.getByText("게시물 수정")).toBeVisible();
+  await expect(integrationCard.getByText("게시물 삭제")).toBeVisible();
+  await expect(integrationCard.getByText("게시물 작성")).toBeVisible();
+  await expect(integrationCard.getByText("프로필 조회")).toBeVisible();
+});
+
 test("task request model options stay engine-scoped for agent runtime selection", async ({
   page,
   request,

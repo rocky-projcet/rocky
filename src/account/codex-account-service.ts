@@ -6,6 +6,8 @@ import type {
   RuntimeChildProcess,
   SpawnLike,
 } from "../runtime/runtime-types.js";
+import { resolveCodexBin } from "../runtime/codex-bin-resolver.js";
+import { prepareWindowsCommandSpawn } from "../runtime/windows-command-spawn.js";
 import { CliDiagnosticsService } from "./cli-diagnostics-service.js";
 import {
   createCliUpdateRecord,
@@ -454,6 +456,7 @@ export class CodexAccountService implements CodexAccountServiceLike {
   private readonly codexBin: string;
   private readonly cwd: string;
   private readonly diagnosticsService: CliDiagnosticsService;
+  private resolvedCodexBin: Promise<string> | null = null;
   private state: CodexAccountRecord;
   private activeLogin:
     | {
@@ -831,11 +834,17 @@ export class CodexAccountService implements CodexAccountServiceLike {
       },
     };
 
-    const child = this.spawnImpl(this.codexBin, input.args, {
+    const command = await this.resolveCodexCommand();
+    const prepared = prepareWindowsCommandSpawn(command, input.args, {
       cwd: this.cwd,
       env: this.baseEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const child = this.spawnImpl(
+      prepared.command,
+      prepared.args,
+      prepared.options
+    );
     this.activeLogin = {
       attemptId,
       child,
@@ -904,7 +913,33 @@ export class CodexAccountService implements CodexAccountServiceLike {
   private async refreshStatus(): Promise<CodexAccountRecord> {
     const diagnostics = await this.diagnosticsService.getDiagnostics();
     const update = createCliUpdateRecord("codex", diagnostics);
-    const result = await this.runCommand(["login", "status"]);
+    let result: CommandResult;
+    try {
+      result = await this.runCommand(["login", "status"]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const homePath = this.baseEnv.HOME ?? null;
+      this.state = {
+        ...this.state,
+        status: "error",
+        statusText: message || "Codex login status is unavailable.",
+        homePath,
+        codexBin: this.codexBin,
+        updatedAt: this.now(),
+        accountInfo: emptyAccountInfoState(),
+        loginMethods: codexLoginMethods(),
+        primaryLoginMethodId: "browser-login",
+        diagnostics,
+        update: {
+          ...this.state.update,
+          supported: update.supported,
+          installMethod: diagnostics.installMethod,
+          commandPreview: update.commandPreview,
+        },
+      };
+
+      return this.snapshot();
+    }
     const output = normalizeCommandOutput(result.stdout, result.stderr);
     const normalizedOutput = output || "Login status unavailable.";
     const loggedOut =
@@ -1002,16 +1037,27 @@ export class CodexAccountService implements CodexAccountServiceLike {
     }
   }
 
-  private runCommand(
+  private resolveCodexCommand(): Promise<string> {
+    this.resolvedCodexBin ??= resolveCodexBin(this.codexBin, this.baseEnv);
+    return this.resolvedCodexBin;
+  }
+
+  private async runCommand(
     args: string[],
     stdinText?: string
   ): Promise<CommandResult> {
+    const command = await this.resolveCodexCommand();
     return new Promise((resolve, reject) => {
-      const child = this.spawnImpl(this.codexBin, args, {
+      const prepared = prepareWindowsCommandSpawn(command, args, {
         cwd: this.cwd,
         env: this.baseEnv,
         stdio: [stdinText ? "pipe" : "ignore", "pipe", "pipe"],
       });
+      const child = this.spawnImpl(
+        prepared.command,
+        prepared.args,
+        prepared.options
+      );
 
       let stdout = "";
       let stderr = "";

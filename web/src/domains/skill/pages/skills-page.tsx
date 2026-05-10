@@ -53,7 +53,7 @@ function NewSkillCard() {
       <div className="flex size-10 items-center justify-center rounded-xl bg-background text-muted-foreground transition group-hover:text-primary">
         <Plus className="size-5" />
       </div>
-      <p className="mt-3 text-sm font-semibold text-foreground">새 스킬 만들기</p>
+      <p className="mt-3 text-sm font-semibold text-foreground">새 공용 스킬 만들기</p>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
         4단계 질문에 답하면 새 스킬이 만들어져요.
       </p>

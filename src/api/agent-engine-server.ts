@@ -12,6 +12,7 @@ import { RockyChatService } from "../rocky-chat/rocky-chat-service.js";
 import { SessionService } from "../sessions/session-service.js";
 import { TaskService } from "../tasks/task-service.js";
 import { createDefaultRuntimeRegistry } from "../runtime/runtime-registry.js";
+import { openUrl } from "./http/native-open.js";
 
 import type { AgentRegistryServiceOptions } from "../agents/agent-types.js";
 import type { AgentEngineServerOptions } from "./api-types.js";
@@ -23,6 +24,7 @@ import { registerFavoriteRoutes } from "./routes/favorite-routes.js";
 import { ConnectorService } from "../connectors/connector-service.js";
 import { FavoriteService } from "../favorites/favorite-service.js";
 import { registerAuthProfileRoutes } from "./routes/auth-profile-routes.js";
+import { registerIntegrationRoutes } from "./routes/integration-routes.js";
 import { registerMessengerRoutes } from "./routes/messenger-routes.js";
 import { registerRunRoutes } from "./routes/run-routes.js";
 import { registerRuntimeRoutes } from "./routes/runtime-routes.js";
@@ -96,6 +98,18 @@ export function createAgentEngineServer(
       now: options.now,
       idGenerator: options.idGenerator,
     });
+  const connectorService = new ConnectorService({
+    stateRoot: options.stateRoot,
+    now: options.now,
+    openExternalUrl: options.nativeUrlOpener ?? openUrl,
+    detectBrowser: options.connectorBrowserDetector,
+    startBrowserLogin: options.connectorBrowserLoginStarter,
+    publishBrowserDraft: options.connectorBrowserDraftPublisher,
+    readBrowserProfile: options.connectorBrowserProfileReader,
+    readBrowserFollowerList: options.connectorBrowserFollowerListReader,
+    baseEnv: options.connectorBaseEnv,
+    fetchImpl: options.connectorFetch,
+  });
   const rockyChatService =
     options.rockyChatService ??
     new RockyChatService({
@@ -103,16 +117,15 @@ export function createAgentEngineServer(
       agentService,
       sessionService,
       skillTemplateStore: options.skillTemplateStore,
+      ecountSettingsService: options.ecountSettingsService,
+      ecountLookupService: options.ecountLookupService,
+      connectorService,
       now: options.now,
       idGenerator: options.idGenerator,
     });
   const hardwareStatusService =
     options.hardwareStatusService ??
     new SystemHardwareStatusService();
-  const connectorService = new ConnectorService({
-    stateRoot: options.stateRoot,
-    now: options.now,
-  });
   const favoriteService = new FavoriteService({
     stateRoot: options.stateRoot,
     now: options.now,
@@ -126,6 +139,7 @@ export function createAgentEngineServer(
   server.register(registerAgentRoutes, {
     agentService,
     sessionService,
+    connectorService,
     nativeFileOpener: options.nativeFileOpener,
     nativeFolderOpener: options.nativeFolderOpener,
   });
@@ -139,6 +153,13 @@ export function createAgentEngineServer(
   });
   server.register(registerAuthProfileRoutes, {
     authProfileService,
+  });
+  server.register(registerIntegrationRoutes, {
+    stateRoot: options.stateRoot,
+    now: options.now,
+    ecountConnectionTester: options.ecountConnectionTester,
+    ecountLookupService: options.ecountLookupService,
+    ecountSettingsService: options.ecountSettingsService,
   });
   server.register(registerSessionRoutes, {
     sessionService,

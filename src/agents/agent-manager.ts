@@ -28,6 +28,7 @@ import type {
   AgentManagerOptions,
   AgentPaths,
   AgentRecord,
+  AgentSkillPolicy,
   AgentSessionOverrides,
   AgentUpdatePatch,
   ExecFileLike,
@@ -59,6 +60,22 @@ export const DEFAULT_AGENT_STATUS = "active";
 export const DEFAULT_AGENT_LIFECYCLE = "active";
 export const DEFAULT_SANDBOX_POLICY = "workspace-write";
 export const DEFAULT_APPROVAL_POLICY = "on-request";
+
+export function buildDefaultAgentSkillPolicy(): AgentSkillPolicy {
+  return {
+    automaticSkillCreation: false,
+  };
+}
+
+function normalizeAgentSkillPolicy(
+  value: Partial<AgentSkillPolicy> | null | undefined
+): AgentSkillPolicy {
+  return {
+    ...buildDefaultAgentSkillPolicy(),
+    ...(value ?? {}),
+    automaticSkillCreation: value?.automaticSkillCreation === true,
+  };
+}
 
 function badRequestError(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), {
@@ -231,6 +248,7 @@ function hydrateAgentRecord(persisted: Partial<AgentRecord>): AgentRecord {
       buildDefaultAgentToolPolicy({
         workspaceRoot: path.resolve(persisted.workspaceRoot),
       }),
+    skillPolicy: normalizeAgentSkillPolicy(persisted.skillPolicy),
     status: persisted.status ?? DEFAULT_AGENT_STATUS,
     lifecycle: persisted.lifecycle === "archived" ? "archived" : "active",
     archivedAt:
@@ -386,6 +404,7 @@ export class AgentManager {
         buildDefaultAgentToolPolicy({
           workspaceRoot: paths.workspaceRoot,
         }),
+      skillPolicy: normalizeAgentSkillPolicy(persistedInput.skillPolicy),
       status: persistedInput.status ?? DEFAULT_AGENT_STATUS,
       lifecycle:
         persistedInput.lifecycle === "archived" ? "archived" : DEFAULT_AGENT_LIFECYCLE,
@@ -547,6 +566,10 @@ export class AgentManager {
             buildDefaultAgentToolPolicy({
               workspaceRoot: paths.workspaceRoot,
             });
+    const inferredSkillPolicy =
+      "skillPolicy" in persistedPatch
+        ? normalizeAgentSkillPolicy(persistedPatch.skillPolicy)
+        : current.skillPolicy ?? buildDefaultAgentSkillPolicy();
     const inferredPythonEnvironment =
       "pythonEnvironment" in persistedPatch
         ? persistedPatch.pythonEnvironment
@@ -569,6 +592,7 @@ export class AgentManager {
       runtimeHome: paths.runtimeHome,
       runtimePolicy: inferredRuntimePolicy,
       toolPolicy: inferredToolPolicy,
+      skillPolicy: inferredSkillPolicy,
       lifecycle: inferredLifecycle,
       archivedAt:
         inferredLifecycle === "archived"

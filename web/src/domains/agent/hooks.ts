@@ -14,6 +14,7 @@ export const agentQueryKeys = {
     ["agents", includeArchived ? "all" : "active"] as const,
   agent: (agentId: string) => ["agent", agentId] as const,
   agentLocalSkills: (agentId: string) => ["agent-local-skills", agentId] as const,
+  agentIntegrations: (agentId: string) => ["agent-integrations", agentId] as const,
   workspaceDirectory: (agentId: string, searchPath: string) =>
     ["agent-workspace-directory", agentId, searchPath] as const,
   workspaceFile: (agentId: string, searchPath: string) =>
@@ -54,6 +55,14 @@ export function useAgentLocalSkillsQuery(agentId: string | undefined) {
   });
 }
 
+export function useAgentIntegrationsQuery(agentId: string | undefined) {
+  return useQuery({
+    queryKey: agentQueryKeys.agentIntegrations(agentId ?? "unknown"),
+    queryFn: () => agentEngineClient.listAgentConnectorIntegrations(agentId!),
+    enabled: Boolean(agentId),
+  });
+}
+
 export function useUpsertAgentLocalSkillMutation(agentId: string | undefined) {
   const queryClient = useQueryClient();
 
@@ -84,6 +93,9 @@ export function useUpsertAgentLocalSkillMutation(agentId: string | undefined) {
         queryClient.invalidateQueries({
           queryKey: agentQueryKeys.agents(true),
         }),
+        queryClient.invalidateQueries({
+          queryKey: agentQueryKeys.agentIntegrations(agentId!),
+        }),
       ]);
     },
   });
@@ -111,6 +123,9 @@ export function useDeleteAgentLocalSkillMutation(agentId: string | undefined) {
         }),
         queryClient.invalidateQueries({
           queryKey: agentQueryKeys.agents(true),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: agentQueryKeys.agentIntegrations(agentId!),
         }),
       ]);
     },

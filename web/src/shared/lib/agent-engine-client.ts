@@ -18,6 +18,9 @@ export interface AgentRecord {
   sandboxPolicy: string;
   approvalPolicy: string;
   modelProfile: string | null;
+  skillPolicy: {
+    automaticSkillCreation: boolean;
+  };
   status: string;
   lifecycle: "active" | "archived";
   archivedAt: string | null;
@@ -109,12 +112,101 @@ export interface SkillTemplateRunRecord {
   updatedAt: string;
 }
 
+export interface EcountConnectionTestInput {
+  accountLabel?: string | null;
+  comCode: string;
+  userId: string;
+  apiCertKey: string;
+  zone?: string | null;
+  lanType?: string | null;
+}
+
+export interface EcountConnectionTestRecord {
+  ok: boolean;
+  status: "connected" | "failed";
+  accountLabel: string | null;
+  comCode: string;
+  userId: string;
+  zone: string | null;
+  checkedAt: string;
+  message: string;
+  diagnostics?: {
+    stage: "zone" | "login";
+    detail: string;
+  };
+}
+
+export interface EcountConnectionSettingsRecord {
+  configured: boolean;
+  accountLabel: string | null;
+  comCodeMasked: string | null;
+  userIdMasked: string | null;
+  apiCertKeyMasked: string | null;
+  zone: string | null;
+  checkedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface IntegrationCapabilityRecord {
+  provider: string;
+  dataset: string;
+  label: string;
+  status: "supported" | "unsupported";
+  access: "read";
+  api: string | null;
+  filters: string[];
+  reason: string | null;
+}
+
+export interface IntegrationCapabilitiesRecord {
+  provider: string;
+  capabilities: IntegrationCapabilityRecord[];
+}
+
+export interface IntegrationQueryInput {
+  dataset?: string;
+  datasets?: string[];
+  limit?: number | null;
+  offset?: number | null;
+  filters?: Record<string, unknown> | null;
+}
+
+export interface IntegrationQueryResultRecord {
+  ok: boolean;
+  provider: string;
+  dataset: string;
+  title: string;
+  status: "ready" | "failed" | "unsupported";
+  accountLabel: string | null;
+  zone: string | null;
+  checkedAt: string;
+  api: string | null;
+  count: number;
+  returnedCount: number;
+  records: Array<Record<string, unknown>>;
+  message: string;
+  diagnostics?: {
+    stage: string;
+    detail: string;
+  };
+}
+
+export interface IntegrationQueryBatchResultRecord {
+  provider: string;
+  status: "ready" | "partial";
+  checkedAt: string;
+  results: IntegrationQueryResultRecord[];
+}
+
 export interface AgentCreateInput {
   name: string;
   id?: string | null;
   description?: string | null;
   soul?: string | null;
   defaultRuntime?: RuntimeKind;
+  skillPolicy?: {
+    automaticSkillCreation: boolean;
+  };
 }
 
 export interface AgentUpdateInput {
@@ -125,6 +217,9 @@ export interface AgentUpdateInput {
   stopRunningSessions?: boolean;
   color?: string | null;
   defaultRuntime?: RuntimeKind;
+  skillPolicy?: {
+    automaticSkillCreation: boolean;
+  };
 }
 
 export type AuthProfileLifecycle = "active" | "archived";
@@ -365,6 +460,138 @@ export type ConnectorProvider =
   | "medium";
 
 export type ConnectorStatus = "idle" | "connecting" | "connected" | "failed";
+export type ConnectorLoginMode =
+  | "oauth"
+  | "custom-browser"
+  | "external-browser"
+  | "managed-browser";
+
+export type ConnectorCapabilityAction = "read" | "write";
+
+export interface ConnectorCapabilityRecord {
+  id: string;
+  provider: ConnectorProvider;
+  label: string;
+  description: string;
+  action: ConnectorCapabilityAction;
+  requiresBrowser: boolean;
+  requiresConnectedAccount: boolean;
+  requiresApproval: boolean;
+  status?: "available" | "planned" | "unsupported";
+  source?: "backend" | "skill";
+  sourceSkillId?: string | null;
+  sourceSkillName?: string | null;
+  scriptPath?: string | null;
+  usage?: string | null;
+}
+
+export type ConnectorBrowserAccessStatus =
+  | "not-applicable"
+  | "needs-login"
+  | "granted"
+  | "unavailable";
+
+export interface ConnectorBrowserAccessRecord {
+  status: ConnectorBrowserAccessStatus;
+  policy: "persistent" | "per-run" | null;
+  readAllowed: boolean;
+  writeAllowedAfterApproval: boolean;
+  message: string;
+}
+
+export type ConnectorPublishVisibility = "draft" | "private" | "public";
+
+export interface ConnectorPublishDraftInput {
+  title: string;
+  contentMarkdown: string;
+  tags?: string[];
+  visibility?: ConnectorPublishVisibility;
+}
+
+export interface ConnectorPublishDraftResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "draft-saved" | "failed";
+  accountLabel: string | null;
+  url: string | null;
+  message: string;
+  checkedAt: string;
+}
+
+export interface ConnectorProfileRecord {
+  id: string | null;
+  username: string | null;
+  displayName: string | null;
+  bio: string | null;
+  followersText: string | null;
+  url: string | null;
+  rawText: string | null;
+}
+
+export interface ConnectorReadProfileResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "profile-read" | "failed";
+  accountLabel: string | null;
+  profile: ConnectorProfileRecord | null;
+  message: string;
+  checkedAt: string;
+}
+
+export interface ConnectorFollowerRecord {
+  username: string | null;
+  displayName: string | null;
+  profileUrl: string | null;
+  rawText: string;
+}
+
+export interface ConnectorFollowerListRecord {
+  items: ConnectorFollowerRecord[];
+  url: string | null;
+  rawText: string | null;
+}
+
+export interface ConnectorReadFollowerListResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "followers-read" | "failed";
+  accountLabel: string | null;
+  followers: ConnectorFollowerListRecord | null;
+  message: string;
+  checkedAt: string;
+}
+
+export interface ConnectorExecuteCapabilityInput {
+  capabilityId: string;
+  args?: Record<string, unknown>;
+}
+
+export type ConnectorExecuteCapabilityStatus =
+  | "completed"
+  | "failed"
+  | "unsupported"
+  | "requires-approval";
+
+export type ConnectorExecuteCapabilityResultType =
+  | "profile"
+  | "followers"
+  | "draft"
+  | "none";
+
+export interface ConnectorExecuteCapabilityResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  capabilityId: string;
+  action: ConnectorCapabilityAction | null;
+  status: ConnectorExecuteCapabilityStatus;
+  resultType: ConnectorExecuteCapabilityResultType;
+  accountLabel: string | null;
+  profile: ConnectorProfileRecord | null;
+  followers: ConnectorFollowerListRecord | null;
+  draft: ConnectorPublishDraftResult | null;
+  message: string;
+  checkedAt: string;
+}
 
 export interface ConnectorState {
   provider: ConnectorProvider;
@@ -372,8 +599,27 @@ export interface ConnectorState {
   message: string;
   accountLabel: string | null;
   connectedAt: string | null;
+  loginUrl: string | null;
+  loginMode: ConnectorLoginMode | null;
   lastError: string | null;
+  browserAccess: ConnectorBrowserAccessRecord;
+  capabilities: ConnectorCapabilityRecord[];
   updatedAt: string;
+}
+
+export interface AgentConnectorIntegrationRecord {
+  provider: ConnectorProvider;
+  label: string;
+  status: ConnectorStatus;
+  loginMode: ConnectorLoginMode | null;
+  accountLabel: string | null;
+  connectedAt: string | null;
+  browserAccess: ConnectorBrowserAccessRecord;
+  capabilities: ConnectorCapabilityRecord[];
+  requiredBySkills: Array<{
+    id: string;
+    displayName: string;
+  }>;
 }
 
 export type ChromiumChannel = "chrome" | "msedge" | "chromium";
@@ -1455,6 +1701,42 @@ export class AgentEngineClient {
     );
   }
 
+  publishConnectorDraft(
+    provider: ConnectorProvider,
+    input: ConnectorPublishDraftInput,
+  ): Promise<ConnectorPublishDraftResult> {
+    return this.request<ConnectorPublishDraftResult>(
+      `/connectors/${encodeURIComponent(provider)}/publish-draft`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  readConnectorProfile(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorReadProfileResult> {
+    return this.request<ConnectorReadProfileResult>(
+      `/connectors/${encodeURIComponent(provider)}/profile`,
+    );
+  }
+
+  executeConnectorCapability(
+    provider: ConnectorProvider,
+    input: ConnectorExecuteCapabilityInput,
+  ): Promise<ConnectorExecuteCapabilityResult> {
+    const encodedProvider = encodeURIComponent(provider);
+    const encodedCapabilityId = encodeURIComponent(input.capabilityId);
+    return this.request<ConnectorExecuteCapabilityResult>(
+      `/connectors/${encodedProvider}/capabilities/${encodedCapabilityId}/execute`,
+      {
+        method: "POST",
+        body: JSON.stringify({ args: input.args ?? {} }),
+      },
+    );
+  }
+
   listFavorites(): Promise<{ favorites: FavoriteRecord[] }> {
     return this.request<{ favorites: FavoriteRecord[] }>("/favorites");
   }
@@ -1482,6 +1764,7 @@ export class AgentEngineClient {
         description: input.description ?? undefined,
         soul: input.soul ?? undefined,
         defaultRuntime: input.defaultRuntime ?? undefined,
+        skillPolicy: input.skillPolicy ?? undefined,
       }),
     });
   }
@@ -1493,6 +1776,14 @@ export class AgentEngineClient {
   listAgentLocalSkills(agentId: string): Promise<AgentLocalSkillRecord[]> {
     return this.request<AgentLocalSkillRecord[]>(
       `/agents/${encodeURIComponent(agentId)}/skills`
+    );
+  }
+
+  listAgentConnectorIntegrations(
+    agentId: string
+  ): Promise<AgentConnectorIntegrationRecord[]> {
+    return this.request<AgentConnectorIntegrationRecord[]>(
+      `/agents/${encodeURIComponent(agentId)}/integrations`
     );
   }
 
@@ -1585,6 +1876,62 @@ export class AgentEngineClient {
           size: input.file.size,
           contentBase64,
         }),
+      }
+    );
+  }
+
+  testEcountConnection(
+    input?: EcountConnectionTestInput | null
+  ): Promise<EcountConnectionTestRecord> {
+    return this.request<EcountConnectionTestRecord>(
+      "/integrations/ecount/test",
+      {
+        method: "POST",
+        body: JSON.stringify(input ?? {}),
+      }
+    );
+  }
+
+  getEcountConnectionSettings(): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>("/integrations/ecount/settings");
+  }
+
+  saveEcountConnectionSettings(
+    input: EcountConnectionTestInput
+  ): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>(
+      "/integrations/ecount/settings",
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  deleteEcountConnectionSettings(): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>(
+      "/integrations/ecount/settings",
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  getIntegrationCapabilities(provider: string): Promise<IntegrationCapabilitiesRecord> {
+    return this.request<IntegrationCapabilitiesRecord>(
+      `/integrations/${encodeURIComponent(provider)}/capabilities`
+    );
+  }
+
+  queryIntegration(
+    provider: string,
+    input: IntegrationQueryInput
+  ): Promise<IntegrationQueryResultRecord | IntegrationQueryBatchResultRecord> {
+    return this.request<IntegrationQueryResultRecord | IntegrationQueryBatchResultRecord>(
+      `/integrations/${encodeURIComponent(provider)}/query`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       }
     );
   }

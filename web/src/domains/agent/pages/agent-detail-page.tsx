@@ -11,9 +11,13 @@ import {
   Archive,
   ArchiveRestore,
   ArrowRight,
+  Eye,
   FolderOpen,
   ListTodo,
+  PencilLine,
   Plus,
+  PlugZap,
+  ShieldCheck,
   Sparkles,
   Trash2,
   X,
@@ -24,11 +28,12 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import {
   agentQueryKeys,
+  useAgentIntegrationsQuery,
   useAgentQuery,
   useDeleteAgentMutation,
   useUpdateAgentMutation,
 } from "../hooks";
-import type { AgentRecord } from "../types";
+import type { AgentConnectorIntegrationRecord, AgentRecord } from "../types";
 import { useMdTemplates } from "@/domains/template/hooks";
 import { fireAgentLevelUp, fireMilestone } from "@/domains/onboarding/milestones";
 import { SoulCard } from "../components/soul-card";
@@ -60,6 +65,8 @@ import {
 } from "@/domains/skill/components/task-composer";
 import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
+import { Checkbox } from "@/shared/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -80,6 +87,7 @@ import { agentEngineClient } from "@/shared/lib/api-client";
 type EquippedSkillItem = {
   record: AgentLocalSkillRecord;
   template: MdTemplateDefinition | null;
+  source: "common" | "agent";
 };
 
 export function AgentDetailPage() {
@@ -94,6 +102,7 @@ export function AgentDetailPage() {
   const deleteMutation = useDeleteAgentMutation();
   const { skillIds, skillRecords, attachSkill, detachSkill, isMutating: skillMutating } =
     useAgentSkills(agentId);
+  const integrationsQuery = useAgentIntegrationsQuery(agentId);
   const { userTemplates } = useMdTemplates();
   const chatsQuery = useRockyChatsQuery();
 
@@ -136,13 +145,17 @@ export function AgentDetailPage() {
 
   const equippedSkillItems = useMemo<EquippedSkillItem[]>(
     () =>
-      skillRecords.map((record) => ({
-        record,
-        template:
+      skillRecords.map((record) => {
+        const template =
           userTemplates.find((entry) => entry.skill.id === record.id) ??
           userTemplates.find((entry) => entry.id === record.id) ??
-          null,
-      })),
+          null;
+        return {
+          record,
+          template,
+          source: template ? "common" : "agent",
+        };
+      }),
     [skillRecords, userTemplates],
   );
   const equippedTemplateSkills = useMemo(
@@ -261,6 +274,34 @@ export function AgentDetailPage() {
   }
 
   const archived = agent.lifecycle === "archived";
+  const automaticSkillCreation =
+    agent.skillPolicy?.automaticSkillCreation === true;
+
+  function handleAutomaticSkillCreationChange(next: boolean) {
+    if (!agent) return;
+    updateMutation.mutate(
+      {
+        skillPolicy: {
+          ...(agent.skillPolicy ?? { automaticSkillCreation: false }),
+          automaticSkillCreation: next,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            next
+              ? "자동 스킬 만들기를 켰습니다."
+              : "자동 스킬 만들기를 껐습니다.",
+          );
+        },
+        onError: (error) => {
+          toast.error("자동 스킬 만들기 설정을 저장하지 못했습니다.", {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        },
+      },
+    );
+  }
 
 
   return (
@@ -416,6 +457,44 @@ export function AgentDetailPage() {
           </header>
 
           {archived ? null : (
+            <div className="mb-3 rounded-2xl border border-border bg-card px-4 py-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="agent-auto-skill-creation"
+                  checked={automaticSkillCreation}
+                  disabled={updateMutation.isPending}
+                  onCheckedChange={(checked) =>
+                    handleAutomaticSkillCreationChange(checked === true)
+                  }
+                />
+                <div className="min-w-0 flex-1">
+                  <label
+                    htmlFor="agent-auto-skill-creation"
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    자동 스킬 만들기
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    켜두면 세션에서 재사용 가능한 업무나 연동 절차를 스킬 생성 흐름으로 바로 정리합니다.
+                    꺼져 있어도 명시적으로 스킬을 요청하면 만들 수 있어요.
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[11px]",
+                    automaticSkillCreation
+                      ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700"
+                      : "border-border bg-muted text-muted-foreground",
+                  )}
+                >
+                  {automaticSkillCreation ? "ON" : "OFF"}
+                </Badge>
+              </div>
+            </div>
+          )}
+
+          {archived ? null : (
             <SkillPickerDialog
               open={skillPickerOpen}
               onOpenChange={setSkillPickerOpen}
@@ -455,6 +534,11 @@ export function AgentDetailPage() {
             </ul>
           )}
         </section>
+
+        <AgentIntegrationSection
+          integrations={integrationsQuery.data ?? []}
+          loading={integrationsQuery.isLoading}
+        />
 
         <section>
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -604,6 +688,149 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function AgentIntegrationSection({
+  integrations,
+  loading,
+}: {
+  integrations: AgentConnectorIntegrationRecord[];
+  loading: boolean;
+}) {
+  return (
+    <section>
+      <header className="mb-3 flex items-center gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <PlugZap className="size-4 text-muted-foreground" />
+          필요한 연동
+          <span className="text-xs font-normal text-muted-foreground">
+            {integrations.length}개
+          </span>
+        </h2>
+      </header>
+
+      {loading ? (
+        <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+          연동 상태를 불러오는 중입니다.
+        </div>
+      ) : integrations.length === 0 ? (
+        <div className="rounded-2xl border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+          장착된 스킬에 필요한 플랫폼 연동이 없습니다.
+        </div>
+      ) : (
+        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {integrations.map((integration) => (
+            <li key={integration.provider}>
+              <AgentIntegrationCard integration={integration} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function AgentIntegrationCard({
+  integration,
+}: {
+  integration: AgentConnectorIntegrationRecord;
+}) {
+  const readCapabilities = integration.capabilities.filter(
+    (capability) => capability.action === "read",
+  );
+  const writeCapabilities = integration.capabilities.filter(
+    (capability) => capability.action === "write",
+  );
+
+  return (
+    <div className="flex h-full flex-col rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-foreground">
+            {integration.label}
+          </h3>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {integration.accountLabel ?? "계정 없음"}
+          </p>
+        </div>
+        <Badge
+          variant="outline"
+          className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px]", connectorStatusTone(integration.status))}
+        >
+          {connectorStatusLabel(integration.status)}
+        </Badge>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-xs">
+        <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
+          <ShieldCheck className="size-3.5 text-muted-foreground" />
+          <span className="truncate">
+            {browserAccessLabel(integration)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
+          <Eye className="size-3.5 text-muted-foreground" />
+          <span className="truncate">
+            읽기 {readCapabilities.length}개
+          </span>
+          <PencilLine className="ml-auto size-3.5 text-muted-foreground" />
+          <span className="truncate">
+            승인 필요 {writeCapabilities.filter((capability) => capability.requiresApproval).length}개
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {integration.capabilities.map((capability) => (
+          <Badge
+            key={capability.id}
+            variant="outline"
+            className="rounded-full px-2 py-0.5 text-[11px]"
+          >
+            {capability.label}
+          </Badge>
+        ))}
+      </div>
+
+      <p className="mt-3 line-clamp-1 text-[11px] text-muted-foreground">
+        {integration.requiredBySkills.map((skill) => skill.displayName).join(", ")}
+      </p>
+    </div>
+  );
+}
+
+function connectorStatusLabel(status: AgentConnectorIntegrationRecord["status"]): string {
+  if (status === "connected") return "연결됨";
+  if (status === "connecting") return "연결 중";
+  if (status === "failed") return "오류";
+  return "미연결";
+}
+
+function connectorStatusTone(status: AgentConnectorIntegrationRecord["status"]): string {
+  if (status === "connected") {
+    return "border-emerald-500/30 bg-emerald-500/8 text-emerald-700";
+  }
+  if (status === "connecting") {
+    return "border-sky-500/30 bg-sky-500/8 text-sky-700";
+  }
+  if (status === "failed") {
+    return "border-destructive/30 bg-destructive/8 text-destructive";
+  }
+  return "border-border bg-muted text-muted-foreground";
+}
+
+function browserAccessLabel(integration: AgentConnectorIntegrationRecord): string {
+  const access = integration.browserAccess;
+  if (access.status === "granted") {
+    return access.policy === "persistent" ? "브라우저 지속 권한" : "브라우저 실행별 권한";
+  }
+  if (access.status === "not-applicable") {
+    return "브라우저 권한 불필요";
+  }
+  if (access.status === "unavailable") {
+    return "브라우저 권한 오류";
+  }
+  return "브라우저 로그인 필요";
+}
+
 function EquippedSkillCard({
   item,
   fromAgentId,
@@ -624,6 +851,11 @@ function EquippedSkillCard({
     item.record.description ??
     "이 에이전트 workspace와 runtime home에 설치된 agent-local skill입니다.";
   const triggerLabel = skill?.triggerLabel ?? item.record.invocation;
+  const sourceLabel = item.source === "common" ? "공용 스킬" : "에이전트 생성";
+  const sourceTone =
+    item.source === "common"
+      ? "border-sky-500/30 bg-sky-500/8 text-sky-700"
+      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-700";
   const skillHref = skill
     ? `/skills/${encodeURIComponent(skill.id)}?from=agent:${encodeURIComponent(fromAgentId)}`
     : null;
@@ -644,7 +876,16 @@ function EquippedSkillCard({
         </span>
       </div>
 
-      <div className="mt-3 min-w-0 flex-1">
+      <div className="mt-3">
+        <Badge
+          variant="outline"
+          className={cn("rounded-full px-2 py-0.5 text-[11px]", sourceTone)}
+        >
+          {sourceLabel}
+        </Badge>
+      </div>
+
+      <div className="mt-2 min-w-0 flex-1">
         {skillHref ? (
           <Link
             to={skillHref}

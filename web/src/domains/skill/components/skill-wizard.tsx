@@ -1,10 +1,22 @@
-import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Check, Plug, Plus, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Plug,
+  Plus,
+  ShieldCheck,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Progress } from "@/shared/ui/progress";
 import { cn } from "@/shared/lib/utils";
+import { agentEngineClient } from "@/shared/lib/api-client";
+import type { EcountConnectionSettingsRecord } from "@/shared/lib/agent-engine-client";
 import type { MdTemplateInputArtifact } from "@/domains/template/types";
 import { ConnectorDialog } from "@/domains/connector/connector-dialog";
 import {
@@ -26,14 +38,36 @@ type AnswerValue =
 
 export type SkillWizardAnswers = Record<string, AnswerValue>;
 
+function defaultAnswersFromTemplate(template: SkillTemplate): SkillWizardAnswers {
+  const defaults: SkillWizardAnswers = {};
+  for (const step of template.steps) {
+    for (const field of step.fields) {
+      if (field.defaultValue != null) {
+        defaults[field.id] = field.defaultValue;
+      }
+    }
+  }
+  return defaults;
+}
+
+function isStepVisible(step: SkillStep, answers: SkillWizardAnswers): boolean {
+  if (!step.showWhen) {
+    return true;
+  }
+  const value = answers[step.showWhen.fieldId];
+  return typeof value === "string" && step.showWhen.values.includes(value);
+}
+
 export function SkillWizard({
   template,
+  initialAnswers,
   onCancel,
   onSubmit,
   finishLabel = "다음",
   onUploadFile,
 }: {
   template: SkillTemplate;
+  initialAnswers?: SkillWizardAnswers;
   onCancel: () => void;
   onSubmit: (answers: SkillWizardAnswers) => void;
   finishLabel?: string;
@@ -43,12 +77,17 @@ export function SkillWizard({
   }) => Promise<MdTemplateInputArtifact>;
 }) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [answers, setAnswers] = useState<SkillWizardAnswers>({});
+  const [answers, setAnswers] = useState<SkillWizardAnswers>(() => ({
+    ...defaultAnswersFromTemplate(template),
+    ...(initialAnswers ?? {}),
+  }));
 
-  const totalSteps = template.steps.length;
-  const step = template.steps[stepIndex];
-  const progress = ((stepIndex + 1) / totalSteps) * 100;
-  const isLastStep = stepIndex === totalSteps - 1;
+  const visibleSteps = template.steps.filter((candidate) => isStepVisible(candidate, answers));
+  const totalSteps = visibleSteps.length;
+  const safeStepIndex = Math.min(stepIndex, Math.max(totalSteps - 1, 0));
+  const step = visibleSteps[safeStepIndex];
+  const progress = totalSteps > 0 ? ((safeStepIndex + 1) / totalSteps) * 100 : 0;
+  const isLastStep = safeStepIndex === totalSteps - 1;
 
   function patchAnswer(fieldId: string, next: AnswerValue) {
     setAnswers((current) => ({ ...current, [fieldId]: next }));
@@ -63,7 +102,7 @@ export function SkillWizard({
   }
 
   function goBack() {
-    if (stepIndex === 0) {
+    if (safeStepIndex === 0) {
       onCancel();
       return;
     }
@@ -120,10 +159,17 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
 
   if (field.kind === "single-select" || field.kind === "single-select-with-detail") {
     if (!value) return false;
-    if (typeof value === "string") return value.length > 0;
+    if (typeof value === "string") {
+      const option = field.options?.find((entry) => entry.id === value);
+      return value.length > 0 && option?.disabled !== true;
+    }
     if (typeof value === "object" && "primary" in value) {
       const primary = value.primary;
       if (!primary) return false;
+      if (primary !== "__custom") {
+        const primaryOption = field.options?.find((entry) => entry.id === primary);
+        if (primaryOption?.disabled) return false;
+      }
       // If user picked an option that has detailOptions but didn't pick a detail, fail
       const opt = field.options?.find((option) => option.id === primary);
       if (opt?.detailOptions && opt.detailOptions.length > 0 && !value.detail) {
@@ -162,6 +208,10 @@ function isFieldFilled(field: SkillField, value: AnswerValue): boolean {
   }
 
   if (field.kind === "account-connect") {
+    return typeof value === "string" && value.length > 0;
+  }
+
+  if (field.kind === "erp-integration-select") {
     return typeof value === "string" && value.length > 0;
   }
 
@@ -262,6 +312,8 @@ function SkillFieldView({
         <TextField field={field} value={value} onChange={onChange} />
       ) : field.kind === "account-connect" ? (
         <AccountConnectField value={value} answers={answers} onChange={onChange} />
+      ) : field.kind === "erp-integration-select" ? (
+        <ErpIntegrationSelectField value={value} onChange={onChange} />
       ) : field.kind === "recipient-address" ? (
         <RecipientAddressField field={field} value={value} onChange={onChange} />
       ) : null}
@@ -397,6 +449,161 @@ function AccountConnectField({
   );
 }
 
+function formatDateTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("ko-KR", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function ErpIntegrationSelectField({
+  value,
+  onChange,
+}: {
+  value: AnswerValue;
+  onChange: (value: AnswerValue) => void;
+}) {
+  const selected = typeof value === "string" ? value : "";
+  const [settings, setSettings] = useState<EcountConnectionSettingsRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const onChangeRef = useRef(onChange);
+  const selectedRef = useRef(selected);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void agentEngineClient
+      .getEcountConnectionSettings()
+      .then((next) => {
+        if (cancelled) return;
+        setSettings(next);
+        if (!next.configured && selectedRef.current === "ecount") {
+          onChangeRef.current(null);
+        }
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        setSettings(null);
+        setError(caught instanceof Error ? caught.message : "ERP 연동 상태를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const ecountConfigured = settings?.configured === true;
+  const ecountLabel = settings?.accountLabel ?? "이카운트 ERP";
+  const ecountSelected = selected === "ecount";
+
+  return (
+    <div className="space-y-3">
+      <button
+        type="button"
+        disabled={!ecountConfigured || loading}
+        onClick={() => {
+          if (ecountConfigured) {
+            onChange("ecount");
+          }
+        }}
+        className={cn(
+          "flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition",
+          ecountSelected
+            ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
+            : ecountConfigured
+              ? "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/50"
+              : "cursor-not-allowed border-border/60 bg-muted/30 opacity-75",
+        )}
+      >
+        <span
+          className={cn(
+            "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border",
+            ecountSelected
+              ? "border-foreground bg-foreground text-background"
+              : "border-border/80 text-transparent",
+          )}
+          aria-hidden="true"
+        >
+          <Check className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-foreground">이카운트 ERP</span>
+          <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+            {loading
+              ? "연동 상태를 확인하는 중입니다."
+              : ecountConfigured
+                ? [
+                    ecountLabel,
+                    settings?.zone ? `ZONE ${settings.zone}` : null,
+                    settings?.checkedAt ? `마지막 확인 ${formatDateTime(settings.checkedAt)}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : "아직 연결된 ECOUNT ERP 연동이 없습니다."}
+          </span>
+        </span>
+        {ecountConfigured ? (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            <ShieldCheck className="size-3.5" />
+            연결됨
+          </span>
+        ) : (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <AlertCircle className="size-3.5" />
+            설정 필요
+          </span>
+        )}
+      </button>
+
+      {error ? (
+        <p className="text-xs leading-5 text-destructive">{error}</p>
+      ) : null}
+
+      {!ecountConfigured && !loading ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-muted/25 px-4 py-3 text-xs leading-5 text-muted-foreground">
+          <p className="min-w-0 flex-1">
+            먼저 연동 화면에서 ECOUNT ERP 연결 테스트를 완료한 뒤 스킬에서 선택할 수 있습니다.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            render={<a href="/integrations" />}
+          >
+            <Plug className="size-4" />
+            연동 설정
+          </Button>
+        </div>
+      ) : null}
+
+      <p className="text-xs leading-5 text-muted-foreground">
+        스킬에는 연동 참조만 저장합니다. API 키, 비밀번호, 세션 ID는 스킬 내용에 저장하지 않습니다.
+      </p>
+    </div>
+  );
+}
+
 function RecipientAddressField({
   field,
   value,
@@ -443,21 +650,26 @@ function ChoicePill({
   description,
   active,
   onClick,
+  disabled,
 }: {
   label: string;
   description?: string;
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={cn(
         "group flex min-h-12 items-start gap-3 rounded-2xl border px-4 py-3 text-left transition",
-        active
-          ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
-          : "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/50",
+        disabled
+          ? "cursor-not-allowed border-border/60 bg-muted/30 opacity-65"
+          : active
+            ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
+            : "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/50",
       )}
     >
       <span
@@ -507,6 +719,7 @@ function SingleSelectField({
           label={option.label}
           description={option.description}
           active={selected === option.id}
+          disabled={option.disabled}
           onClick={() => onChange(option.id)}
         />
       ))}
@@ -561,6 +774,7 @@ function SingleSelectWithDetail({
             label={option.label}
             description={option.description}
             active={current.primary === option.id}
+            disabled={option.disabled}
             onClick={() => onChange({ primary: option.id })}
           />
         ))}
@@ -595,6 +809,7 @@ function SingleSelectWithDetail({
                 key={option.id}
                 label={option.label}
                 active={current.detail === option.id}
+                disabled={option.disabled}
                 onClick={() =>
                   onChange({ primary: current.primary, detail: option.id })
                 }
@@ -653,6 +868,7 @@ function MultiSelectField({
             label={option.label}
             description={option.description}
             active={selected.includes(option.id)}
+            disabled={option.disabled}
             onClick={() => toggle(option.id)}
           />
         ))}

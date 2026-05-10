@@ -26,6 +26,20 @@ import type {
 import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
 import type { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type {
+  EcountConnectionTester,
+  EcountLookupServiceLike,
+} from "../integrations/ecount-connection-service.js";
+import type { EcountSettingsServiceLike } from "../integrations/ecount-settings-service.js";
+import type {
+  ConnectorBrowserDetector,
+  ConnectorBrowserLoginStarter,
+} from "../connectors/connector-service.js";
+import type { ConnectorBrowserDraftPublisher } from "../connectors/browser-draft-publisher.js";
+import type {
+  ConnectorBrowserFollowerListReader,
+  ConnectorBrowserProfileReader,
+} from "../connectors/browser-profile-reader.js";
+import type {
   RuntimeKind,
   RuntimeEvent,
   RuntimeOllamaLaunchTarget,
@@ -37,7 +51,11 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
-import type { NativeFileOpener, NativeFolderOpener } from "./http/native-open.js";
+import type {
+  NativeFileOpener,
+  NativeFolderOpener,
+  NativeUrlOpener,
+} from "./http/native-open.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -247,7 +265,18 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
   skillTemplateStore?: SkillTemplateStore;
+  ecountConnectionTester?: EcountConnectionTester;
+  ecountLookupService?: EcountLookupServiceLike;
+  ecountSettingsService?: EcountSettingsServiceLike;
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
+  nativeUrlOpener?: NativeUrlOpener;
+  connectorBrowserDetector?: ConnectorBrowserDetector;
+  connectorBrowserLoginStarter?: ConnectorBrowserLoginStarter;
+  connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
+  connectorBrowserProfileReader?: ConnectorBrowserProfileReader;
+  connectorBrowserFollowerListReader?: ConnectorBrowserFollowerListReader;
+  connectorBaseEnv?: NodeJS.ProcessEnv;
+  connectorFetch?: typeof fetch;
 }

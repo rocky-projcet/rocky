@@ -21,6 +21,16 @@ import type {
   AgentSessionRecord,
 } from "../../src/sessions/session-types.js";
 import type { RuntimeRunResult } from "../../src/runtime/runtime-types.js";
+import { EcountSettingsService } from "../../src/integrations/ecount-settings-service.js";
+import type { EcountLookupServiceLike } from "../../src/integrations/ecount-connection-service.js";
+import type {
+  ConnectorBrowserDetector,
+} from "../../src/connectors/connector-service.js";
+import type { ConnectorBrowserDraftPublisher } from "../../src/connectors/browser-draft-publisher.js";
+import type {
+  ConnectorBrowserFollowerListReader,
+  ConnectorBrowserProfileReader,
+} from "../../src/connectors/browser-profile-reader.js";
 
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
@@ -55,6 +65,9 @@ function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
         mode: "disabled",
         command: "ssh",
       },
+    },
+    skillPolicy: input.skillPolicy ?? {
+      automaticSkillCreation: false,
     },
     status: input.status ?? "active",
     lifecycle: input.lifecycle ?? "active",
@@ -140,7 +153,16 @@ function buildRun(input: {
   };
 }
 
-function createRockyChatTestServer(stateRoot: string) {
+function createRockyChatTestServer(
+  stateRoot: string,
+  options: {
+    ecountLookupService?: EcountLookupServiceLike;
+    connectorBrowserDetector?: ConnectorBrowserDetector;
+    connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
+    connectorBrowserProfileReader?: ConnectorBrowserProfileReader;
+    connectorBrowserFollowerListReader?: ConnectorBrowserFollowerListReader;
+  } = {}
+) {
   const agents: AgentRecord[] = [];
   const sessions: AgentSessionRecord[] = [];
   const runs: AgentRunRecord[] = [];
@@ -167,6 +189,11 @@ function createRockyChatTestServer(stateRoot: string) {
   const server = createAgentEngineServer({
     stateRoot,
     now: () => "2026-04-21T00:00:00.000Z",
+    ecountLookupService: options.ecountLookupService,
+    connectorBrowserDetector: options.connectorBrowserDetector,
+    connectorBrowserDraftPublisher: options.connectorBrowserDraftPublisher,
+    connectorBrowserProfileReader: options.connectorBrowserProfileReader,
+    connectorBrowserFollowerListReader: options.connectorBrowserFollowerListReader,
     agentService: {
       async createAgent(input) {
         const agentId = input?.id ?? "rocky-core";
@@ -1022,6 +1049,311 @@ test("rocky chat routes agent detail requests through the selected agent", async
   }
 });
 
+test("rocky chat prepares ECOUNT lookup files for agent ECOUNT skills", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-ecount-"));
+  const settings = new EcountSettingsService({
+    stateRoot,
+    now: () => "2026-04-21T00:00:00.000Z",
+  });
+  await settings.saveSettings({
+    accountLabel: "본사 이카운트",
+    comCode: "123456",
+    userId: "api-user",
+    apiCertKey: "test-secret-key",
+    zone: "CC",
+    checkedAt: "2026-04-21T00:00:00.000Z",
+  });
+
+  const ecountLookupCalls: Array<{ limit?: number | null; offset?: number | null }> = [];
+  const {
+    agents,
+    sendTurnCalls,
+    server,
+  } = createRockyChatTestServer(stateRoot, {
+    ecountLookupService: {
+      async getBasicProductsList(_input, options) {
+        ecountLookupCalls.push({
+          limit: options?.limit ?? null,
+          offset: options?.offset ?? null,
+        });
+        return {
+          ok: true,
+          status: "connected",
+          accountLabel: "본사 이카운트",
+          zone: "CC",
+          checkedAt: "2026-04-21T00:00:00.000Z",
+          api: "InventoryBasic/GetBasicProductsList",
+          count: 2,
+          returnedCount: 2,
+          products: [
+            {
+              code: "P-001",
+              name: "테스트 품목",
+              spec: "BOX",
+              unit: "EA",
+              raw: {
+                PROD_CD: "P-001",
+                PROD_DES: "테스트 품목",
+                SIZE_DES: "BOX",
+                UNIT: "EA",
+              },
+            },
+            {
+              code: "P-002",
+              name: "두번째 품목",
+              spec: null,
+              unit: null,
+              raw: {
+                PROD_CD: "P-002",
+                PROD_DES: "두번째 품목",
+              },
+            },
+          ],
+          message: "ECOUNT product lookup returned 2 product(s).",
+        };
+      },
+    },
+  });
+  const workspaceRoot = path.join(stateRoot, "agents", "erp-agent", "workspace");
+  agents.push(buildAgent({
+    id: "erp-agent",
+    name: "ERP 비서",
+    workspaceRoot,
+    runtimeHome: path.join(stateRoot, "agents", "erp-agent", "runtime-home"),
+  }));
+  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "md-erp-test");
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-erp-test",
+      'description: "ECOUNT ERP 조회와 분석"',
+      "---",
+      "",
+      "# 이카운트 ERP 매출 분석",
+      "",
+      "## Integration Rules",
+      "- ECOUNT ERP는 조회와 분석만 허용합니다.",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "품목 조회해줘",
+        agentId: "erp-agent",
+        skillId: "md-erp-test",
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.deepEqual(ecountLookupCalls, [{ limit: null, offset: null }]);
+    assert.equal(sendTurnCalls.length, 1);
+    const instructions = sendTurnCalls[0]?.extraSystemInstructions.join("\n") ?? "";
+    assert.match(instructions, /ECOUNT ERP lookup integration is configured/u);
+    assert.match(instructions, /Do not call localhost, 127\.0\.0\.1/u);
+    assert.doesNotMatch(instructions, /curl -sS -X POST/u);
+    assert.doesNotMatch(instructions, /integrations\/ecount\/products/u);
+    assert.doesNotMatch(instructions, /test-secret-key|123456|api-user/u);
+
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /연동 조회 결과:/u);
+    assert.match(agentContext, /ECOUNT ERP 품목 조회: ready/u);
+    assert.match(agentContext, /inputs\/rocky-chat-/u);
+    assert.doesNotMatch(agentContext, /test-secret-key|123456|api-user/u);
+
+    const fileMatch = agentContext.match(/file=([^,)]+)/u);
+    assert.ok(fileMatch?.[1]);
+    const prepared = JSON.parse(
+      await readFile(path.join(workspaceRoot, ...fileMatch[1]!.split("/")), "utf8")
+    ) as { count: number; returnedCount: number; records: Array<{ code: string }> };
+    assert.equal(prepared.count, 2);
+    assert.equal(prepared.returnedCount, 2);
+    assert.deepEqual(prepared.records.map((record) => record.code), ["P-001", "P-002"]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat prepares selected ECOUNT skill scope on proceed requests", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-ecount-scope-"));
+  const settings = new EcountSettingsService({
+    stateRoot,
+    now: () => "2026-04-21T00:00:00.000Z",
+  });
+  await settings.saveSettings({
+    accountLabel: "본사 이카운트",
+    comCode: "123456",
+    userId: "api-user",
+    apiCertKey: "test-secret-key",
+    zone: "CC",
+    checkedAt: "2026-04-21T00:00:00.000Z",
+  });
+
+  const queriedDatasets: string[] = [];
+  const readyDatasets = new Set(["products", "inventory", "warehouseInventory", "purchases"]);
+  const {
+    agents,
+    sendTurnCalls,
+    server,
+  } = createRockyChatTestServer(stateRoot, {
+    ecountLookupService: {
+      async getBasicProductsList() {
+        throw new Error("standard queryDataset should be used.");
+      },
+      async queryDataset(_input, query) {
+        queriedDatasets.push(String(query.dataset));
+        const ready = readyDatasets.has(String(query.dataset));
+        return {
+          ok: ready,
+          provider: "ecount",
+          dataset: String(query.dataset),
+          title: `ECOUNT ERP ${query.dataset} 조회`,
+          status: ready ? "ready" : "unsupported",
+          accountLabel: "본사 이카운트",
+          zone: "CC",
+          checkedAt: "2026-04-21T00:00:00.000Z",
+          api:
+            query.dataset === "products"
+              ? "InventoryBasic/GetBasicProductsList"
+              : query.dataset === "purchases"
+                ? "Purchases/GetPurchasesOrderList"
+                : query.dataset === "inventory" || query.dataset === "warehouseInventory"
+                  ? "InventoryBalance/GetListInventoryBalanceStatusByLocation"
+                  : null,
+          count: ready ? 1 : 0,
+          returnedCount: ready ? 1 : 0,
+          records:
+            query.dataset === "products"
+              ? [
+                  {
+                    code: "P-001",
+                    name: "테스트 품목",
+                  },
+                ]
+              : query.dataset === "purchases"
+                ? [
+                    {
+                      orderNo: "PO-001",
+                    },
+                  ]
+                : ready
+                  ? [
+                      {
+                        code: String(query.dataset),
+                      },
+                    ]
+                  : [],
+          message:
+            query.dataset === "products"
+              ? "ECOUNT product lookup returned 1 product(s)."
+              : ready
+                ? `ECOUNT ${query.dataset} lookup returned 1 record(s).`
+                : `ECOUNT ${query.dataset} lookup is not supported by the current read-only backend.`,
+          diagnostics:
+            ready
+              ? undefined
+              : {
+                  stage: "capability",
+                  detail: "not implemented",
+                },
+        };
+      },
+    },
+  });
+  const workspaceRoot = path.join(stateRoot, "agents", "erp-agent", "workspace");
+  agents.push(buildAgent({
+    id: "erp-agent",
+    name: "ERP 비서",
+    workspaceRoot,
+    runtimeHome: path.join(stateRoot, "agents", "erp-agent", "runtime-home"),
+  }));
+  const skillRoot = path.join(workspaceRoot, ".agents", "skills", "md-erp-test");
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      "name: md-erp-test",
+      'description: "ECOUNT ERP 매출 분석"',
+      "---",
+      "",
+      "# 이카운트 ERP 매출 분석",
+      "",
+      "## Quality Rules",
+      "- ERP 데이터 범위: 품목, 재고현황, 거래처, 판매, 창고별 재고, 주문서, 구매, 매출·매입",
+      "- 조회 기간 또는 기준: 최근 30일",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "진행해줘",
+        agentId: "erp-agent",
+        skillId: "md-erp-test",
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+    assert.deepEqual(queriedDatasets, [
+      "products",
+      "inventory",
+      "customers",
+      "sales",
+      "warehouseInventory",
+      "orders",
+      "purchases",
+      "accounting",
+    ]);
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /ECOUNT ERP products 조회: ready/u);
+    assert.match(agentContext, /ECOUNT ERP purchases 조회: ready/u);
+    assert.match(agentContext, /ECOUNT ERP sales 조회: unsupported/u);
+    assert.match(agentContext, /inputs\/rocky-chat-.*\/integrations\/ecount\/products\.json/u);
+    assert.match(agentContext, /inputs\/rocky-chat-.*\/integrations\/ecount\/purchases\.json/u);
+    assert.match(agentContext, /inputs\/rocky-chat-.*\/integrations\/ecount\/sales\.json/u);
+
+    const preparedProducts = JSON.parse(
+      await readFile(
+        path.join(
+          workspaceRoot,
+          "inputs",
+          response.json().id,
+          "integrations",
+          "ecount",
+          "products.json"
+        ),
+        "utf8"
+      )
+    ) as { status: string; records: Array<{ code: string }> };
+    assert.equal(preparedProducts.status, "ready");
+    assert.deepEqual(preparedProducts.records.map((record) => record.code), ["P-001"]);
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat reports used agent skills without exposing internal ids", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const {
@@ -1111,6 +1443,480 @@ test("rocky chat reports used agent skills without exposing internal ids", async
       chat.messages[1]?.text ?? "",
       /rocky-used-skills|workspace-local|호출 ID|\$md-content|SKILL\.md|read-only|system/u
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat includes connected Tistory draft publisher context for agent skills", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await mkdir(path.join(stateRoot, "connectors", "threads"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    path.join(stateRoot, "connectors", "threads", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "threads",
+        accountLabel: "Threads 계정",
+        connectedAt: "2026-05-10T11:30:00.000Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  completedRunSummaries.push("티스토리 임시저장 요청을 보냈습니다.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "티스토리에 올려줘",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /계정 연동 상태/u);
+    assert.match(agentContext, /Tistory: connected/u);
+    assert.match(agentContext, /draft_publish=server-managed/u);
+    assert.match(agentContext, /Threads: connected/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Rocky server submits the Tistory draft after this turn")
+      )
+    );
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Rocky-managed browser account connectors may be connected")
+      )
+    );
+    assert.equal(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("127.0.0.1:3000/connectors/tistory/publish-draft")
+      ),
+      false
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat does not attempt Tistory draft publish for read-only connector checks", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  const { agents, completedRunSummaries, server } =
+    createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  completedRunSummaries.push(
+    "Tistory 연동은 연결되어 있고, 게시 기능은 별도 승인 후에만 실행됩니다."
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "티스토리 연동 목록을 확인해줘. 게시나 수정은 하지 마.",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+
+    assert.doesNotMatch(refreshed.messages[1]?.text ?? "", /Tistory 발행 결과/u);
+    assert.doesNotMatch(
+      refreshed.messages[1]?.text ?? "",
+      /rocky-tistory-draft-publish/u,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat injects Threads skill capabilities for follower requests", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "threads"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "threads", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "threads",
+        accountLabel: "64342357840",
+        connectedAt: "2026-05-10T02:49:54.141Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  let followerReaderCalls = 0;
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBrowserDetector: async () => ({
+        available: true,
+        channel: "chromium",
+        message: "Playwright 번들 Chromium 사용",
+      }),
+      connectorBrowserFollowerListReader: async (input) => {
+        followerReaderCalls += 1;
+        assert.equal(input.provider, "threads");
+        assert.equal(input.accountLabel, "64342357840");
+        assert.equal(input.limit, 200);
+        return {
+          ok: true,
+          provider: "threads",
+          status: "followers-read",
+          accountLabel: input.accountLabel,
+          followers: {
+            items: [
+              {
+                username: "pixelberry",
+                displayName: "Pixel Berry",
+                profileUrl: "https://www.threads.net/@pixelberry",
+                rawText: "Pixel Berry @pixelberry",
+              },
+            ],
+            url: "https://www.threads.net/@rocky_threads/followers",
+            rawText: "Pixel Berry\n@pixelberry",
+          },
+          message: "Threads 팔로워 1명을 연결된 브라우저 세션으로 조회했습니다.",
+          checkedAt: input.now(),
+        };
+      },
+    });
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "threads-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "threads-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "threads-agent",
+      name: "Threads Agent",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const skillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-sns-threads"
+  );
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    "---\nname: md-sns-threads\n---\n# SNS · Threads 콘텐츠\n",
+  );
+  const templateResponse = await server.inject({
+    method: "PUT",
+    url: "/skills/template.threads",
+    payload: {
+      id: "template.threads",
+      source: "user",
+      category: "content",
+      title: "SNS · Threads 콘텐츠",
+      description: "Threads 콘텐츠와 계정 상태를 확인합니다.",
+      triggerLabel: "Threads",
+      requiredInputs: ["요청"],
+      outputFormatLabel: "텍스트",
+      defaultInstructions: "Threads 요청을 처리합니다.",
+      skill: {
+        id: "md-sns-threads",
+        displayName: "SNS · Threads 콘텐츠",
+        description: "Use when the user asks for Threads content or account checks.",
+        invocation: "$md-sns-threads",
+        skillMarkdown: "---\nname: md-sns-threads\n---\n# SNS · Threads 콘텐츠\n",
+        openAiYaml: [
+          "interface:",
+          '  display_name: "SNS · Threads 콘텐츠"',
+          '  short_description: "Threads 콘텐츠와 계정 상태를 확인합니다."',
+          '  default_prompt: "Use $md-sns-threads for Threads requests."',
+          "",
+        ].join("\n"),
+        syncStatus: "local",
+        workspacePath: null,
+      },
+      sortOrder: 1,
+      createdAt: "2026-05-10T00:00:00.000Z",
+      updatedAt: "2026-05-10T00:01:00.000Z",
+    },
+  });
+  assert.equal(templateResponse.statusCode, 200);
+  completedRunSummaries.push("Threads 팔로워 목록을 확인했습니다.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "팔로워 확인해줘",
+        agentId: "threads-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /계정 연동 상태/u);
+    assert.match(agentContext, /연동 조회 결과/u);
+    assert.match(agentContext, /Threads 팔로워 목록: ready/u);
+    assert.match(
+      agentContext,
+      /file=inputs\/rocky-chat-.*\/integrations\/threads\/followers\.json/u,
+    );
+    assert.match(agentContext, /Threads: connected/u);
+    assert.match(
+      agentContext,
+      /threads\.followers\.read:read:status=available:skill_id=md-sns-threads:skill=SNS · Threads 콘텐츠:script=scripts\/threads-crud\.mjs/u,
+    );
+    await access(path.join(skillRoot, "connector-capabilities.json"));
+    await access(path.join(skillRoot, "scripts", "threads-crud.mjs"));
+    const followerLookupPath = path.join(
+      workspaceRoot,
+      "inputs",
+      created.id,
+      "integrations",
+      "threads",
+      "followers.json"
+    );
+    const followerLookup = JSON.parse(await readFile(followerLookupPath, "utf8"));
+    assert.equal(followerLookup.followers[0]?.username, "pixelberry");
+    assert.equal(followerReaderCalls, 1);
+    assert.doesNotMatch(agentContext, /Threads: ready/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Prepared integration lookup results may be listed")
+      )
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat submits connected Tistory draft from publish-ready markdown after agent turn", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  const publishedDrafts: Array<{
+    title: string;
+    contentMarkdown: string;
+    tags: string[];
+  }> = [];
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBrowserDetector: async () => ({
+        available: true,
+        channel: "chromium",
+        message: "Playwright 번들 Chromium 사용",
+      }),
+      connectorBrowserDraftPublisher: async (input) => {
+        publishedDrafts.push({
+          title: input.draft.title,
+          contentMarkdown: input.draft.contentMarkdown,
+          tags: input.draft.tags ?? [],
+        });
+        return {
+          ok: true,
+          provider: "tistory",
+          status: "draft-saved",
+          accountLabel: input.accountLabel,
+          url: "https://example.tistory.com/manage/newpost/",
+          message: "Tistory 글쓰기 화면에 원고를 입력하고 임시저장했습니다.",
+          checkedAt: input.now(),
+        };
+      },
+    }
+  );
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  await mkdir(path.join(workspaceRoot, "outputs", "manual"), { recursive: true });
+  await writeFile(
+    path.join(workspaceRoot, "outputs", "manual", "tistory_publish_ready.md"),
+    [
+      "# 티스토리 발행용 제목",
+      "샘플 티스토리 제목",
+      "",
+      "---",
+      "",
+      "# 티스토리 발행용 본문",
+      "본문 첫 문단입니다.",
+      "",
+      "본문 둘째 문단입니다.",
+      "",
+      "---",
+      "",
+      "# 티스토리 태그",
+      "샘플, 티스토리, 자동화",
+      "",
+    ].join("\n")
+  );
+  completedRunSummaries.push(
+    [
+      "티스토리 발행용 원고를 만들었습니다.",
+      "",
+      "outputs/manual/tistory_publish_ready.md",
+    ].join("\n")
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "티스토리에 다시 발행해줘",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+
+    assert.equal(publishedDrafts.length, 1);
+    assert.equal(publishedDrafts[0]?.title, "샘플 티스토리 제목");
+    assert.match(publishedDrafts[0]?.contentMarkdown ?? "", /본문 첫 문단/u);
+    assert.deepEqual(publishedDrafts[0]?.tags, ["샘플", "티스토리", "자동화"]);
+    assert.match(refreshed.messages[1]?.text ?? "", /Tistory 발행 결과/u);
+    assert.match(refreshed.messages[1]?.text ?? "", /임시저장 완료/u);
+
+    const secondRefreshResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(secondRefreshResponse.statusCode, 200);
+    assert.equal(publishedDrafts.length, 1);
   } finally {
     await server.close();
   }

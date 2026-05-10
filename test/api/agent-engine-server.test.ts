@@ -584,10 +584,10 @@ test("Agent engine server exposes session/run HTTP flow with SSE event streaming
         contentType: "text/plain; charset=utf-8",
         presentation: "file",
         size: "first:hello".length,
-        previewable: false,
-        previewUrl: null,
+        previewable: true,
+        previewUrl: "/runs/run-1/artifacts/output-last-message/preview",
         downloadUrl: "/runs/run-1/artifacts/output-last-message",
-        preferredAction: "download",
+        preferredAction: "preview",
       },
     ]);
 
@@ -608,10 +608,16 @@ test("Agent engine server exposes session/run HTTP flow with SSE event streaming
     const artifactPreviewResponse = await fetch(
       `${baseUrl}/runs/run-1/artifacts/output-last-message/preview`
     );
-    assert.equal(artifactPreviewResponse.status, 415);
-    assert.deepEqual(await artifactPreviewResponse.json(), {
-      error: "Artifact type does not support inline preview: output-last-message",
-    });
+    assert.equal(artifactPreviewResponse.status, 200);
+    assert.equal(
+      artifactPreviewResponse.headers.get("content-type"),
+      "text/plain; charset=utf-8"
+    );
+    assert.match(
+      artifactPreviewResponse.headers.get("content-disposition") ?? "",
+      /^inline;/
+    );
+    assert.equal(await artifactPreviewResponse.text(), "first:hello");
 
     const transcriptResponse = await fetch(
       `${baseUrl}/sessions/session-1/transcript`
@@ -636,12 +642,16 @@ test("Agent engine server exposes session/run HTTP flow with SSE event streaming
       transcript[1]?.artifacts?.[0]?.contentType,
       "text/plain; charset=utf-8"
     );
-    assert.equal(transcript[1]?.artifacts?.[0]?.previewable, false);
-    assert.equal(transcript[1]?.artifacts?.[0]?.previewUrl, null);
+    assert.equal(transcript[1]?.artifacts?.[0]?.previewable, true);
+    assert.equal(
+      transcript[1]?.artifacts?.[0]?.previewUrl,
+      "/runs/run-1/artifacts/output-last-message/preview"
+    );
     assert.equal(
       transcript[1]?.artifacts?.[0]?.downloadUrl,
       "/runs/run-1/artifacts/output-last-message"
     );
+    assert.equal(transcript[1]?.artifacts?.[0]?.preferredAction, "preview");
   } finally {
     await server.close();
   }

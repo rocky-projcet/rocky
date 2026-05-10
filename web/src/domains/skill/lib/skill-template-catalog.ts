@@ -1,4 +1,4 @@
-import type { MdTemplateCategory } from "@/domains/template/types";
+import type { MdTemplateCategory } from "../../template/types.js";
 
 export type SkillKind =
   | "document"
@@ -20,12 +20,19 @@ export type SkillFieldKind =
   | "text"
   | "url-or-file"
   | "account-connect"
+  | "erp-integration-select"
   | "recipient-address";
+
+export interface SkillVisibilityCondition {
+  fieldId: string;
+  values: string[];
+}
 
 export interface SkillFieldOption {
   id: string;
   label: string;
   description?: string;
+  disabled?: boolean;
   /** Sub-options revealed when this option is picked (used by single-select-with-detail). */
   detailOptions?: SkillFieldOption[];
   detailLabel?: string;
@@ -42,6 +49,7 @@ export interface SkillField {
   /** Required vs optional/skip. */
   optional?: boolean;
   placeholder?: string;
+  defaultValue?: string;
   /** For file fields: accepted MIME hints. */
   accept?: string;
 }
@@ -53,6 +61,7 @@ export interface SkillStep {
   fields: SkillField[];
   /** When true, allow user to skip this step entirely. */
   skippable?: boolean;
+  showWhen?: SkillVisibilityCondition;
 }
 
 export interface SkillTemplate {
@@ -430,15 +439,153 @@ const DATA_TEMPLATE: SkillTemplate = {
       ],
     },
     {
+      id: "data-source",
+      title: "데이터를 어디에서 가져올까요?",
+      helper: "엑셀 파일만 쓸 수도 있고, 연결된 ERP 데이터를 함께 볼 수도 있어요.",
+      fields: [
+        {
+          id: "dataSource",
+          kind: "single-select",
+          label: "데이터 소스",
+          options: [
+            {
+              id: "file-upload",
+              label: "파일 업로드",
+              description: "엑셀·CSV 파일을 올려서 분석합니다.",
+            },
+            {
+              id: "erp",
+              label: "ERP",
+              description: "연결된 ERP에서 데이터를 조회해 분석합니다.",
+            },
+            {
+              id: "file-and-erp",
+              label: "파일 + ERP",
+              description: "업로드 파일과 연결된 ERP 데이터를 대조합니다.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "erp-provider",
+      title: "사용할 ERP 연동을 선택해주세요",
+      helper:
+        "스킬에서는 이미 연결된 연동만 선택합니다. 새 연결이나 연결 테스트는 연동 설정에서 진행합니다.",
+      showWhen: {
+        fieldId: "dataSource",
+        values: ["erp", "file-and-erp", "ecount-erp", "file-and-ecount"],
+      },
+      fields: [
+        {
+          id: "erpIntegration",
+          kind: "erp-integration-select",
+          label: "ERP 연동",
+          helper: "사용 가능한 ERP 연동 목록에서 선택합니다.",
+          options: [{ id: "ecount", label: "이카운트 ERP" }],
+        },
+      ],
+    },
+    {
+      id: "ecount-erp",
+      title: "이카운트 ERP 조회 범위를 정해주세요",
+      helper:
+        "이카운트 ERP는 조회와 분석만 허용합니다. 등록·수정은 추후 제공 예정입니다.",
+      showWhen: {
+        fieldId: "erpIntegration",
+        values: ["ecount"],
+      },
+      fields: [
+        {
+          id: "ecountDataScope",
+          kind: "multi-select",
+          label: "ERP 데이터 범위",
+          allowCustom: true,
+          options: [
+            { id: "items", label: "품목", description: "현재 백엔드 조회 지원" },
+            {
+              id: "customers",
+              label: "거래처",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+            {
+              id: "inventory",
+              label: "재고현황",
+              description: "현재 백엔드 조회 지원",
+            },
+            {
+              id: "warehouse-inventory",
+              label: "창고별 재고",
+              description: "현재 백엔드 조회 지원",
+            },
+            {
+              id: "orders",
+              label: "주문서",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+            {
+              id: "sales",
+              label: "판매",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+            {
+              id: "purchase",
+              label: "구매",
+              description: "현재 백엔드 조회 지원",
+            },
+            {
+              id: "accounting",
+              label: "매출·매입",
+              description: "읽기 전용 조회 endpoint 확인 후 제공",
+              disabled: true,
+            },
+          ],
+        },
+        {
+          id: "ecountPeriod",
+          kind: "text",
+          label: "조회 기간 또는 기준",
+          placeholder: "예: 최근 30일, 이번 달, 2026-05-01~2026-05-31",
+          optional: true,
+        },
+        {
+          id: "ecountWritePolicy",
+          kind: "single-select",
+          label: "ERP 변경 작업",
+          helper: "현재 ECOUNT ERP 연동은 조회와 분석만 허용합니다.",
+          defaultValue: "read-only",
+          options: [
+            {
+              id: "read-only",
+              label: "조회와 분석만 허용",
+              description: "지원되는 ECOUNT 조회 데이터만 읽어 분석하는 작업을 진행합니다.",
+            },
+            {
+              id: "write-planned",
+              label: "등록·수정은 추후 제공 예정",
+              description: "ERP 전송, 생성, 수정, 삭제 작업은 현재 스킬에서 실행하지 않습니다.",
+              disabled: true,
+            },
+          ],
+        },
+      ],
+    },
+    {
       id: "data-files",
       title: "분석할 데이터를 올려주세요",
-      helper: "어떤 데이터인지 한 줄로 설명해 주세요.",
+      helper:
+        "파일 없이 이카운트 ERP만 쓸 스킬이면 건너뛰어도 됩니다. 파일을 함께 쓰면 어떤 데이터인지 한 줄로 설명해 주세요.",
+      skippable: true,
       fields: [
         {
           id: "datasets",
           kind: "file-with-role",
           label: "데이터 파일과 설명",
           helper: "예: 매출_2025.xlsx → 채널별 월매출 / customers.csv → 회원 정보",
+          optional: true,
         },
       ],
     },

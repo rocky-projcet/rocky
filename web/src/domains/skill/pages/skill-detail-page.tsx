@@ -20,6 +20,7 @@ import {
   Loader2,
   Paperclip,
   Plus,
+  Pencil,
   Search,
   Sparkles,
 } from "lucide-react";
@@ -204,6 +205,13 @@ export function SkillDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              render={<Link to={`/skills/${encodeURIComponent(skill.id)}/edit`} />}
+            >
+              <Pencil className="size-4" />
+              수정
+            </Button>
             <Button variant="outline" onClick={handleArchive}>
               <Archive className="size-4" />
               보관

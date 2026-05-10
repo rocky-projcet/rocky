@@ -15,10 +15,19 @@ export interface NativeFileOpenRecord {
   path?: string;
 }
 
+export interface NativeUrlOpenRecord {
+  status: "opened";
+  application: string;
+  url: string;
+  platform: NodeJS.Platform | "test";
+  kind: "url";
+}
+
 export type NativeFileOpener = (filePath: string) => Promise<NativeFileOpenRecord>;
 export type NativeFolderOpener = (
   folderPath: string
 ) => Promise<NativeFileOpenRecord>;
+export type NativeUrlOpener = (url: string) => Promise<NativeUrlOpenRecord>;
 
 type ExecFilePromise = (
   file: string,
@@ -32,6 +41,11 @@ interface OpenPowerPointFileOptions {
 }
 
 interface OpenFolderOptions {
+  execFile?: ExecFilePromise;
+  platform?: NodeJS.Platform | "test";
+}
+
+interface OpenUrlOptions {
   execFile?: ExecFilePromise;
   platform?: NodeJS.Platform | "test";
 }
@@ -106,6 +120,50 @@ function folderOpenCommand(
   return null;
 }
 
+function urlOpenCommand(
+  platform: NodeJS.Platform | "test",
+  url: string
+): { file: string; args: string[]; application: string } | null {
+  if (platform === "darwin") {
+    return {
+      file: "open",
+      args: [url],
+      application: "default browser",
+    };
+  }
+
+  if (platform === "win32") {
+    return {
+      file: "cmd.exe",
+      args: ["/c", "start", "", url],
+      application: "default browser",
+    };
+  }
+
+  if (platform === "linux") {
+    return {
+      file: "xdg-open",
+      args: [url],
+      application: "default browser",
+    };
+  }
+
+  return null;
+}
+
+function assertHttpUrl(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return;
+    }
+  } catch {
+    // Report a consistent bad request below.
+  }
+
+  throw statusError(`열 수 없는 URL입니다: ${url}`, 400);
+}
+
 export async function openFolder(
   folderPath: string,
   options: OpenFolderOptions = {}
@@ -143,5 +201,44 @@ export async function openFolder(
     platform,
     kind: "folder",
     path: resolvedPath,
+  };
+}
+
+export async function openUrl(
+  url: string,
+  options: OpenUrlOptions = {}
+): Promise<NativeUrlOpenRecord> {
+  assertHttpUrl(url);
+
+  const platform = options.platform ?? process.platform;
+  const command = urlOpenCommand(platform, url);
+  if (!command) {
+    throw statusError(
+      `기본 브라우저 열기는 현재 지원되지 않는 로컬 서버 플랫폼입니다: ${platform}`,
+      501
+    );
+  }
+
+  const execFileImpl = options.execFile ?? (execFileAsync as ExecFilePromise);
+
+  try {
+    await execFileImpl(command.file, command.args, {
+      timeout: NATIVE_OPEN_TIMEOUT_MS,
+      windowsHide: true,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw statusError(
+      `${command.application}에서 URL을 열지 못했습니다. ${detail}`,
+      503
+    );
+  }
+
+  return {
+    status: "opened",
+    application: command.application,
+    url,
+    platform,
+    kind: "url",
   };
 }

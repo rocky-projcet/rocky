@@ -65,6 +65,7 @@ export function useMdTemplates() {
   const query = useSkillTemplatesQuery();
 
   const userTemplates = useMemo(() => query.data ?? [], [query.data]);
+  const templatesLoaded = !query.isPending;
 
   const allTemplates = userTemplates;
   const activeTemplates = useMemo(
@@ -181,5 +182,6 @@ export function useMdTemplates() {
     saveTemplate,
     updateTemplate,
     userTemplates,
+    templatesLoaded,
   };
 }

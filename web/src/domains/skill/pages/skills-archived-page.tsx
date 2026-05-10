@@ -40,8 +40,8 @@ export function SkillsArchivedPage() {
       {archivedTemplates.length === 0 ? (
         <ArchiveEmpty
           icon={Sparkles}
-          title="보관된 스킬이 없습니다."
-          description="스킬 상세에서 보관 버튼을 누르면 여기로 옮겨와요."
+          title="보관된 공용 스킬이 없습니다."
+          description="공용 스킬 상세에서 보관 버튼을 누르면 여기로 옮겨와요."
         />
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

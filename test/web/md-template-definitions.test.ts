@@ -165,6 +165,39 @@ test("generated skill instructions list packaged input files", () => {
   assert.match(prompt, /브라우저 렌더러/u);
 });
 
+test("generated ECOUNT skills keep ERP writes unavailable", () => {
+  const template = createUserTemplateRecord({
+    draft: {
+      ...createTemplateDraft("data"),
+      title: "이카운트 ERP 재고 분석",
+      description: "이카운트 ERP 조회 데이터를 기준으로 재고 흐름을 분석한다.",
+      requiredInputs: [
+        "이카운트 ERP 연결 계정 또는 회사코드 별칭",
+        "조회 기간, 창고, 거래처, 품목 등 필터 기준",
+      ],
+      outputFormatLabel: "표/보고서",
+      defaultInstructions: [
+        "이카운트 연동은 현재 조회와 분석만 허용합니다.",
+        "품목·거래처·주문·전표 등록, 수정, 삭제, 전송은 실행하지 않습니다.",
+      ].join("\n"),
+    },
+    id: "template.ecount-inventory",
+    now: "2026-05-09T00:00:00.000Z",
+  });
+  const skillMarkdown =
+    buildTemplateSkillFiles(template).find((file) => file.path === "SKILL.md")
+      ?.content ?? "";
+  const prompt = buildTemplateRunPrompt(template);
+
+  assert.match(skillMarkdown, /## Integration Rules/u);
+  assert.match(skillMarkdown, /lookup and analysis/u);
+  assert.match(skillMarkdown, /Do not create, register, update, delete, submit, or transmit/u);
+  assert.match(skillMarkdown, /registration\/modification support is planned/u);
+  assert.match(prompt, /연동 정책/u);
+  assert.match(prompt, /현재 ECOUNT ERP는 조회와 분석 용도로만 사용합니다/u);
+  assert.match(prompt, /ERP 데이터 등록, 수정, 삭제, 전송은 실행하지 않습니다/u);
+});
+
 test("buildTemplateRunPrompt asks Rocky to guide the user step by step", () => {
   const template = createUserTemplateRecord({
     draft: {

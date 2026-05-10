@@ -17,7 +17,11 @@ import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { AgentWorkspaceBrowserPanel } from "@/domains/agent/components/agent-workspace-browser-panel";
-import { useAgentWorkspaceDirectoryQuery } from "@/domains/agent/hooks";
+import {
+  useAgentQuery,
+  useAgentWorkspaceDirectoryQuery,
+  useUpdateAgentMutation,
+} from "@/domains/agent/hooks";
 import { ArtifactPreviewCard } from "@/domains/run/components/artifact-preview-card";
 import { ProviderGlyph } from "@/domains/codex/components/provider-glyph";
 import { useRuntimesQuery } from "@/domains/codex/hooks";
@@ -82,6 +86,7 @@ import {
 } from "../lib/session-runtime-selection";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Checkbox } from "@/shared/ui/checkbox";
 import { CompactFileAttachmentPicker } from "@/domains/session/components/compact-file-attachment-picker";
 import { TaskEditorDialog } from "@/domains/task/components/task-editor-dialog";
 import { Input } from "@/shared/ui/input";
@@ -1226,6 +1231,9 @@ function SessionSkillsPanel(props: {
     name: string;
     path: string;
   }>;
+  automaticSkillCreation: boolean;
+  automaticSkillCreationPending: boolean;
+  onAutomaticSkillCreationChange: (enabled: boolean) => void;
   isLoading: boolean;
   errorMessage: string | null;
 }) {
@@ -1236,6 +1244,41 @@ function SessionSkillsPanel(props: {
         <p className="mt-1 text-sm text-foreground">
           에이전트 작업 폴더의 <code>.agents/skills/</code> 아래에 있는 스킬과 기본 제공 스킬을 확인할 수 있습니다.
         </p>
+      </div>
+      <div className="rounded-2xl border border-border bg-card px-4 py-3">
+        <div className="flex items-start gap-3">
+          <Checkbox
+            id="session-auto-skill-creation"
+            checked={props.automaticSkillCreation}
+            disabled={props.automaticSkillCreationPending}
+            onCheckedChange={(checked) =>
+              props.onAutomaticSkillCreationChange(checked === true)
+            }
+          />
+          <div className="min-w-0 flex-1">
+            <label
+              htmlFor="session-auto-skill-creation"
+              className="block text-sm font-medium text-foreground"
+            >
+              자동 스킬 만들기
+            </label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              켜두면 이 세션에서 재사용 가능한 업무를 스킬 생성 흐름으로 정리합니다.
+              꺼져 있어도 명시적으로 요청한 스킬 생성은 인식됩니다.
+            </p>
+          </div>
+          <Badge
+            variant="outline"
+            className={cn(
+              "shrink-0 rounded-full px-2 py-0.5 text-[11px]",
+              props.automaticSkillCreation
+                ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700"
+                : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            {props.automaticSkillCreation ? "ON" : "OFF"}
+          </Badge>
+        </div>
       </div>
       <div className="rounded-2xl border border-border bg-card px-4 py-3">
         <div className="flex items-center gap-2">
@@ -1302,11 +1345,13 @@ function findArtifact(
 export function SessionWorkspacePage() {
   const { agentId, sessionId } = useParams();
   const runtimesQuery = useRuntimesQuery();
+  const agentQuery = useAgentQuery(agentId);
   const agentSkillsQuery = useAgentWorkspaceDirectoryQuery(agentId, "skills");
   const sessionQuery = useSessionQuery(sessionId);
   const transcriptQuery = useTranscriptQuery(sessionId);
   const sendMessageMutation = useSendMessageMutation(sessionId);
   const cancelRunMutation = useCancelRunMutation();
+  const updateAgentMutation = useUpdateAgentMutation(agentId);
   const updateSessionMutation = useUpdateSessionMutation(agentId);
   const sourceRef = useRef<RunEventsSource | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1496,6 +1541,9 @@ export function SessionWorkspacePage() {
   }, [activeRun?.id, activeRun?.status]);
 
   const session = sessionQuery.data;
+  const agent = agentQuery.data ?? null;
+  const automaticSkillCreation =
+    agent?.skillPolicy?.automaticSkillCreation === true;
   const runtimeDescriptor = useMemo(
     () => runtimesQuery.data?.find((runtime) => runtime.kind === selectedRuntime) ?? null,
     [runtimesQuery.data, selectedRuntime]
@@ -2547,6 +2595,34 @@ export function SessionWorkspacePage() {
             <TabsContent value="harness" className="min-h-0 flex-1 custom-scrollbar overflow-y-auto px-4 py-4">
               <SessionSkillsPanel
                 skills={harnessSkills}
+                automaticSkillCreation={automaticSkillCreation}
+                automaticSkillCreationPending={updateAgentMutation.isPending}
+                onAutomaticSkillCreationChange={(enabled) => {
+                  if (!agent) return;
+                  updateAgentMutation.mutate(
+                    {
+                      skillPolicy: {
+                        ...(agent.skillPolicy ?? { automaticSkillCreation: false }),
+                        automaticSkillCreation: enabled,
+                      },
+                    },
+                    {
+                      onSuccess: () => {
+                        toast.success(
+                          enabled
+                            ? "자동 스킬 만들기를 켰습니다."
+                            : "자동 스킬 만들기를 껐습니다.",
+                        );
+                      },
+                      onError: (error) => {
+                        toast.error("자동 스킬 만들기 설정을 저장하지 못했습니다.", {
+                          description:
+                            error instanceof Error ? error.message : undefined,
+                        });
+                      },
+                    },
+                  );
+                }}
                 isLoading={agentSkillsQuery.isLoading}
                 errorMessage={
                   agentSkillsQuery.isError

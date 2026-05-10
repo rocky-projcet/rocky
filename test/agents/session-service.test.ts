@@ -316,7 +316,15 @@ test("SessionService persists session metadata and transcripted runs", async () 
 
   assert.equal(updatedSession.runtimeSessionId, "thread-session-1");
   assert.equal(updatedSession.status, "active");
-  assert.equal(runtime.lastRequest?.prompt, buildRuntimePrompt(session, "hello"));
+  assert.equal(extractUserPrompt(runtime.lastRequest?.prompt ?? ""), "hello");
+  assert.match(
+    runtime.lastRequest?.prompt ?? "",
+    /Automatic skill creation is disabled for this agent/
+  );
+  assert.match(
+    runtime.lastRequest?.prompt ?? "",
+    /follow the internal skill-creator workflow as authoring guidance/
+  );
   assert.equal(storedRun.summary, "first:hello");
   assert.deepEqual(
     transcriptAfterFirstRun.map((message) => [message.role, message.content]),
@@ -336,15 +344,18 @@ test("SessionService persists session metadata and transcripted runs", async () 
     transcriptAfterFirstRun[1]?.artifacts?.[0]?.contentType,
     "text/plain; charset=utf-8"
   );
-  assert.equal(transcriptAfterFirstRun[1]?.artifacts?.[0]?.previewable, false);
-  assert.equal(transcriptAfterFirstRun[1]?.artifacts?.[0]?.previewUrl, null);
+  assert.equal(transcriptAfterFirstRun[1]?.artifacts?.[0]?.previewable, true);
+  assert.equal(
+    transcriptAfterFirstRun[1]?.artifacts?.[0]?.previewUrl,
+    `/runs/${run.id}/artifacts/output-last-message/preview`
+  );
   assert.equal(
     transcriptAfterFirstRun[1]?.artifacts?.[0]?.downloadUrl,
     `/runs/${run.id}/artifacts/output-last-message`
   );
   assert.equal(
     transcriptAfterFirstRun[1]?.artifacts?.[0]?.preferredAction,
-    "download"
+    "preview"
   );
   assert.deepEqual(transcriptAfterFirstRun[1]?.blocks, [
     {
@@ -361,9 +372,10 @@ test("SessionService persists session metadata and transcripted runs", async () 
   const transcriptAfterResume = await service.getTranscript(session.id);
 
   assert.equal(runtime.resumeCalls, 1);
-  assert.equal(
-    runtime.lastRequest?.prompt,
-    buildRuntimePrompt(updatedSession, "follow up")
+  assert.equal(extractUserPrompt(runtime.lastRequest?.prompt ?? ""), "follow up");
+  assert.match(
+    runtime.lastRequest?.prompt ?? "",
+    /Automatic skill creation is disabled for this agent/
   );
   assert.equal(resumedResult.runtimeSessionId, "thread-session-1");
   assert.deepEqual(
@@ -378,6 +390,54 @@ test("SessionService persists session metadata and transcripted runs", async () 
   assert.equal(
     transcriptAfterResume.at(-1)?.artifacts?.[0]?.role,
     "output-last-message"
+  );
+});
+
+test("SessionService injects automatic skill creation guidance when enabled", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "session-auto-skill-"));
+  const manager = new AgentManager({
+    stateRoot,
+    idGenerator: () => "agent-auto-skill",
+    now: () => "2026-03-13T00:00:00.000Z",
+  });
+  const runtime = new FakeRuntime();
+  const service = new SessionService({
+    stateRoot,
+    manager,
+    runtime,
+    idGenerator: (() => {
+      const ids = ["session-auto-skill", "run-auto-skill"];
+      return () => ids.shift() ?? "";
+    })(),
+  });
+
+  const agent = await manager.createAgent({
+    name: "auto-skill-agent",
+    skillPolicy: {
+      automaticSkillCreation: true,
+    },
+  });
+  const session = await service.createSession({
+    agentId: agent.id,
+  });
+  const run = await service.sendTurn({
+    sessionId: session.id,
+    prompt: "앞으로 이 반복 업무를 스킬로 만들어줘",
+  });
+
+  await service.getRunResult(run.id);
+
+  assert.match(
+    runtime.lastRequest?.prompt ?? "",
+    /Automatic skill creation is enabled for this agent/
+  );
+  assert.match(
+    runtime.lastRequest?.prompt ?? "",
+    /proactively proceed through the skill-creator workflow/
+  );
+  assert.equal(
+    extractUserPrompt(runtime.lastRequest?.prompt ?? ""),
+    "앞으로 이 반복 업무를 스킬로 만들어줘"
   );
 });
 

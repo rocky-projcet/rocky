@@ -26,7 +26,8 @@ export function useConnectorStateQuery(provider: ConnectorProvider) {
     refetchInterval: (query) => {
       const state = query.state.data as ConnectorState | undefined;
       if (!state) return 1500;
-      return state.status === "connecting" ? 1500 : false;
+      if (state.status !== "connecting") return false;
+      return state.loginMode === "external-browser" ? false : 1500;
     },
     refetchIntervalInBackground: false,
   });

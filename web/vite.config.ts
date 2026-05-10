@@ -26,10 +26,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (pathname) => pathname.replace(/^\/api/, ""),
       },
-      "/integrations": {
-        target: backendProxyTarget,
-        changeOrigin: true,
-      },
     },
   },
   preview: {

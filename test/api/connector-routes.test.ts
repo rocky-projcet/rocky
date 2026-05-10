@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 
 import type { ConnectorState } from "../../src/connectors/connector-types.js";
+import type { ConnectorRunnerEvent } from "../../src/connectors/connector-runner.js";
 
 test("connector OAuth opens authorization URL and connects only after callback token exchange", async () => {
   const openedUrls: string[] = [];
@@ -162,16 +164,56 @@ test("connector OAuth reports missing app credentials without marking connected"
   }
 });
 
-test("connector OAuth blocks providers whose official API is no longer supported", async () => {
+test("connector custom browser login connects Tistory only after session detection", async () => {
+  let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
+  let publishedDraft:
+    | {
+        title: string;
+        contentMarkdown: string;
+        tags: string[];
+        storageStateJson: string;
+        browserProfileDir: string | null | undefined;
+      }
+    | null = null;
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
     stateRoot,
-    connectorBaseEnv: {
-      ROCKY_CONNECTOR_TISTORY_CLIENT_ID: "tistory-client",
-      ROCKY_CONNECTOR_TISTORY_CLIENT_SECRET: "tistory-secret",
+    now: () => "2026-05-09T13:20:00.000Z",
+    connectorBrowserDetector: async () => ({
+      available: true,
+      channel: "chrome",
+      message: "시스템 Chrome 사용",
+    }),
+    connectorBrowserLoginStarter: async (input) => {
+      assert.equal(input.adapter.provider, "tistory");
+      assert.equal(input.adapter.loginUrl, "https://www.tistory.com/auth/login");
+      assert.equal(input.channel, "chrome");
+      assert.equal(
+        input.userDataDir,
+        path.join(stateRoot, "connectors", "tistory", "browser-profile"),
+      );
+      onEvent = input.onEvent;
+      return {
+        cancel: async () => {},
+      };
     },
-    nativeUrlOpener: async () => {
-      throw new Error("should not open");
+    connectorBrowserDraftPublisher: async (input) => {
+      publishedDraft = {
+        title: input.draft.title,
+        contentMarkdown: input.draft.contentMarkdown,
+        tags: input.draft.tags ?? [],
+        storageStateJson: input.storageStateJson,
+        browserProfileDir: input.browserProfileDir,
+      };
+      return {
+        ok: true,
+        provider: input.provider,
+        status: "draft-saved",
+        accountLabel: input.accountLabel,
+        url: "https://example.tistory.com/manage/newpost/",
+        message: "임시저장했습니다.",
+        checkedAt: input.now(),
+      };
     },
   });
 
@@ -182,9 +224,139 @@ test("connector OAuth blocks providers whose official API is no longer supported
     });
     assert.equal(response.statusCode, 202);
     const body = response.json<ConnectorState>();
-    assert.equal(body.status, "failed");
-    assert.equal(body.loginMode, null);
-    assert.match(body.lastError ?? "", /종료/);
+    assert.equal(body.status, "connecting");
+    assert.equal(body.loginMode, "custom-browser");
+    assert.equal(body.loginUrl, null);
+    assert.equal(body.accountLabel, null);
+    assert.ok(onEvent);
+
+    onEvent({
+      kind: "connected",
+      accountLabel: "Tistory 계정",
+      storageStateJson: JSON.stringify({
+        cookies: [{ name: "TSSESSION", value: "session" }],
+        origins: [],
+      }),
+    });
+
+    const connected = await waitForConnectorState(
+      server,
+      "tistory",
+      (state) => state.status === "connected",
+    );
+    assert.equal(connected.accountLabel, "Tistory 계정");
+    assert.equal(connected.connectedAt, "2026-05-09T13:20:00.000Z");
+    assert.equal(connected.loginMode, "custom-browser");
+
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/tistory/publish-draft",
+      payload: {
+        title: "티스토리 발행 제목",
+        contentMarkdown: "본문입니다.",
+        tags: ["태그1", "태그2"],
+      },
+    });
+    assert.equal(publishResponse.statusCode, 200);
+    assert.equal(publishResponse.json().status, "draft-saved");
+    assert.deepEqual(publishedDraft, {
+      title: "티스토리 발행 제목",
+      contentMarkdown: "본문입니다.",
+      tags: ["태그1", "태그2"],
+      storageStateJson: JSON.stringify({
+        cookies: [{ name: "TSSESSION", value: "session" }],
+        origins: [],
+      }),
+      browserProfileDir: path.join(
+        stateRoot,
+        "connectors",
+        "tistory",
+        "browser-profile",
+      ),
+    });
+  } finally {
+    await server.close();
+  }
+
+  const restoredServer = createAgentEngineServer({
+    stateRoot,
+    connectorBrowserDetector: async () => ({
+      available: true,
+      channel: "chrome",
+      message: "시스템 Chrome 사용",
+    }),
+    connectorBrowserLoginStarter: async () => {
+      throw new Error("should not start");
+    },
+  });
+  try {
+    const stateResponse = await restoredServer.inject({
+      method: "GET",
+      url: "/connectors/tistory/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const restoredBody = stateResponse.json<ConnectorState>();
+    assert.equal(restoredBody.status, "connected");
+    assert.equal(restoredBody.accountLabel, "Tistory 계정");
+    assert.equal(restoredBody.loginMode, "custom-browser");
+  } finally {
+    await restoredServer.close();
+  }
+});
+
+test("connector publish marks stale Tistory browser sessions failed", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-09T13:20:00.000Z",
+    connectorBrowserDetector: async () => ({
+      available: true,
+      channel: "chromium",
+      message: "Playwright 번들 Chromium 사용",
+    }),
+    connectorBrowserDraftPublisher: async () => {
+      throw new Error(
+        "Tistory 로그인 세션이 유효하지 않거나 관리 가능한 블로그를 찾지 못했습니다. 계정 연동을 다시 진행해 주세요."
+      );
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/tistory/publish-draft",
+      payload: {
+        title: "제목",
+        contentMarkdown: "본문",
+        tags: [],
+        visibility: "draft",
+      },
+    });
+    assert.equal(response.statusCode, 409);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/tistory/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const state = stateResponse.json<ConnectorState>();
+    assert.equal(state.status, "failed");
+    assert.equal(state.accountLabel, null);
+    assert.match(state.lastError ?? "", /로그인 세션/u);
   } finally {
     await server.close();
   }
@@ -197,4 +369,23 @@ function jsonResponse(value: unknown): Response {
       "Content-Type": "application/json",
     },
   });
+}
+
+async function waitForConnectorState(
+  server: ReturnType<typeof createAgentEngineServer>,
+  provider: string,
+  predicate: (state: ConnectorState) => boolean,
+): Promise<ConnectorState> {
+  let last: ConnectorState | null = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await server.inject({
+      method: "GET",
+      url: `/connectors/${encodeURIComponent(provider)}/state`,
+    });
+    assert.equal(response.statusCode, 200);
+    last = response.json<ConnectorState>();
+    if (predicate(last)) return last;
+    await delay(10);
+  }
+  throw new Error(`Timed out waiting for connector state: ${JSON.stringify(last)}`);
 }

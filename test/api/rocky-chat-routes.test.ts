@@ -23,6 +23,10 @@ import type {
 import type { RuntimeRunResult } from "../../src/runtime/runtime-types.js";
 import { EcountSettingsService } from "../../src/integrations/ecount-settings-service.js";
 import type { EcountLookupServiceLike } from "../../src/integrations/ecount-connection-service.js";
+import type {
+  ConnectorBrowserDetector,
+} from "../../src/connectors/connector-service.js";
+import type { ConnectorBrowserDraftPublisher } from "../../src/connectors/browser-draft-publisher.js";
 
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
@@ -147,7 +151,11 @@ function buildRun(input: {
 
 function createRockyChatTestServer(
   stateRoot: string,
-  options: { ecountLookupService?: EcountLookupServiceLike } = {}
+  options: {
+    ecountLookupService?: EcountLookupServiceLike;
+    connectorBrowserDetector?: ConnectorBrowserDetector;
+    connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
+  } = {}
 ) {
   const agents: AgentRecord[] = [];
   const sessions: AgentSessionRecord[] = [];
@@ -176,6 +184,8 @@ function createRockyChatTestServer(
     stateRoot,
     now: () => "2026-04-21T00:00:00.000Z",
     ecountLookupService: options.ecountLookupService,
+    connectorBrowserDetector: options.connectorBrowserDetector,
+    connectorBrowserDraftPublisher: options.connectorBrowserDraftPublisher,
     agentService: {
       async createAgent(input) {
         const agentId = input?.id ?? "rocky-core";
@@ -1425,6 +1435,215 @@ test("rocky chat reports used agent skills without exposing internal ids", async
       chat.messages[1]?.text ?? "",
       /rocky-used-skills|workspace-local|호출 ID|\$md-content|SKILL\.md|read-only|system/u
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat includes connected Tistory draft publisher context for agent skills", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot);
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  completedRunSummaries.push("티스토리 임시저장 요청을 보냈습니다.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "티스토리에 올려줘",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /계정 연동 상태/u);
+    assert.match(agentContext, /Tistory: connected/u);
+    assert.match(agentContext, /draft_publish=server-managed/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Rocky server submits the Tistory draft after this turn")
+      )
+    );
+    assert.equal(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("127.0.0.1:3000/connectors/tistory/publish-draft")
+      ),
+      false
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat submits connected Tistory draft from publish-ready markdown after agent turn", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "tistory", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "tistory",
+        accountLabel: "Tistory 계정",
+        connectedAt: "2026-05-09T14:09:16.248Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  const publishedDrafts: Array<{
+    title: string;
+    contentMarkdown: string;
+    tags: string[];
+  }> = [];
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBrowserDetector: async () => ({
+        available: true,
+        channel: "chromium",
+        message: "Playwright 번들 Chromium 사용",
+      }),
+      connectorBrowserDraftPublisher: async (input) => {
+        publishedDrafts.push({
+          title: input.draft.title,
+          contentMarkdown: input.draft.contentMarkdown,
+          tags: input.draft.tags ?? [],
+        });
+        return {
+          ok: true,
+          provider: "tistory",
+          status: "draft-saved",
+          accountLabel: input.accountLabel,
+          url: "https://example.tistory.com/manage/newpost/",
+          message: "Tistory 글쓰기 화면에 원고를 입력하고 임시저장했습니다.",
+          checkedAt: input.now(),
+        };
+      },
+    }
+  );
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "blog-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "blog-agent",
+      name: "블로그 비서",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  await mkdir(path.join(workspaceRoot, "outputs", "manual"), { recursive: true });
+  await writeFile(
+    path.join(workspaceRoot, "outputs", "manual", "tistory_publish_ready.md"),
+    [
+      "# 티스토리 발행용 제목",
+      "샘플 티스토리 제목",
+      "",
+      "---",
+      "",
+      "# 티스토리 발행용 본문",
+      "본문 첫 문단입니다.",
+      "",
+      "본문 둘째 문단입니다.",
+      "",
+      "---",
+      "",
+      "# 티스토리 태그",
+      "샘플, 티스토리, 자동화",
+      "",
+    ].join("\n")
+  );
+  completedRunSummaries.push(
+    [
+      "티스토리 발행용 원고를 만들었습니다.",
+      "",
+      "outputs/manual/tistory_publish_ready.md",
+    ].join("\n")
+  );
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "티스토리에 다시 발행해줘",
+        agentId: "blog-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const refreshedResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(refreshedResponse.statusCode, 200);
+    const refreshed = refreshedResponse.json<RockyChatRecord>();
+
+    assert.equal(publishedDrafts.length, 1);
+    assert.equal(publishedDrafts[0]?.title, "샘플 티스토리 제목");
+    assert.match(publishedDrafts[0]?.contentMarkdown ?? "", /본문 첫 문단/u);
+    assert.deepEqual(publishedDrafts[0]?.tags, ["샘플", "티스토리", "자동화"]);
+    assert.match(refreshed.messages[1]?.text ?? "", /Tistory 발행 결과/u);
+    assert.match(refreshed.messages[1]?.text ?? "", /임시저장 완료/u);
+
+    const secondRefreshResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(secondRefreshResponse.statusCode, 200);
+    assert.equal(publishedDrafts.length, 1);
   } finally {
     await server.close();
   }

@@ -49,6 +49,7 @@ export function ConnectorDialog({
 
   const state = stateQuery.data;
   const status = state?.status ?? "idle";
+  const loginMode = state?.loginMode ?? null;
   const isConnecting = status === "connecting";
   const isConnected = status === "connected";
 
@@ -84,7 +85,7 @@ export function ConnectorDialog({
         <DialogHeader className="gap-2">
           <DialogTitle className="text-lg">{providerLabel} 연동</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            공식 OAuth 승인 후 토큰 교환이 성공한 경우에만 연결됨으로 표시합니다.
+            공식 OAuth 또는 커스텀 브라우저 확인이 완료된 경우에만 연결됨으로 표시합니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -101,6 +102,7 @@ export function ConnectorDialog({
           <ConnectingView
             message={state?.message ?? "로그인 창에서 진행 중…"}
             providerLabel={providerLabel}
+            loginMode={loginMode}
             loginUrl={state?.loginUrl ?? null}
             lastError={state?.lastError ?? null}
             onOpenLoginUrl={openLoginUrl}
@@ -126,8 +128,8 @@ function PrivacyNotice() {
     <div className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
       <Lock className="mt-0.5 size-3.5 shrink-0 text-foreground" />
       <p>
-        승인은 각 서비스의 공식 OAuth 화면에서 진행됩니다. Rocky는 이메일·비밀번호나
-        브라우저 쿠키를 읽지 않고, callback으로 받은 코드만 토큰으로 교환합니다.
+        공식 OAuth는 callback 코드를 토큰으로 교환합니다. 공식 API가 없는 서비스는
+        별도 브라우저에서 로그인 완료를 감지하고 세션 상태만 저장합니다.
       </p>
     </div>
   );
@@ -154,8 +156,8 @@ function IdleView({
         </div>
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
-        버튼을 누르면 {providerLabel} OAuth 승인 페이지가 일반 브라우저에서 열립니다.
-        승인 후 callback이 돌아오면 자동으로 연결 상태를 갱신합니다.
+        버튼을 누르면 {providerLabel} 계정 연결을 시작합니다. 공식 OAuth가 있는
+        서비스는 승인 화면을, 없는 서비스는 커스텀 로그인 브라우저를 엽니다.
       </p>
       <DialogFooter className="flex flex-row items-center justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose} disabled={starting}>
@@ -163,7 +165,7 @@ function IdleView({
         </Button>
         <Button type="button" onClick={onLogin} disabled={starting}>
           {starting ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
-          OAuth로 연결
+          계정 연결
         </Button>
       </DialogFooter>
     </div>
@@ -173,6 +175,7 @@ function IdleView({
 function ConnectingView({
   message,
   providerLabel,
+  loginMode,
   loginUrl,
   lastError,
   onOpenLoginUrl,
@@ -181,12 +184,14 @@ function ConnectingView({
 }: {
   message: string;
   providerLabel: string;
+  loginMode: string | null;
   loginUrl: string | null;
   lastError: string | null;
   onOpenLoginUrl: () => void;
   onCancel: () => void;
   cancelling: boolean;
 }) {
+  const customBrowser = loginMode === "custom-browser";
   return (
     <div className="flex flex-col gap-3">
       <div
@@ -204,8 +209,9 @@ function ConnectingView({
         </div>
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
-        {providerLabel} 승인 화면에서 권한을 허용하면 callback에서 토큰을 교환하고
-        연결됨으로 바뀝니다. 승인 창을 닫았다면 다시 열기를 눌러 이어가세요.
+        {customBrowser
+          ? `${providerLabel} 로그인 창에서 로그인을 마치면 연결됨으로 바뀝니다. 창을 닫으면 연결이 취소될 수 있습니다.`
+          : `${providerLabel} 승인 화면에서 권한을 허용하면 callback에서 토큰을 교환하고 연결됨으로 바뀝니다.`}
       </p>
       <DialogFooter className="flex flex-row items-center justify-end gap-2">
         {loginUrl ? (

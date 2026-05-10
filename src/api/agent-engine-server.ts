@@ -98,6 +98,16 @@ export function createAgentEngineServer(
       now: options.now,
       idGenerator: options.idGenerator,
     });
+  const connectorService = new ConnectorService({
+    stateRoot: options.stateRoot,
+    now: options.now,
+    openExternalUrl: options.nativeUrlOpener ?? openUrl,
+    detectBrowser: options.connectorBrowserDetector,
+    startBrowserLogin: options.connectorBrowserLoginStarter,
+    publishBrowserDraft: options.connectorBrowserDraftPublisher,
+    baseEnv: options.connectorBaseEnv,
+    fetchImpl: options.connectorFetch,
+  });
   const rockyChatService =
     options.rockyChatService ??
     new RockyChatService({
@@ -107,19 +117,13 @@ export function createAgentEngineServer(
       skillTemplateStore: options.skillTemplateStore,
       ecountSettingsService: options.ecountSettingsService,
       ecountLookupService: options.ecountLookupService,
+      connectorService,
       now: options.now,
       idGenerator: options.idGenerator,
     });
   const hardwareStatusService =
     options.hardwareStatusService ??
     new SystemHardwareStatusService();
-  const connectorService = new ConnectorService({
-    stateRoot: options.stateRoot,
-    now: options.now,
-    openExternalUrl: options.nativeUrlOpener ?? openUrl,
-    baseEnv: options.connectorBaseEnv,
-    fetchImpl: options.connectorFetch,
-  });
   const favoriteService = new FavoriteService({
     stateRoot: options.stateRoot,
     now: options.now,

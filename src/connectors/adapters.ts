@@ -296,17 +296,31 @@ const tistoryAdapter: ConnectorAdapter = {
   label: "Tistory",
   loginUrl: "https://www.tistory.com/auth/login",
   oauth: tistoryOAuth,
+  browserLogin: {
+    supported: true,
+  },
   detectLoggedIn: async (page) => {
-    const cookies = await page.context().cookies();
-    const session = cookies.find(
-      (cookie) =>
-        (cookie.name === "TSSESSION" || cookie.name === "_T_ANO") &&
-        cookie.domain.includes("tistory"),
-    );
-    if (!session) return null;
     const url = page.url();
-    if (url.includes("/auth/login")) return null;
-    return { accountLabel: "Tistory 계정" };
+    if (url.includes("/auth/login") || url.includes("accounts.kakao.com")) {
+      return null;
+    }
+    const manageLinkCount = await page.locator('a[href*="/manage"]').count().catch(() => 0);
+    const bodyText = await page.locator("body").innerText({ timeout: 1_000 }).catch(() => "");
+    const loggedInChromeVisible = /계정관리|로그아웃|운영중인 블로그|내 블로그|글쓰기/u.test(
+      bodyText,
+    );
+    if (manageLinkCount > 0 || loggedInChromeVisible || url.includes("/manage")) {
+      return { accountLabel: "Tistory 계정" };
+    }
+    const loginPromptVisible = await page
+      .getByText(/카카오계정으로 시작하기|로그인 및 가입하기/u)
+      .first()
+      .isVisible()
+      .catch(() => false);
+    if (loginPromptVisible) {
+      return null;
+    }
+    return null;
   },
 };
 

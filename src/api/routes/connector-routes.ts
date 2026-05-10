@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 
 import { listSupportedProviders } from "../../connectors/adapters.js";
 import type {
+  ConnectorPublishDraftInput,
   ConnectorProvider,
   ConnectorServiceLike,
 } from "../../connectors/connector-types.js";
@@ -20,6 +21,45 @@ function parseProvider(raw: string): ConnectorProvider {
     throw badRequest(`지원하지 않는 커넥터입니다: ${raw}`);
   }
   return raw as ConnectorProvider;
+}
+
+function parsePublishDraftBody(body: unknown): ConnectorPublishDraftInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("커넥터 발행 요청은 JSON object여야 합니다.");
+  }
+
+  const input = body as Record<string, unknown>;
+  if (typeof input.title !== "string" || !input.title.trim()) {
+    throw badRequest("커넥터 발행 요청에는 title이 필요합니다.");
+  }
+  if (
+    typeof input.contentMarkdown !== "string" ||
+    !input.contentMarkdown.trim()
+  ) {
+    throw badRequest("커넥터 발행 요청에는 contentMarkdown이 필요합니다.");
+  }
+  if (
+    input.visibility !== undefined &&
+    input.visibility !== "draft" &&
+    input.visibility !== "private" &&
+    input.visibility !== "public"
+  ) {
+    throw badRequest("visibility는 draft, private, public 중 하나여야 합니다.");
+  }
+
+  return {
+    title: input.title.trim(),
+    contentMarkdown: input.contentMarkdown.trim(),
+    tags: Array.isArray(input.tags)
+      ? input.tags.filter((tag): tag is string => typeof tag === "string")
+      : [],
+    visibility:
+      input.visibility === "draft" ||
+      input.visibility === "private" ||
+      input.visibility === "public"
+        ? input.visibility
+        : undefined,
+  };
 }
 
 export const registerConnectorRoutes: FastifyPluginAsync<
@@ -72,6 +112,16 @@ export const registerConnectorRoutes: FastifyPluginAsync<
     const { provider } = request.params as { provider: string };
     const parsed = parseProvider(provider);
     sendJson(reply, 200, await options.connectorService.cancelLogin(parsed));
+  });
+
+  server.post("/connectors/:provider/publish-draft", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    const result = await options.connectorService.publishDraft(
+      parsed,
+      parsePublishDraftBody(request.body),
+    );
+    sendJson(reply, result.ok ? 200 : 409, result);
   });
 
   server.post("/connectors/:provider/disconnect", async (request, reply) => {

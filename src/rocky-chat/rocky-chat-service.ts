@@ -36,6 +36,7 @@ import {
 } from "./rocky-skill-registry.js";
 import {
   type AgentEcountLookupInstruction,
+  type AgentConnectorSummary,
   type AgentPreparedIntegrationSummary,
   buildAgentTurnSystemInstructions,
   buildRockyTurnSystemInstructions,
@@ -98,6 +99,11 @@ import {
   type EcountDatasetQueryResult,
   type EcountLookupServiceLike,
 } from "../integrations/ecount-connection-service.js";
+import type {
+  ConnectorPublishDraftInput,
+  ConnectorPublishDraftResult,
+  ConnectorServiceLike,
+} from "../connectors/connector-types.js";
 
 export interface RockyChatServiceOptions {
   stateRoot?: string;
@@ -108,6 +114,7 @@ export interface RockyChatServiceOptions {
   skillTemplateStore?: SkillTemplateStore;
   ecountSettingsService?: EcountSettingsServiceLike;
   ecountLookupService?: EcountLookupServiceLike;
+  connectorService?: ConnectorServiceLike;
 }
 
 type RockyAttachmentDraft = RockyAttachmentRecord & {
@@ -478,6 +485,7 @@ const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
 const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
+const TISTORY_DRAFT_PUBLISH_MARKER = "<!-- rocky-tistory-draft-publish:";
 
 function requestMessageOrAttachmentDefault(input: {
   message: string;
@@ -616,6 +624,152 @@ function usedSkillMarkerPattern(): RegExp {
   return /<!--\s*rocky-used-skills:\s*(\[[\s\S]*?\])\s*-->/giu;
 }
 
+interface TistoryPublishReadyDraft {
+  workspacePath: string;
+  input: ConnectorPublishDraftInput;
+}
+
+function shouldAttemptTistoryDraftPublish(input: {
+  request: string;
+  output: string | null;
+}): boolean {
+  if (!input.output || input.output.includes(TISTORY_DRAFT_PUBLISH_MARKER)) {
+    return false;
+  }
+  const combined = `${input.request}\n${input.output}`;
+  const tistorySignal = /티스토리|tistory/iu.test(combined);
+  const publishIntent = /발행|업로드|올려|게시|임시저장|다시\s*발행|publish|upload|draft/iu.test(
+    combined
+  );
+  return tistorySignal && publishIntent;
+}
+
+function extractMarkdownWorkspacePaths(text: string): string[] {
+  const paths = new Set<string>();
+  const pattern = /(?:^|[\s(["'`])((?:\.\/)?outputs\/[^\s)"'`<>]+?\.md)/giu;
+  for (const match of text.matchAll(pattern)) {
+    const raw = match[1]?.trim();
+    if (!raw) {
+      continue;
+    }
+    paths.add(raw.replace(/^[.][/\\]/u, "").replace(/[.,;:]+$/u, ""));
+  }
+  return [...paths];
+}
+
+function normalizeWorkspaceRelativePath(value: string): string | null {
+  const trimmed = value.trim().replace(/^[.][/\\]/u, "");
+  if (!trimmed || path.isAbsolute(trimmed)) {
+    return null;
+  }
+  const normalized = path.posix.normalize(trimmed.replaceAll("\\", "/"));
+  if (
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.includes("/../")
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function parseTistoryPublishReadyMarkdown(input: {
+  workspacePath: string;
+  markdown: string;
+}): TistoryPublishReadyDraft | null {
+  const titleSection = findMarkdownSection(input.markdown, /제목/u);
+  const bodySection = findMarkdownSection(input.markdown, /본문|원고|내용/u);
+  const tagsSection = findMarkdownSection(input.markdown, /태그|tags?/iu);
+  const title =
+    firstContentLine(titleSection) ??
+    input.markdown.match(/^#\s+(.+)$/mu)?.[1]?.trim() ??
+    null;
+  const contentMarkdown = stripSectionDecorations(bodySection ?? "").trim();
+
+  if (!title || !contentMarkdown) {
+    return null;
+  }
+
+  return {
+    workspacePath: input.workspacePath,
+    input: {
+      title,
+      contentMarkdown,
+      tags: splitTistoryTags(tagsSection ?? ""),
+      visibility: "draft",
+    },
+  };
+}
+
+function findMarkdownSection(markdown: string, headingPattern: RegExp): string | null {
+  const headings = [...markdown.matchAll(/^#{1,3}\s+(.+?)\s*$/gmu)];
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index];
+    const title = heading[1] ?? "";
+    if (!headingPattern.test(title)) {
+      continue;
+    }
+    const start = (heading.index ?? 0) + heading[0].length;
+    const next = headings[index + 1];
+    const end = next?.index ?? markdown.length;
+    return stripSectionDecorations(markdown.slice(start, end));
+  }
+  return null;
+}
+
+function stripSectionDecorations(value: string): string {
+  return value
+    .split(/\r?\n/u)
+    .filter((line) => !/^[-*_]{3,}\s*$/u.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
+function firstContentLine(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  return (
+    stripSectionDecorations(value)
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find(Boolean) ?? null
+  );
+}
+
+function splitTistoryTags(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[,\n]/u)
+        .map((tag) => tag.trim().replace(/^#+/u, ""))
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function appendTistoryDraftPublishResult(input: {
+  output: string;
+  draft: TistoryPublishReadyDraft;
+  result: ConnectorPublishDraftResult;
+}): string {
+  const lines = [
+    input.output.trimEnd(),
+    "",
+    "---",
+    "",
+    "Tistory 발행 결과:",
+    `- 상태: ${input.result.ok ? "임시저장 완료" : "임시저장 실패"}`,
+    `- 원고: ${input.draft.workspacePath}`,
+    input.result.url ? `- URL: ${input.result.url}` : null,
+    `- 메시지: ${input.result.message}`,
+    `${TISTORY_DRAFT_PUBLISH_MARKER} ${input.result.checkedAt} -->`,
+  ].filter((line): line is string => line !== null);
+
+  return lines.join("\n");
+}
+
 function extractUsedSkillRefs(text: string): {
   text: string;
   refs: string[];
@@ -728,6 +882,7 @@ export class RockyChatService {
   private readonly skillTemplateStore: SkillTemplateStore;
   private readonly ecountSettingsService: EcountSettingsServiceLike;
   private readonly ecountLookupService: EcountLookupServiceLike;
+  private readonly connectorService: ConnectorServiceLike | null;
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
@@ -753,6 +908,7 @@ export class RockyChatService {
       new EcountConnectionService({
         now: this.now,
       });
+    this.connectorService = options.connectorService ?? null;
     this.orchestrator = new RockyOrchestratorService({
       sessionService: options.sessionService,
       now: this.now,
@@ -1346,8 +1502,8 @@ export class RockyChatService {
     };
   }
 
-  private async findAgentById(agentId: string): Promise<AgentRecord | null> {
-    if (!this.agentService) {
+  private async findAgentById(agentId: string | null): Promise<AgentRecord | null> {
+    if (!this.agentService || !agentId) {
       return null;
     }
 
@@ -1465,6 +1621,191 @@ export class RockyChatService {
     }
 
     return contexts;
+  }
+
+  private async listAgentConnectorSummaries(): Promise<AgentConnectorSummary[]> {
+    if (!this.connectorService) {
+      return [];
+    }
+
+    try {
+      const tistory = await this.connectorService.getState("tistory");
+      if (tistory.status !== "connected") {
+        return [];
+      }
+      return [
+        {
+          provider: "tistory",
+          label: "Tistory",
+          status: tistory.status,
+          loginMode: tistory.loginMode,
+          accountLabel: tistory.accountLabel,
+          connectedAt: tistory.connectedAt,
+          draftPublishing:
+            tistory.loginMode === "custom-browser" ? "server-managed" : null,
+        },
+      ];
+    } catch {
+      return [];
+    }
+  }
+
+  private async maybePublishTistoryDraftAfterAgentTurn(input: {
+    agent: AgentRecord;
+    chatId: string;
+    request: string;
+    orchestration: RockyOrchestrationRecord;
+  }): Promise<RockyOrchestrationRecord> {
+    if (
+      !this.connectorService ||
+      input.orchestration.status !== "completed" ||
+      !shouldAttemptTistoryDraftPublish({
+        request: input.request,
+        output: input.orchestration.output,
+      })
+    ) {
+      return input.orchestration;
+    }
+
+    const draft = await this.findTistoryPublishReadyDraft({
+      agent: input.agent,
+      chatId: input.chatId,
+      output: input.orchestration.output ?? "",
+    });
+    if (!draft) {
+      const checkedAt = this.now();
+      return {
+        ...input.orchestration,
+        output: appendTistoryDraftPublishResult({
+          output: input.orchestration.output ?? "",
+          draft: {
+            workspacePath: rockyTaskOutputDirectory(input.chatId),
+            input: {
+              title: "Tistory draft",
+              contentMarkdown: "Tistory draft",
+              tags: [],
+              visibility: "draft",
+            },
+          },
+          result: {
+            ok: false,
+            provider: "tistory",
+            status: "failed",
+            accountLabel: null,
+            url: null,
+            message:
+              "Tistory 발행용 Markdown에서 제목, 본문, 태그 섹션을 찾지 못했습니다.",
+            checkedAt,
+          },
+        }),
+        updatedAt: checkedAt,
+      };
+    }
+
+    const result = await this.connectorService.publishDraft("tistory", draft.input);
+    return {
+      ...input.orchestration,
+      output: appendTistoryDraftPublishResult({
+        output: input.orchestration.output ?? "",
+        draft,
+        result,
+      }),
+      updatedAt: result.checkedAt,
+    };
+  }
+
+  private async findTistoryPublishReadyDraft(input: {
+    agent: AgentRecord;
+    chatId: string;
+    output: string;
+  }): Promise<TistoryPublishReadyDraft | null> {
+    const candidates = [
+      ...extractMarkdownWorkspacePaths(input.output),
+      ...(await this.listMarkdownWorkspacePaths(
+        input.agent.workspaceRoot,
+        rockyTaskOutputDirectory(input.chatId)
+      )),
+    ];
+
+    for (const candidate of [...new Set(candidates)]) {
+      const relativePath = normalizeWorkspaceRelativePath(candidate);
+      if (!relativePath) {
+        continue;
+      }
+      const absolutePath = this.workspaceAbsolutePath(
+        input.agent.workspaceRoot,
+        relativePath
+      );
+      if (!absolutePath) {
+        continue;
+      }
+
+      let markdown = "";
+      try {
+        markdown = await readFile(absolutePath, "utf8");
+      } catch {
+        continue;
+      }
+      const draft = parseTistoryPublishReadyMarkdown({
+        workspacePath: relativePath,
+        markdown,
+      });
+      if (draft) {
+        return draft;
+      }
+    }
+
+    return null;
+  }
+
+  private async listMarkdownWorkspacePaths(
+    workspaceRoot: string,
+    relativeRoot: string
+  ): Promise<string[]> {
+    const normalizedRoot = normalizeWorkspaceRelativePath(relativeRoot);
+    if (!normalizedRoot) {
+      return [];
+    }
+    const absoluteRoot = this.workspaceAbsolutePath(workspaceRoot, normalizedRoot);
+    if (!absoluteRoot) {
+      return [];
+    }
+
+    const results: string[] = [];
+    const visit = async (absoluteDirectory: string, relativeDirectory: string) => {
+      let entries;
+      try {
+        entries = await readdir(absoluteDirectory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const relativePath = path.posix.join(relativeDirectory, entry.name);
+        const absolutePath = path.join(absoluteDirectory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath, relativePath);
+          continue;
+        }
+        if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+          results.push(relativePath);
+        }
+      }
+    };
+
+    await visit(absoluteRoot, normalizedRoot);
+    return results;
+  }
+
+  private workspaceAbsolutePath(
+    workspaceRoot: string,
+    relativePath: string
+  ): string | null {
+    const root = path.resolve(workspaceRoot);
+    const absolutePath = path.resolve(root, ...relativePath.split("/"));
+    if (absolutePath !== root && !absolutePath.startsWith(`${root}${path.sep}`)) {
+      return null;
+    }
+    return absolutePath;
   }
 
   private async readExistingEcountLookups(
@@ -1807,6 +2148,13 @@ export class RockyChatService {
       message: input.message,
       selectedSkillId: input.selectedSkillId,
     });
+    const connectorSummaries = await this.listAgentConnectorSummaries();
+    const hasTistoryDraftPublisher = connectorSummaries.some(
+      (summary) =>
+        summary.provider === "tistory" &&
+        summary.status === "connected" &&
+        summary.draftPublishing === "server-managed"
+    );
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
@@ -1826,6 +2174,7 @@ export class RockyChatService {
       dispatch,
       attachments,
       preparedIntegrations: ecountLookup?.preparedResults ?? [],
+      connectorSummaries,
       timestamp: input.timestamp,
     });
     const startedOrchestration = await this.orchestrator.start({
@@ -1845,9 +2194,16 @@ export class RockyChatService {
         contextRelativePath,
         chatId: input.chatId,
         ecountLookup,
+        hasTistoryDraftPublisher,
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);
+    const finalizedOrchestration = await this.maybePublishTistoryDraftAfterAgentTurn({
+      agent: input.agent,
+      chatId: input.chatId,
+      request: input.message,
+      orchestration: sanitized.orchestration,
+    });
     const reportedUsedSkills = await this.resolveUsedSkills(
       input.agent,
       sanitized.usedSkillRefs
@@ -1855,8 +2211,8 @@ export class RockyChatService {
     const usedSkills = mergeUsedSkills(selectedUsedSkills, reportedUsedSkills);
     const startedDispatch: RockyDispatchRecord = {
       ...dispatch,
-      orchestration: sanitized.orchestration,
-      executionStarted: Boolean(sanitized.orchestration.runId),
+      orchestration: finalizedOrchestration,
+      executionStarted: Boolean(finalizedOrchestration.runId),
     };
 
     return {
@@ -1870,7 +2226,7 @@ export class RockyChatService {
         intent: input.intent,
         worker,
         dispatchId: startedDispatch.id,
-        orchestration: sanitized.orchestration,
+        orchestration: finalizedOrchestration,
         usedSkills,
         timestamp: input.timestamp,
       }),
@@ -2740,12 +3096,23 @@ export class RockyChatService {
         if (!dispatch.orchestration) {
           return dispatch;
         }
+        if (dispatch.orchestration.output?.includes(TISTORY_DRAFT_PUBLISH_MARKER)) {
+          return dispatch;
+        }
 
         const refreshedOrchestration = await this.orchestrator.refresh(
           dispatch.orchestration
         );
         const sanitized = this.sanitizeOrchestrationOutput(refreshedOrchestration);
-        const orchestration = sanitized.orchestration;
+        const agent = await this.findAgentById(sanitized.orchestration.agentId);
+        const orchestration = agent
+          ? await this.maybePublishTistoryDraftAfterAgentTurn({
+              agent,
+              chatId: hydrated.id,
+              request: dispatch.originalRequest,
+              orchestration: sanitized.orchestration,
+            })
+          : sanitized.orchestration;
         if (JSON.stringify(orchestration) !== JSON.stringify(dispatch.orchestration)) {
           changed = true;
         }

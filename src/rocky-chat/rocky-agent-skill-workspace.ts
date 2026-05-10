@@ -48,6 +48,16 @@ export interface AgentPreparedIntegrationSummary {
   source: "fresh" | "existing" | "settings";
 }
 
+export interface AgentConnectorSummary {
+  provider: string;
+  label: string;
+  status: "idle" | "connecting" | "connected" | "failed";
+  loginMode: string | null;
+  accountLabel: string | null;
+  connectedAt: string | null;
+  draftPublishing: "server-managed" | null;
+}
+
 function formatList(items: string[]): string {
   if (items.length === 0) {
     return "- 없음";
@@ -177,6 +187,26 @@ function formatPreparedIntegrationResults(
         summary.diagnostic ? `diagnostic=${summary.diagnostic}` : null,
       ].filter(Boolean);
       return `- ${summary.title}: ${summary.status}; ${summary.message}${
+        details.length > 0 ? ` (${details.join(", ")})` : ""
+      }`;
+    })
+    .join("\n");
+}
+
+function formatConnectorSummaries(summaries: AgentConnectorSummary[]): string {
+  if (summaries.length === 0) {
+    return "- 없음";
+  }
+
+  return summaries
+    .map((summary) => {
+      const details = [
+        summary.loginMode ? `mode=${summary.loginMode}` : null,
+        summary.accountLabel ? `account=${summary.accountLabel}` : null,
+        summary.connectedAt ? `connected_at=${summary.connectedAt}` : null,
+        summary.draftPublishing ? `draft_publish=${summary.draftPublishing}` : null,
+      ].filter(Boolean);
+      return `- ${summary.label}: ${summary.status}${
         details.length > 0 ? ` (${details.join(", ")})` : ""
       }`;
     })
@@ -383,6 +413,7 @@ export function buildAgentTurnContextMarkdown(input: {
   attachments: RockyAttachmentRecord[];
   packagedSkillInputs?: PackagedSkillInputSummary[];
   preparedIntegrations?: AgentPreparedIntegrationSummary[];
+  connectorSummaries?: AgentConnectorSummary[];
   timestamp: string;
 }): string {
   return [
@@ -408,6 +439,9 @@ export function buildAgentTurnContextMarkdown(input: {
     "연동 조회 결과:",
     formatPreparedIntegrationResults(input.preparedIntegrations ?? []),
     "",
+    "계정 연동 상태:",
+    formatConnectorSummaries(input.connectorSummaries ?? []),
+    "",
     "파일 목록 답변 기준:",
     "- 사용자가 첨부 파일만 물으면 첨부 메타데이터를 기준으로 답합니다.",
     "- 사용자가 올라와 있는 파일, 사용 가능한 파일, 또는 파일 목록을 물으면 첨부 메타데이터와 스킬 포함 파일을 함께 구분해 답합니다.",
@@ -422,6 +456,7 @@ export async function writeAgentTurnContextFile(input: {
   dispatch: RockyDispatchRecord;
   attachments: RockyAttachmentRecord[];
   preparedIntegrations?: AgentPreparedIntegrationSummary[];
+  connectorSummaries?: AgentConnectorSummary[];
   timestamp: string;
 }): Promise<string> {
   const relativePath = `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/${input.dispatch.id}.md`;
@@ -438,6 +473,7 @@ export async function writeAgentTurnContextFile(input: {
         input.agent.workspaceRoot
       ),
       preparedIntegrations: input.preparedIntegrations ?? [],
+      connectorSummaries: input.connectorSummaries ?? [],
       timestamp: input.timestamp,
     }),
     "utf8"
@@ -469,6 +505,7 @@ export function buildAgentTurnSystemInstructions(input: {
   contextRelativePath: string;
   chatId: string;
   ecountLookup?: AgentEcountLookupInstruction | null;
+  hasTistoryDraftPublisher?: boolean;
 }): string[] {
   const outputDirectory = rockyTaskOutputDirectory(input.chatId);
 
@@ -500,6 +537,16 @@ export function buildAgentTurnSystemInstructions(input: {
             "An installed skill mentions ECOUNT ERP, but Rocky reports that ECOUNT connection settings are not configured.",
             "For ECOUNT lookup requests, tell the user to complete the ECOUNT ERP connection test in the integration settings. Do not ask for API keys, passwords, or session IDs in chat.",
           ]
+      : []),
+    ...(input.hasTistoryDraftPublisher
+      ? [
+          "A Rocky-managed Tistory account connector is connected for this turn. The connected account summary and server-managed draft publishing status are listed in the turn context.",
+          "For Tistory upload requests, create or reuse publish-ready Markdown in the task output directory with title, body, and comma-separated tag sections.",
+          "Do not call localhost, 127.0.0.1, or Rocky HTTP connector endpoints yourself. Rocky server submits the Tistory draft after this turn when a publish-ready Markdown file is available.",
+          "The Tistory connector currently saves drafts only. Do not claim public publishing unless Rocky server appends an explicit public publishing result.",
+          "If Rocky server appends a Tistory draft result, report that result and keep the publish-ready file path.",
+          "Never print browser cookies, session storage, OAuth tokens, API keys, or connector secret values.",
+        ]
       : []),
   ];
 }

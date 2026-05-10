@@ -224,7 +224,7 @@ const CONTENT_PROVIDERS: ProviderEntry[] = [
   {
     provider: "tistory",
     label: "Tistory",
-    description: "티스토리 글 발행용 로그인 세션을 준비합니다.",
+    description: "공식 API 종료로 커스텀 브라우저 세션을 준비합니다.",
     brandIcon: siTistory,
     iconColor: "#f97316",
   },

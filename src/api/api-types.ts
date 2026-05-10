@@ -31,6 +31,11 @@ import type {
 } from "../integrations/ecount-connection-service.js";
 import type { EcountSettingsServiceLike } from "../integrations/ecount-settings-service.js";
 import type {
+  ConnectorBrowserDetector,
+  ConnectorBrowserLoginStarter,
+} from "../connectors/connector-service.js";
+import type { ConnectorBrowserDraftPublisher } from "../connectors/browser-draft-publisher.js";
+import type {
   RuntimeKind,
   RuntimeEvent,
   RuntimeOllamaLaunchTarget,
@@ -263,6 +268,9 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
   nativeUrlOpener?: NativeUrlOpener;
+  connectorBrowserDetector?: ConnectorBrowserDetector;
+  connectorBrowserLoginStarter?: ConnectorBrowserLoginStarter;
+  connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
   connectorBaseEnv?: NodeJS.ProcessEnv;
   connectorFetch?: typeof fetch;
 }

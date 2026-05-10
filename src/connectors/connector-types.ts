@@ -18,7 +18,11 @@ export type ConnectorStatus =
   | "connected"
   | "failed";
 
-export type ConnectorLoginMode = "oauth" | "external-browser" | "managed-browser";
+export type ConnectorLoginMode =
+  | "oauth"
+  | "custom-browser"
+  | "external-browser"
+  | "managed-browser";
 
 export interface ConnectorStartLoginInput {
   redirectBaseUrl?: string | null;
@@ -37,6 +41,25 @@ export interface ConnectorOAuthCallbackResult {
   title: string;
   message: string;
   state: ConnectorState;
+}
+
+export type ConnectorPublishVisibility = "draft" | "private" | "public";
+
+export interface ConnectorPublishDraftInput {
+  title: string;
+  contentMarkdown: string;
+  tags?: string[];
+  visibility?: ConnectorPublishVisibility;
+}
+
+export interface ConnectorPublishDraftResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "draft-saved" | "failed";
+  accountLabel: string | null;
+  url: string | null;
+  message: string;
+  checkedAt: string;
 }
 
 export interface ConnectorState {
@@ -70,6 +93,10 @@ export interface ConnectorServiceLike {
     provider: ConnectorProvider,
     input: ConnectorOAuthCallbackInput,
   ): Promise<ConnectorOAuthCallbackResult>;
+  publishDraft(
+    provider: ConnectorProvider,
+    input: ConnectorPublishDraftInput,
+  ): Promise<ConnectorPublishDraftResult>;
   cancelLogin(provider: ConnectorProvider): Promise<ConnectorState>;
   disconnect(provider: ConnectorProvider): Promise<ConnectorState>;
   getDiagnostics(): Promise<ConnectorDiagnosticsRecord>;

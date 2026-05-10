@@ -6,6 +6,7 @@ import {
 } from "playwright";
 
 import type { ChromiumChannel, ConnectorProvider } from "./connector-types.js";
+import { launchSystemBrowserContext } from "./system-browser-context.js";
 
 export type ConnectorOAuthTokenAuth = "body" | "basic";
 
@@ -41,11 +42,21 @@ export type ConnectorOAuthConfig =
       docsUrl?: string;
     };
 
+export type ConnectorBrowserLoginConfig =
+  | {
+      supported: true;
+    }
+  | {
+      supported: false;
+      unavailableReason: string;
+    };
+
 export interface ConnectorAdapter {
   provider: ConnectorProvider;
   label: string;
   loginUrl: string;
   oauth: ConnectorOAuthConfig;
+  browserLogin?: ConnectorBrowserLoginConfig;
   /**
    * Inspect the browser page to determine whether the user has finished
    * logging in. Should be cheap; called repeatedly. Returns null until the
@@ -55,7 +66,13 @@ export interface ConnectorAdapter {
 }
 
 export type ConnectorRunnerEvent =
-  | { kind: "connected"; accountLabel: string; storageStateJson: string }
+  | {
+      kind: "connected";
+      accountLabel: string;
+      storageStateJson: string;
+      browserProfileDir?: string | null;
+      browserDebuggingPort?: number | null;
+    }
   | { kind: "failed"; message: string };
 
 export interface ConnectorRunnerSession {
@@ -68,6 +85,7 @@ const LOGIN_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 export async function startHeadedLogin(input: {
   adapter: ConnectorAdapter;
   channel: ChromiumChannel;
+  userDataDir?: string | null;
   onEvent: (event: ConnectorRunnerEvent) => void;
 }): Promise<ConnectorRunnerSession> {
   const launchOptions: Parameters<typeof chromium.launch>[0] = {
@@ -77,11 +95,31 @@ export async function startHeadedLogin(input: {
     launchOptions.channel = input.channel;
   }
 
-  const browser = await chromium.launch(launchOptions);
-  const context = await browser.newContext({
-    viewport: { width: 1100, height: 800 },
-    locale: "ko-KR",
-  });
+  const systemBrowser = input.userDataDir
+    ? await launchSystemBrowserContext({
+        channel: input.channel,
+        userDataDir: input.userDataDir,
+        viewport: { width: 1100, height: 800 },
+        locale: "ko-KR",
+      })
+    : null;
+  let context: BrowserContext;
+  if (systemBrowser) {
+    context = systemBrowser.context;
+  } else if (input.userDataDir) {
+    context = await chromium.launchPersistentContext(input.userDataDir, {
+      ...launchOptions,
+      viewport: { width: 1100, height: 800 },
+      locale: "ko-KR",
+    });
+  } else {
+    const launched = await chromium.launch(launchOptions);
+    context = await launched.newContext({
+      viewport: { width: 1100, height: 800 },
+      locale: "ko-KR",
+    });
+  }
+  const browser = systemBrowser?.browser ?? context.browser();
   const page = await context.newPage();
 
   const state = {
@@ -99,14 +137,20 @@ export async function startHeadedLogin(input: {
     if (state.closed) return;
     state.closed = true;
     try {
-      await context.close();
+      if (systemBrowser) {
+        await systemBrowser.close();
+      } else {
+        await context.close();
+      }
     } catch {
       // ignore
     }
-    try {
-      await browser.close();
-    } catch {
-      // ignore
+    if (!systemBrowser && browser) {
+      try {
+        await browser.close();
+      } catch {
+        // ignore
+      }
     }
     if (event) input.onEvent(event);
   };
@@ -118,7 +162,7 @@ export async function startHeadedLogin(input: {
       message: "로그인 창이 닫혔어요. 다시 시도해 주세요.",
     });
   };
-  browser.on("disconnected", onDisconnect);
+  browser?.on("disconnected", onDisconnect);
 
   const checkSuccess = async () => {
     if (state.succeeded || state.closed) return;
@@ -148,6 +192,8 @@ export async function startHeadedLogin(input: {
       kind: "connected",
       accountLabel: result.accountLabel,
       storageStateJson,
+      browserProfileDir: input.userDataDir ?? null,
+      browserDebuggingPort: systemBrowser?.debuggingPort ?? null,
     });
   };
 

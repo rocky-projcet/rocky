@@ -460,7 +460,30 @@ export type ConnectorProvider =
   | "medium";
 
 export type ConnectorStatus = "idle" | "connecting" | "connected" | "failed";
-export type ConnectorLoginMode = "oauth" | "external-browser" | "managed-browser";
+export type ConnectorLoginMode =
+  | "oauth"
+  | "custom-browser"
+  | "external-browser"
+  | "managed-browser";
+
+export type ConnectorPublishVisibility = "draft" | "private" | "public";
+
+export interface ConnectorPublishDraftInput {
+  title: string;
+  contentMarkdown: string;
+  tags?: string[];
+  visibility?: ConnectorPublishVisibility;
+}
+
+export interface ConnectorPublishDraftResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  status: "draft-saved" | "failed";
+  accountLabel: string | null;
+  url: string | null;
+  message: string;
+  checkedAt: string;
+}
 
 export interface ConnectorState {
   provider: ConnectorProvider;
@@ -1549,6 +1572,19 @@ export class AgentEngineClient {
       `/connectors/${encodeURIComponent(provider)}/disconnect`,
       {
         method: "POST",
+      },
+    );
+  }
+
+  publishConnectorDraft(
+    provider: ConnectorProvider,
+    input: ConnectorPublishDraftInput,
+  ): Promise<ConnectorPublishDraftResult> {
+    return this.request<ConnectorPublishDraftResult>(
+      `/connectors/${encodeURIComponent(provider)}/publish-draft`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       },
     );
   }

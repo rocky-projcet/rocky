@@ -3,13 +3,26 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { getConnectorAdapter, listSupportedProviders } from "./adapters.js";
-import type { ConnectorOAuthConfig } from "./connector-runner.js";
+import {
+  publishBrowserDraft,
+  type ConnectorBrowserDraftPublisher,
+} from "./browser-draft-publisher.js";
+import {
+  detectChromium,
+  startHeadedLogin,
+  type ConnectorAdapter,
+  type ConnectorOAuthConfig,
+  type ConnectorRunnerEvent,
+  type ConnectorRunnerSession,
+} from "./connector-runner.js";
 import {
   type ChromiumChannel,
   type ConnectorDiagnosticsRecord,
   type ConnectorLoginMode,
   type ConnectorOAuthCallbackInput,
   type ConnectorOAuthCallbackResult,
+  type ConnectorPublishDraftInput,
+  type ConnectorPublishDraftResult,
   type ConnectorProvider,
   type ConnectorServiceLike,
   type ConnectorStartLoginInput,
@@ -21,9 +34,20 @@ export interface ConnectorServiceOptions {
   stateRoot?: string;
   now?: () => string;
   openExternalUrl?: (url: string) => Promise<unknown>;
+  detectBrowser?: ConnectorBrowserDetector;
+  startBrowserLogin?: ConnectorBrowserLoginStarter;
+  publishBrowserDraft?: ConnectorBrowserDraftPublisher;
   baseEnv?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
+
+export type ConnectorBrowserDetector = () => Promise<{
+  available: boolean;
+  channel: ChromiumChannel | null;
+  message: string;
+}>;
+
+export type ConnectorBrowserLoginStarter = typeof startHeadedLogin;
 
 interface OAuthCredentials {
   clientId: string;
@@ -43,16 +67,22 @@ interface PendingOAuthSession {
 const DIAGNOSTICS_TTL_MS = 60_000;
 const LEGACY_STORAGE_FILE = "storage.json";
 const OAUTH_TOKEN_FILE = "oauth-token.json";
+const BROWSER_SESSION_FILE = "browser-session.json";
+const BROWSER_PROFILE_DIR = "browser-profile";
 
 export class ConnectorService implements ConnectorServiceLike {
   private readonly stateRoot: string;
   private readonly now: () => string;
   private readonly openExternalUrl: ((url: string) => Promise<unknown>) | null;
+  private readonly detectBrowser: ConnectorBrowserDetector;
+  private readonly startBrowserLogin: ConnectorBrowserLoginStarter;
+  private readonly publishBrowserDraft: ConnectorBrowserDraftPublisher;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly fetchImpl: typeof fetch;
   private readonly hydratePromise: Promise<void>;
   private states: Record<ConnectorProvider, ConnectorState>;
   private pendingOAuth = new Map<string, PendingOAuthSession>();
+  private activeBrowserSessions = new Map<ConnectorProvider, ConnectorRunnerSession>();
   private cachedDiagnostics: ConnectorDiagnosticsRecord | null = null;
   private diagnosticsCheckedAt = 0;
 
@@ -60,6 +90,9 @@ export class ConnectorService implements ConnectorServiceLike {
     this.stateRoot = options.stateRoot ?? path.resolve(".runtime", "agent-engine");
     this.now = options.now ?? (() => new Date().toISOString());
     this.openExternalUrl = options.openExternalUrl ?? null;
+    this.detectBrowser = options.detectBrowser ?? detectChromium;
+    this.startBrowserLogin = options.startBrowserLogin ?? startHeadedLogin;
+    this.publishBrowserDraft = options.publishBrowserDraft ?? publishBrowserDraft;
     this.baseEnv = options.baseEnv ?? process.env;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.states = listSupportedProviders().reduce(
@@ -88,16 +121,7 @@ export class ConnectorService implements ConnectorServiceLike {
     const oauth = adapter.oauth;
 
     if (oauth.supported === false) {
-      this.transition(provider, {
-        status: "failed",
-        message: "공식 OAuth 연결을 지원하지 않습니다.",
-        accountLabel: null,
-        connectedAt: null,
-        loginUrl: null,
-        loginMode: null,
-        lastError: oauth.unavailableReason,
-      });
-      return { ...this.states[provider] };
+      return this.startCustomBrowserLogin(provider, adapter, oauth.unavailableReason);
     }
 
     const credentials = this.resolveOAuthCredentials(
@@ -158,6 +182,85 @@ export class ConnectorService implements ConnectorServiceLike {
       loginMode: "oauth",
       lastError: openError,
     });
+
+    return { ...this.states[provider] };
+  }
+
+  private async startCustomBrowserLogin(
+    provider: ConnectorProvider,
+    adapter: ConnectorAdapter,
+    unavailableReason: string,
+  ): Promise<ConnectorState> {
+    if (adapter.browserLogin?.supported !== true) {
+      this.transition(provider, {
+        status: "failed",
+        message: "공식 OAuth 연결을 지원하지 않습니다.",
+        accountLabel: null,
+        connectedAt: null,
+        loginUrl: null,
+        loginMode: null,
+        lastError:
+          adapter.browserLogin?.unavailableReason ??
+          unavailableReason,
+      });
+      return { ...this.states[provider] };
+    }
+
+    await this.cancelActiveBrowserSession(provider);
+    const diagnostics = await this.detectBrowser();
+    if (!diagnostics.available || !diagnostics.channel) {
+      this.transition(provider, {
+        status: "failed",
+        message: "커스텀 브라우저 로그인을 시작하지 못했습니다.",
+        accountLabel: null,
+        connectedAt: null,
+        loginUrl: null,
+        loginMode: null,
+        lastError: diagnostics.message,
+      });
+      return { ...this.states[provider] };
+    }
+
+    this.transition(provider, {
+      status: "connecting",
+      message: `${adapter.label} 커스텀 로그인 창을 열었습니다. 로그인 완료가 감지되면 연결됩니다.`,
+      accountLabel: null,
+      connectedAt: null,
+      loginUrl: null,
+      loginMode: "custom-browser",
+      lastError: null,
+    });
+
+    try {
+      const browserProfileDir = this.browserProfileDir(provider);
+      await mkdir(browserProfileDir, { recursive: true, mode: 0o700 });
+      const session = await this.startBrowserLogin({
+        adapter,
+        channel: diagnostics.channel,
+        userDataDir: browserProfileDir,
+        onEvent: (event) => {
+          void this.handleBrowserLoginEvent(provider, event);
+        },
+      });
+      if (
+        this.states[provider].status === "connecting" &&
+        this.states[provider].loginMode === "custom-browser"
+      ) {
+        this.activeBrowserSessions.set(provider, session);
+      } else {
+        await session.cancel();
+      }
+    } catch (error) {
+      this.transition(provider, {
+        status: "failed",
+        message: "커스텀 브라우저 로그인을 시작하지 못했습니다.",
+        accountLabel: null,
+        connectedAt: null,
+        loginUrl: null,
+        loginMode: null,
+        lastError: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     return { ...this.states[provider] };
   }
@@ -275,6 +378,114 @@ export class ConnectorService implements ConnectorServiceLike {
     }
   }
 
+  async publishDraft(
+    provider: ConnectorProvider,
+    input: ConnectorPublishDraftInput,
+  ): Promise<ConnectorPublishDraftResult> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+
+    if (provider !== "tistory") {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: this.states[provider].accountLabel,
+        url: null,
+        message: "현재 커스텀 브라우저 발행은 Tistory만 지원합니다.",
+        checkedAt: this.now(),
+      };
+    }
+
+    const draft = normalizePublishDraftInput(input);
+    if (draft.visibility !== "draft") {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: this.states[provider].accountLabel,
+        url: null,
+        message: "Tistory 자동 공개 발행은 아직 지원하지 않습니다. 임시저장만 지원합니다.",
+        checkedAt: this.now(),
+      };
+    }
+
+    const session = await this.readStoredBrowserSession(provider);
+    if (!session) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: null,
+        url: null,
+        message: "Tistory 커스텀 브라우저 계정 연결이 필요합니다.",
+        checkedAt: this.now(),
+      };
+    }
+
+    const diagnostics = await this.detectBrowser();
+    if (!diagnostics.available || !diagnostics.channel) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        url: null,
+        message: diagnostics.message,
+        checkedAt: this.now(),
+      };
+    }
+
+    try {
+      const result = await this.publishBrowserDraft({
+        provider,
+        accountLabel: session.accountLabel,
+        storageStateJson: session.storageStateJson,
+        browserProfileDir: session.browserProfileDir,
+        browserDebuggingPort: session.browserDebuggingPort,
+        draft,
+        channel: diagnostics.channel,
+        now: this.now,
+      });
+      if (!result.ok && isInvalidBrowserSessionMessage(result.message)) {
+        await this.removeStorage(provider);
+        this.transition(provider, {
+          status: "failed",
+          message: "커스텀 브라우저 계정 연동을 다시 진행해 주세요.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: result.message,
+        });
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isInvalidBrowserSessionMessage(message)) {
+        await this.removeStorage(provider);
+        this.transition(provider, {
+          status: "failed",
+          message: "커스텀 브라우저 계정 연동을 다시 진행해 주세요.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: message,
+        });
+      }
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        url: null,
+        message,
+        checkedAt: this.now(),
+      };
+    }
+  }
+
   async cancelLogin(provider: ConnectorProvider): Promise<ConnectorState> {
     await this.ensureHydrated();
     this.assertSupported(provider);
@@ -283,6 +494,7 @@ export class ConnectorService implements ConnectorServiceLike {
         this.pendingOAuth.delete(state);
       }
     }
+    await this.cancelActiveBrowserSession(provider);
     if (this.states[provider].status === "connecting") {
       this.transition(provider, {
         status: "idle",
@@ -298,6 +510,7 @@ export class ConnectorService implements ConnectorServiceLike {
   async disconnect(provider: ConnectorProvider): Promise<ConnectorState> {
     await this.ensureHydrated();
     this.assertSupported(provider);
+    await this.cancelActiveBrowserSession(provider);
     await this.removeStorage(provider);
     this.transition(provider, {
       status: "idle",
@@ -319,10 +532,17 @@ export class ConnectorService implements ConnectorServiceLike {
     ) {
       return { ...this.cachedDiagnostics };
     }
+    const browserDiagnostics = await this.detectBrowser().catch((error) => ({
+      available: false,
+      channel: null,
+      message: error instanceof Error ? error.message : String(error),
+    }));
     const record: ConnectorDiagnosticsRecord = {
       available: true,
-      channel: null,
-      message: "공식 OAuth 로그인 사용",
+      channel: browserDiagnostics.channel,
+      message: browserDiagnostics.available
+        ? `공식 OAuth 및 커스텀 브라우저 로그인 사용 (${browserDiagnostics.message})`
+        : `공식 OAuth 사용 가능, 커스텀 브라우저 로그인 준비 필요: ${browserDiagnostics.message}`,
       checkedAt: this.now(),
     };
     this.cachedDiagnostics = record;
@@ -333,6 +553,94 @@ export class ConnectorService implements ConnectorServiceLike {
   private async removeStorage(provider: ConnectorProvider): Promise<void> {
     const dir = this.providerDir(provider);
     await rm(dir, { recursive: true, force: true });
+  }
+
+  private async cancelActiveBrowserSession(
+    provider: ConnectorProvider,
+  ): Promise<void> {
+    const session = this.activeBrowserSessions.get(provider);
+    if (!session) return;
+    this.activeBrowserSessions.delete(provider);
+    try {
+      await session.cancel();
+    } catch {
+      // The browser may already be closed.
+    }
+  }
+
+  private async readStoredBrowserSession(
+    provider: ConnectorProvider,
+  ): Promise<{
+    accountLabel: string;
+    connectedAt: string;
+    storageStateJson: string;
+    browserProfileDir: string | null;
+    browserDebuggingPort: number | null;
+  } | null> {
+    const browserSessionPath = path.join(
+      this.providerDir(provider),
+      BROWSER_SESSION_FILE,
+    );
+    try {
+      const raw = await readFile(browserSessionPath, "utf8");
+      return parseStoredBrowserConnection(raw, provider);
+    } catch {
+      return null;
+    }
+  }
+
+  private async handleBrowserLoginEvent(
+    provider: ConnectorProvider,
+    event: ConnectorRunnerEvent,
+  ): Promise<void> {
+    this.activeBrowserSessions.delete(provider);
+    const current = this.states[provider];
+    if (
+      current.status !== "connecting" ||
+      current.loginMode !== "custom-browser"
+    ) {
+      return;
+    }
+
+    if (event.kind === "failed") {
+      this.transition(provider, {
+        status: "failed",
+        message: "커스텀 브라우저 로그인에 실패했습니다.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: event.message,
+      });
+      return;
+    }
+
+    const connectedAt = this.now();
+    try {
+      await this.persistBrowserSession(provider, {
+        provider,
+        accountLabel: event.accountLabel,
+        connectedAt,
+        storageStateJson: event.storageStateJson,
+        browserProfileDir: event.browserProfileDir ?? this.browserProfileDir(provider),
+        browserDebuggingPort: event.browserDebuggingPort ?? null,
+      });
+      this.transition(provider, {
+        status: "connected",
+        message: "커스텀 브라우저 계정 연동이 완료되었습니다.",
+        accountLabel: event.accountLabel,
+        connectedAt,
+        loginUrl: null,
+        loginMode: "custom-browser",
+        lastError: null,
+      });
+    } catch (error) {
+      this.transition(provider, {
+        status: "failed",
+        message: "커스텀 브라우저 세션을 저장하지 못했습니다.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async hydrateFromDisk(): Promise<void> {
@@ -355,6 +663,29 @@ export class ConnectorService implements ConnectorServiceLike {
         }
       } catch {
         // No stored OAuth token for this provider.
+      }
+
+      const browserSessionPath = path.join(
+        this.providerDir(provider),
+        BROWSER_SESSION_FILE,
+      );
+      try {
+        const raw = await readFile(browserSessionPath, "utf8");
+        const stored = parseStoredBrowserConnection(raw, provider);
+        if (stored) {
+          this.transition(provider, {
+            status: "connected",
+            message: "이전 커스텀 브라우저 계정 연동 상태가 복원되었습니다.",
+            accountLabel: stored.accountLabel,
+            connectedAt: stored.connectedAt,
+            loginUrl: null,
+            loginMode: "custom-browser",
+            lastError: null,
+          });
+          continue;
+        }
+      } catch {
+        // No stored custom browser session for this provider.
       }
 
       const storagePath = path.join(this.providerDir(provider), LEGACY_STORAGE_FILE);
@@ -381,6 +712,10 @@ export class ConnectorService implements ConnectorServiceLike {
 
   private providerDir(provider: ConnectorProvider): string {
     return path.join(this.stateRoot, "connectors", provider);
+  }
+
+  private browserProfileDir(provider: ConnectorProvider): string {
+    return path.join(this.providerDir(provider), BROWSER_PROFILE_DIR);
   }
 
   private resolveOAuthCredentials(
@@ -530,6 +865,29 @@ export class ConnectorService implements ConnectorServiceLike {
     );
   }
 
+  private async persistBrowserSession(
+    provider: ConnectorProvider,
+    payload: {
+      provider: ConnectorProvider;
+      accountLabel: string;
+      connectedAt: string;
+      storageStateJson: string;
+      browserProfileDir: string | null;
+      browserDebuggingPort: number | null;
+    },
+  ): Promise<void> {
+    const dir = this.providerDir(provider);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(
+      path.join(dir, BROWSER_SESSION_FILE),
+      `${JSON.stringify(payload, null, 2)}\n`,
+      {
+        encoding: "utf8",
+        mode: 0o600,
+      },
+    );
+  }
+
   private transition(
     provider: ConnectorProvider,
     patch: Partial<Omit<ConnectorState, "provider" | "updatedAt">> & {
@@ -565,6 +923,38 @@ function buildIdleState(provider: ConnectorProvider, now: string): ConnectorStat
     loginMode: null,
     lastError: null,
     updatedAt: now,
+  };
+}
+
+function isInvalidBrowserSessionMessage(message: string): boolean {
+  return /로그인 세션이 (?:유효하지|만료)|관리 가능한 블로그를 찾지 못했습니다/u.test(
+    message,
+  );
+}
+
+function normalizePublishDraftInput(
+  input: ConnectorPublishDraftInput,
+): Required<ConnectorPublishDraftInput> {
+  const title = input.title.trim();
+  const contentMarkdown = input.contentMarkdown.trim();
+  if (!title) {
+    throw Object.assign(new Error("Tistory 발행 제목이 필요합니다."), {
+      statusCode: 400,
+    });
+  }
+  if (!contentMarkdown) {
+    throw Object.assign(new Error("Tistory 발행 본문이 필요합니다."), {
+      statusCode: 400,
+    });
+  }
+
+  return {
+    title,
+    contentMarkdown,
+    tags: (input.tags ?? [])
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0),
+    visibility: input.visibility ?? "draft",
   };
 }
 
@@ -688,6 +1078,54 @@ function parseStoredOAuthConnection(
     return {
       accountLabel: parsed.accountLabel,
       connectedAt: parsed.connectedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredBrowserConnection(
+  raw: string,
+  provider: ConnectorProvider,
+): {
+  accountLabel: string;
+  connectedAt: string;
+  storageStateJson: string;
+  browserProfileDir: string | null;
+  browserDebuggingPort: number | null;
+} | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      provider?: unknown;
+      accountLabel?: unknown;
+      connectedAt?: unknown;
+      storageStateJson?: unknown;
+      browserProfileDir?: unknown;
+      browserDebuggingPort?: unknown;
+    };
+    if (
+      parsed.provider !== provider ||
+      typeof parsed.accountLabel !== "string" ||
+      typeof parsed.connectedAt !== "string" ||
+      typeof parsed.storageStateJson !== "string"
+    ) {
+      return null;
+    }
+    return {
+      accountLabel: parsed.accountLabel,
+      connectedAt: parsed.connectedAt,
+      storageStateJson: parsed.storageStateJson,
+      browserProfileDir:
+        typeof parsed.browserProfileDir === "string" && parsed.browserProfileDir.trim()
+          ? parsed.browserProfileDir
+          : null,
+      browserDebuggingPort:
+        typeof parsed.browserDebuggingPort === "number" &&
+        Number.isInteger(parsed.browserDebuggingPort) &&
+        parsed.browserDebuggingPort > 0 &&
+        parsed.browserDebuggingPort <= 65_535
+          ? parsed.browserDebuggingPort
+          : null,
     };
   } catch {
     return null;

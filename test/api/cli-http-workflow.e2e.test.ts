@@ -477,9 +477,12 @@ test("HTTP/SSE e2e workflow covers serve, session creation, message send, events
     const artifacts = await artifactsResponse.json();
     assert.equal(artifacts.length, 1);
     assert.equal(artifacts[0].role, "output-last-message");
-    assert.equal(artifacts[0].previewable, false);
-    assert.equal(artifacts[0].previewUrl, null);
-    assert.equal(artifacts[0].preferredAction, "download");
+    assert.equal(artifacts[0].previewable, true);
+    assert.equal(
+      artifacts[0].previewUrl,
+      `/runs/${createdRun.id}/artifacts/output-last-message/preview`
+    );
+    assert.equal(artifacts[0].preferredAction, "preview");
     assert.equal(
       artifacts[0].downloadUrl,
       `/runs/${createdRun.id}/artifacts/output-last-message`
@@ -501,7 +504,15 @@ test("HTTP/SSE e2e workflow covers serve, session creation, message send, events
     const artifactPreviewResponse = await fetch(
       `${baseUrl}/runs/${createdRun.id}/artifacts/output-last-message/preview`
     );
-    assert.equal(artifactPreviewResponse.status, 415);
+    assert.equal(artifactPreviewResponse.status, 200);
+    assert.equal(
+      artifactPreviewResponse.headers.get("content-type"),
+      "text/plain; charset=utf-8"
+    );
+    assert.equal(
+      await artifactPreviewResponse.text(),
+      "first:Reply with exactly OK"
+    );
 
     const transcriptResponse = await fetch(
       `${baseUrl}/sessions/${createdSession.id}/transcript`

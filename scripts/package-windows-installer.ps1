@@ -158,8 +158,30 @@ function New-InstallerBootstrap {
   $SetupCmd = @"
 @echo off
 setlocal
+title Rocky Setup
+echo Rocky Setup
+echo.
+if defined LOCALAPPDATA (
+  set "ROCKY_SETUP_LOG=%LOCALAPPDATA%\Rocky\install.log"
+  if not exist "%LOCALAPPDATA%\Rocky" mkdir "%LOCALAPPDATA%\Rocky" >nul 2>nul
+) else (
+  set "ROCKY_SETUP_LOG=%TEMP%\Rocky-Setup-install.log"
+)
+echo Log: %ROCKY_SETUP_LOG%
+echo.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup.ps1" %*
-exit /b %ERRORLEVEL%
+set "ROCKY_EXIT=%ERRORLEVEL%"
+echo.
+if not "%ROCKY_EXIT%"=="0" (
+  echo Rocky setup failed with exit code %ROCKY_EXIT%.
+  echo See the log above for details.
+  pause
+  exit /b %ROCKY_EXIT%
+)
+echo Rocky setup completed. The app should open in your browser.
+echo This window will close in 5 seconds.
+timeout /t 5 /nobreak >nul
+exit /b 0
 "@
   Set-Content -Path (Join-Path $BootstrapRoot "setup.cmd") -Value $SetupCmd -Encoding ASCII
 
@@ -173,8 +195,28 @@ param(
 `$ErrorActionPreference = "Stop"
 `$PayloadZip = Join-Path `$PSScriptRoot "$PayloadZipName"
 `$ExtractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Rocky-Setup-$Tag-" + [guid]::NewGuid().ToString("N"))
+`$LogPath = `$env:ROCKY_SETUP_LOG
+if ([string]::IsNullOrWhiteSpace(`$LogPath)) {
+  if (`$env:LOCALAPPDATA) {
+    `$LogPath = Join-Path `$env:LOCALAPPDATA "Rocky\install.log"
+  } else {
+    `$LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "Rocky-Setup-install.log"
+  }
+}
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent `$LogPath) | Out-Null
+
+`$TranscriptStarted = `$false
+try {
+  Start-Transcript -Path `$LogPath -Append | Out-Null
+  `$TranscriptStarted = `$true
+} catch {
+  Write-Warning "Could not start setup transcript: `$(`$_.Exception.Message)"
+}
+
+`$ExitCode = 0
 
 try {
+  Write-Host "Extracting Rocky installer payload..."
   New-Item -ItemType Directory -Force -Path `$ExtractRoot | Out-Null
   Expand-Archive -LiteralPath `$PayloadZip -DestinationPath `$ExtractRoot -Force
   `$InstallCommand = Join-Path `$ExtractRoot "Install-Rocky-Windows.cmd"
@@ -187,16 +229,24 @@ try {
     "-SkipBuild",
     "-IncludeBundledDependencies"
   )
+  Write-Host "Running Rocky installer..."
   & `$InstallCommand @InstallArgs @RemainingArgs
   if (`$LASTEXITCODE -ne 0) {
-    exit `$LASTEXITCODE
+    throw "Rocky installer failed with exit code `$LASTEXITCODE."
   }
 
-  Remove-Item -LiteralPath `$ExtractRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Host "Rocky setup completed."
 } catch {
   Write-Error `$_.Exception.Message
-  exit 1
+  `$ExitCode = 1
+} finally {
+  Remove-Item -LiteralPath `$ExtractRoot -Recurse -Force -ErrorAction SilentlyContinue
+  if (`$TranscriptStarted) {
+    Stop-Transcript | Out-Null
+  }
 }
+
+exit `$ExitCode
 "@
   Set-Content -Path (Join-Path $BootstrapRoot "setup.ps1") -Value $SetupPs1 -Encoding ASCII
 }
@@ -217,8 +267,8 @@ SEDVersion=3
 
 [Options]
 PackagePurpose=InstallApp
-ShowInstallProgramWindow=1
-HideExtractAnimation=1
+ShowInstallProgramWindow=0
+HideExtractAnimation=0
 UseLongFileName=1
 InsideCompressed=0
 CAB_FixedSize=0
@@ -236,9 +286,9 @@ UserQuietInstCmd=
 SourceFiles=SourceFiles
 
 [Strings]
-InstallPrompt=
+InstallPrompt=Rocky setup will install for the current Windows user.
 DisplayLicense=
-FinishMessage=
+FinishMessage=Rocky setup finished.
 TargetName=$InstallerFullPath
 FriendlyName=Rocky $Tag
 AppLaunched=setup.cmd

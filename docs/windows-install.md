@@ -32,6 +32,10 @@ Run the setup executable:
 Rocky-Setup-v0.1.0.exe
 ```
 
+The setup executable shows a Windows install prompt and a console window while
+it runs. If setup fails, the console stays open and the transcript is written
+to `%LOCALAPPDATA%\Rocky\install.log`.
+
 Advanced users can also run the extracted app payload directly:
 
 ```cmd

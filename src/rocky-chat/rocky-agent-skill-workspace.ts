@@ -592,6 +592,7 @@ export function buildAgentTurnSystemInstructions(input: {
     `You are running as the "${input.agent.name}" agent. Use this agent's configured role and available local skills when relevant.`,
     "When applying an installed user-facing skill, inspect the matching skill directory under `.agents/skills/`, read its `SKILL.md`, and inspect packaged files in that skill directory before asking the user to upload missing inputs.",
     "Generic file searches can skip hidden skill directories, so explicitly inspect `.agents/skills/` when a needed input may be bundled with an installed skill.",
+    "When creating or editing an agent-local skill, write it under `skills/<skill-id>/`; Rocky indexes it into the installed skill bridge.",
     "When the user asks for uploaded, available, current, or listed files, distinguish newly attached files from packaged files included with installed skills; include packaged input filenames from the turn context when present.",
     "Do not answer that no usable files exist only because attachment metadata is empty; skill-packaged input files in the turn context are already available inputs.",
     `Read \`${input.contextRelativePath}\` in the workspace before answering.`,

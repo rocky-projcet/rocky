@@ -120,15 +120,14 @@ test("AgentManager creates isolated workspace and runtime-home layout", async ()
   assert.match(envTemplate, /AGENT_ID=agent-1/);
   assert.match(envTemplate, /CODEX_SANDBOX=workspace-write/);
   assert.match(envTemplate, /AGENT_WORKSPACE_MODE=directory/);
-  assert.match(
-    envTemplate,
-    new RegExp(`AGENT_PYTHON_VENV=${path.join(agent.workspaceRoot, ".venv")}`)
+  assert.ok(
+    envTemplate.includes(`AGENT_PYTHON_VENV=${path.join(agent.workspaceRoot, ".venv")}`)
   );
   assert.match(envTemplate, /AGENT_SSH_COMMAND=ssh/);
   await access(path.join(agent.workspaceRoot, ".agents", "skills"));
-  await assert.rejects(access(path.join(agent.workspaceRoot, "skills")));
+  await access(path.join(agent.workspaceRoot, "skills"));
   assert.match(workspaceAgentsOverlay, /Workspace-local AGENTS overlay/);
-  assert.match(workspaceAgentsOverlay, /Create or edit agent-local skills under `.agents\/skills`/);
+  assert.match(workspaceAgentsOverlay, /Create or edit agent-local skills under `skills`/);
 });
 
 test("AgentManager rejects unmanaged custom workspace/runtime paths", async () => {

@@ -1,3 +1,4 @@
+import { execFile as defaultExecFile } from "node:child_process";
 import path from "node:path";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -8,6 +9,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
+import { promisify } from "node:util";
 
 import {
   DEFAULT_AGENT_WORKSPACE_MODE,
@@ -30,10 +32,13 @@ export const RUNTIME_HOME_LAYOUT_DIRS = Object.freeze([
 export const WORKSPACE_SCAFFOLD_DIRS = Object.freeze([
   ".agents",
   ".agents/skills",
+  "skills",
 ]);
 
 export const WORKSPACE_LOCAL_SKILL_AUTHORING_DIR = ".agents/skills";
 export const WORKSPACE_LEGACY_SKILL_AUTHORING_DIR = "skills";
+export const WORKSPACE_AGENT_WRITABLE_SKILL_AUTHORING_DIR =
+  WORKSPACE_LEGACY_SKILL_AUTHORING_DIR;
 export const WORKSPACE_AGENT_CONFIG_FILENAME = "agent.config.json";
 export const WORKSPACE_ENV_TEMPLATE_FILENAME = ".env.template";
 export const WORKSPACE_AGENTS_OVERLAY_FILENAME = "AGENTS.md";
@@ -57,6 +62,7 @@ const RESERVED_SYSTEM_SKILL_NAMES = new Set([
   ".system",
   ...READ_ONLY_SYSTEM_SKILLS.map((skill) => skill.name),
 ]);
+const execFileAsync = promisify(defaultExecFile);
 
 export interface WorkspaceLocalSkillRecord {
   name: string;
@@ -150,6 +156,71 @@ async function exists(filePath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+function parseWindowsDenySids(icaclsOutput: string): string[] {
+  const sids = new Set<string>();
+  const denySidPattern = /(S-\d(?:-\d+)+):\([^)]*DENY/gu;
+  let match: RegExpExecArray | null;
+  while ((match = denySidPattern.exec(icaclsOutput))) {
+    if (match[1]) {
+      sids.add(match[1]);
+    }
+  }
+
+  return [...sids];
+}
+
+async function removeWindowsDenyAces(targetPath: string): Promise<void> {
+  if (process.platform !== "win32" || !(await exists(targetPath))) {
+    return;
+  }
+
+  let icaclsOutput: string;
+  try {
+    const result = await execFileAsync("icacls.exe", [targetPath], {
+      windowsHide: true,
+    });
+    icaclsOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  } catch {
+    return;
+  }
+
+  if (parseWindowsDenySids(icaclsOutput).length === 0) {
+    return;
+  }
+
+  const cleanupScript = [
+    "param([string]$TargetPath)",
+    "$Acl = Get-Acl -LiteralPath $TargetPath",
+    "$Changed = $false",
+    "foreach ($Rule in @($Acl.Access)) {",
+    "  if ($Rule.AccessControlType -eq 'Deny' -and $Rule.IdentityReference.Value -match '^S-1-5-21-') {",
+    "    [void]$Acl.RemoveAccessRuleSpecific($Rule)",
+    "    $Changed = $true",
+    "  }",
+    "}",
+    "if ($Changed) { Set-Acl -LiteralPath $TargetPath -AclObject $Acl }",
+  ].join("\n");
+
+  try {
+    await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        cleanupScript,
+        targetPath,
+      ],
+      { windowsHide: true }
+    );
+  } catch {
+    // Best-effort cleanup for stale sandbox deny ACEs. The writable `skills/`
+    // authoring path still works when Windows denies modifying hidden folders.
   }
 }
 
@@ -331,7 +402,8 @@ export function buildWorkspaceAgentsOverlay(
     "- Generic file searches may skip hidden skill directories; bundled skill files are still available inside the matching skill directory.",
     "- When asked for uploaded, available, current, or listed files, distinguish newly attached files from packaged files included with installed skills.",
     "- If the turn context lists packaged input files, include those filenames in file-list answers without exposing hidden storage paths.",
-    `- Create or edit agent-local skills under \`${WORKSPACE_LOCAL_SKILL_AUTHORING_DIR}\` in this workspace.`,
+    `- Create or edit agent-local skills under \`${WORKSPACE_AGENT_WRITABLE_SKILL_AUTHORING_DIR}\` in this workspace.`,
+    "- Do not create new skills directly under `.agents/skills`; Rocky indexes writable skills from `skills/` into the installed skill bridge.",
     "- When asked to list available, installed, or equipped skills, report only the skill display names above.",
     "- If there are no skills above, say that no skills are installed for this agent.",
     "- Do not expose internal skill identifiers, invocation strings, file paths, or storage categories in user-facing answers.",
@@ -354,6 +426,9 @@ export async function ensureWorkspaceSkillBridge(workspaceRoot: string): Promise
   const scaffoldPaths = resolveWorkspaceScaffoldPaths(workspaceRoot);
   await mkdir(scaffoldPaths.agentsDir, { recursive: true });
   await mkdir(scaffoldPaths.skillsDir, { recursive: true });
+  await mkdir(scaffoldPaths.legacySkillsDir, { recursive: true });
+  await removeWindowsDenyAces(scaffoldPaths.agentsDir);
+  await removeWindowsDenyAces(scaffoldPaths.skillsDir);
   await migrateLegacyWorkspaceSkills(workspaceRoot);
   const skills = await listWorkspaceLocalSkills(workspaceRoot);
 
@@ -394,6 +469,7 @@ export async function ensureAgentWorkspaceScaffold(
 
   await mkdir(scaffoldPaths.agentsDir, { recursive: true });
   await mkdir(scaffoldPaths.skillsDir, { recursive: true });
+  await mkdir(scaffoldPaths.legacySkillsDir, { recursive: true });
   await writeFile(
     scaffoldPaths.agentConfigPath,
     serializeJson(buildWorkspaceAgentConfig(agent))

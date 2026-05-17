@@ -1095,8 +1095,10 @@ test("SessionService repairs persisted session roots and codex binary before sen
   assert.equal(repaired.workspaceRoot, agent.workspaceRoot);
   assert.equal(repaired.runtimeHome, agent.runtimeHome);
   assert.equal(repaired.runtimeConfig.codexBin, fakeCodexPath);
+  const repairedScaffoldPaths = resolveWorkspaceScaffoldPaths(agent.workspaceRoot);
   assert.deepEqual(repaired.runtimeConfig.additionalWritableDirs, [
-    resolveWorkspaceScaffoldPaths(agent.workspaceRoot).skillsDir,
+    repairedScaffoldPaths.legacySkillsDir,
+    repairedScaffoldPaths.skillsDir,
   ]);
 });
 
@@ -1595,7 +1597,7 @@ test("buildRuntimePrompt carries sandbox ground truth and preserves the user req
   );
   assert.match(
     runtimePrompt,
-    /In writable managed sessions, `.agents\/skills\/` is the allowed authoring directory for agent-local skills/
+    /In writable managed sessions, `skills\/` is the writable authoring directory for new or edited agent-local skills/
   );
   assert.match(
     runtimePrompt,
@@ -1615,7 +1617,11 @@ test("buildRuntimePrompt carries sandbox ground truth and preserves the user req
   );
   assert.match(
     runtimePrompt,
-    /Only create agent-local skills under `.agents\/skills\/<skill-id>\/` using a non-system skill id/
+    /Only create agent-local skills under `skills\/<skill-id>\/` using a non-system skill id/
+  );
+  assert.match(
+    runtimePrompt,
+    /Do not create new skills directly under `.agents\/skills`/
   );
   assert.match(
     runtimePrompt,
@@ -2275,7 +2281,9 @@ test("SessionService creates new sessions with workspace-local skill authoring e
   const agent = await manager.createAgent({
     name: "skill-agent",
   });
-  const skillDir = resolveWorkspaceScaffoldPaths(agent.workspaceRoot).skillsDir;
+  const scaffoldPaths = resolveWorkspaceScaffoldPaths(agent.workspaceRoot);
+  const skillDir = scaffoldPaths.skillsDir;
+  const writableSkillDir = scaffoldPaths.legacySkillsDir;
   const session = await service.createSession({
     agentId: agent.id,
     additionalWritableDirs: [
@@ -2285,10 +2293,12 @@ test("SessionService creates new sessions with workspace-local skill authoring e
   });
 
   assert.deepEqual(session.runtimeConfig.additionalWritableDirs, [
+    writableSkillDir,
     skillDir,
     path.join(agent.workspaceRoot, "reports"),
   ]);
   assert.deepEqual(runtime.lastCreatedSession?.config.additionalWritableDirs, [
+    writableSkillDir,
     skillDir,
     path.join(agent.workspaceRoot, "reports"),
   ]);

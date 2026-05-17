@@ -1,0 +1,79 @@
+---
+name: rocky-release
+description: Build, validate, and publish Rocky GitHub releases. Use when preparing a tagged Rocky release, creating release notes, generating checksums, validating Windows installer artifacts, pushing release tags, or publishing GitHub Releases for `v*` versions.
+---
+
+# Rocky Release
+
+## Goal
+
+- Publish one verified Rocky version from a clean local branch.
+- Keep GitHub Releases simple for users: the Windows installer is the primary asset.
+- Avoid changing published tags or replacing published assets.
+
+## Release Owner
+
+- Default release owner: `jsh`.
+- If another teammate asks to release, confirm the intended version, branch, and whether `jsh` approved the release.
+
+## Versioning
+
+- Use semver tags with a leading `v`, such as `v0.1.0`.
+- Treat `v0.1.0` as a Windows preview release until code signing is added.
+- Do not reuse or force-move a pushed release tag. If a published release is wrong, prepare a new patch version unless the user explicitly approves a corrective draft-only change.
+
+## Required Checks
+
+Run these before publishing:
+
+1. Inspect git state with `git status --short --branch`.
+2. Confirm the release commit with `git log -1 --oneline`.
+3. Run `npm.cmd run typecheck`.
+4. Run `npm.cmd test`.
+5. Run `npm.cmd run release:windows:installer -- -Tag <tag>`.
+6. Generate `releases\<tag>\SHA256SUMS.txt`.
+7. Verify the source-free app payload does not contain source or development-only paths.
+
+If any check fails, stop the release and fix the issue before tagging.
+
+## GitHub Release Assets
+
+Upload these assets:
+
+- `releases\<tag>\Rocky-Setup-<tag>.exe`
+- `releases\<tag>\SHA256SUMS.txt`
+- Optional: `releases\<tag>\rocky-<tag>-windows-app.zip`
+
+Do not upload developer/source fallback zips as user-facing assets unless the user explicitly asks.
+
+## GitHub Release Workflow
+
+1. Create or confirm the annotated tag locally.
+2. Push the branch if the release commit is not already on GitHub.
+3. Push the tag.
+4. Create the GitHub release as a draft first.
+5. Attach all release assets.
+6. Review the notes and asset list.
+7. Publish the draft.
+
+Prefer `gh release create --draft --verify-tag` when `gh` is authenticated. Use GitHub web UI or API only if the CLI is unavailable.
+
+## Release Notes Shape
+
+Use concise notes with these sections:
+
+- `Highlights`: what changed for users.
+- `Windows Install`: the exact installer asset name and how to run it.
+- `Validation`: checks that passed.
+- `Checksums`: mention `SHA256SUMS.txt`.
+- `Known Limitations`: code signing or preview limitations.
+
+For the first unsigned Windows release, mention that Windows SmartScreen may warn because the installer is not code-signed yet.
+
+## Helper Script
+
+Use `scripts/prepare-release-assets.ps1` from this skill to generate checksums and validate the app payload:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .agents\skills\rocky-release\scripts\prepare-release-assets.ps1 -Tag v0.1.0
+```

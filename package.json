@@ -10,9 +10,14 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc --project tsconfig.json && mkdir -p dist/test/runtime && cp -R test/runtime/fixtures dist/test/runtime/fixtures",
+    "build": "node scripts/build.mjs",
     "dev:stack": "./scripts/run-dev-stack.sh",
     "agent": "npm run build --silent && node dist/src/cli.js",
+    "install:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
+    "start:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-rocky-windows.ps1",
+    "stop:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stop-rocky-windows.ps1",
+    "uninstall:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-windows.ps1",
+    "release:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-release.ps1",
     "test": "npm run build --silent && node --test dist/test/agents/*.test.js dist/test/api/*.test.js dist/test/runtime/*.test.js dist/test/web/*.test.js",
     "test:e2e": "npm run build --silent && node --test dist/test/api/cli-http-workflow.e2e.test.js",
     "test:e2e:live": "npm run build --silent && node dist/scripts/live-e2e.js",

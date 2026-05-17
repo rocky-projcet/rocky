@@ -14,11 +14,18 @@ function cliPath(): string {
 
 async function createFakeCodexBin(rootDir: string): Promise<string> {
   const binDir = path.join(rootDir, "bin");
-  const codexPath = path.join(binDir, "codex");
+  const codexPath =
+    process.platform === "win32"
+      ? path.join(binDir, "codex.cmd")
+      : path.join(binDir, "codex");
+  const codexScriptPath =
+    process.platform === "win32"
+      ? path.join(binDir, "node_modules", "@openai", "codex", "bin", "codex.js")
+      : codexPath;
 
-  await mkdir(binDir, { recursive: true });
+  await mkdir(path.dirname(codexScriptPath), { recursive: true });
   await writeFile(
-    codexPath,
+    codexScriptPath,
     `#!/usr/bin/env node
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -117,6 +124,14 @@ console.log(
 `,
     { mode: 0o755 }
   );
+
+  if (process.platform === "win32") {
+    await writeFile(
+      codexPath,
+      `@echo off\r\n"${process.execPath}" "%~dp0node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n`,
+      { mode: 0o755 }
+    );
+  }
 
   return binDir;
 }
@@ -223,7 +238,7 @@ test("CLI e2e workflow covers agent/session creation, send, stream, transcript, 
   const stateRoot = path.join(tempRoot, "state");
   const env = {
     ...process.env,
-    PATH: `${fakeCodexBinDir}:${process.env.PATH ?? ""}`,
+    PATH: `${fakeCodexBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
   };
 
   const createdAgent = JSON.parse(
@@ -378,7 +393,7 @@ test("HTTP/SSE e2e workflow covers serve, session creation, message send, events
   const stateRoot = path.join(tempRoot, "state");
   const env = {
     ...process.env,
-    PATH: `${fakeCodexBinDir}:${process.env.PATH ?? ""}`,
+    PATH: `${fakeCodexBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
   };
 
   await runCliCommand(

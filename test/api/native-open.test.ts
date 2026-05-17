@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
 import {
   openFolder,
@@ -50,8 +51,9 @@ test("openPowerPointFile reports unsupported native open platforms", async () =>
 
 test("openFolder launches the platform file manager", async () => {
   const calls: Array<{ file: string; args: string[] }> = [];
+  const folderPath = "/tmp/project folder";
 
-  const result = await openFolder("/tmp/project folder", {
+  const result = await openFolder(folderPath, {
     platform: "darwin",
     execFile: async (file, args) => {
       calls.push({ file, args });
@@ -61,17 +63,41 @@ test("openFolder launches the platform file manager", async () => {
   assert.deepEqual(calls, [
     {
       file: "open",
-      args: ["/tmp/project folder"],
+      args: [folderPath],
     },
   ]);
+  const resolvedPath = path.resolve(folderPath);
   assert.deepEqual(result, {
     status: "opened",
     application: "Finder",
-    fileName: "project folder",
+    fileName: path.basename(resolvedPath),
     platform: "darwin",
     kind: "folder",
-    path: "/tmp/project folder",
+    path: resolvedPath,
   });
+});
+
+test("openFolder launches Windows File Explorer without waiting on explorer.exe", async () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  const folderPath = String.raw`C:\Users\jsh\Project Folder`;
+
+  const result = await openFolder(folderPath, {
+    platform: "win32",
+    execFile: async (file, args) => {
+      calls.push({ file, args });
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      file: "cmd.exe",
+      args: ["/c", "start", "", folderPath],
+    },
+  ]);
+  assert.equal(result.status, "opened");
+  assert.equal(result.application, "File Explorer");
+  assert.equal(result.platform, "win32");
+  assert.equal(result.kind, "folder");
 });
 
 test("openFolder reports unsupported native open platforms", async () => {

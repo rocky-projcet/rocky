@@ -12,7 +12,8 @@ param(
   [switch]$SkipNodeInstall,
   [switch]$SkipCodexInstall,
   [switch]$InPlace,
-  [switch]$IncludeBundledDependencies
+  [switch]$IncludeBundledDependencies,
+  [switch]$SkipWindowsShellRegistration
 )
 
 $ErrorActionPreference = "Stop"
@@ -579,6 +580,7 @@ if (-not $InPlace -and -not (Test-SamePath -Left $Root -Right $ResolvedInstallDi
     SkipNodeInstall = $SkipNodeInstall
     SkipCodexInstall = $SkipCodexInstall
     IncludeBundledDependencies = $IncludeBundledDependencies
+    SkipWindowsShellRegistration = $SkipWindowsShellRegistration
   }
   if (-not [string]::IsNullOrWhiteSpace($StateRoot)) {
     $InstallArgs.StateRoot = $StateRoot
@@ -623,12 +625,14 @@ Write-CmdLauncher -Name "Uninstall-Rocky-Windows.cmd" -ScriptPath "scripts\unins
 $AppIconPath = Join-Path $Root "assets\windows\rocky.ico"
 $UninstallIconPath = Join-Path $Root "assets\windows\rocky-uninstall.ico"
 
-New-InstallShortcut -Name "Rocky" -TargetPath (Join-Path $Root "Start-Rocky-Windows.cmd") -IconLocation $AppIconPath
-New-InstallShortcut -Name "Uninstall Rocky" -TargetPath (Join-Path $Root "Uninstall-Rocky-Windows.cmd") -IconLocation $UninstallIconPath
-New-StartMenuShortcut -Name "Rocky" -TargetPath (Join-Path $Root "Start-Rocky-Windows.cmd") -IconLocation $AppIconPath
-New-StartMenuShortcut -Name "Stop Rocky" -TargetPath (Join-Path $Root "Stop-Rocky-Windows.cmd") -IconLocation $AppIconPath
-New-StartMenuShortcut -Name "Uninstall Rocky" -TargetPath (Join-Path $Root "Uninstall-Rocky-Windows.cmd") -IconLocation $UninstallIconPath
-Register-UninstallEntry -DisplayIconPath $AppIconPath
+if (-not $SkipWindowsShellRegistration) {
+  New-InstallShortcut -Name "Rocky" -TargetPath (Join-Path $Root "Start-Rocky-Windows.cmd") -IconLocation $AppIconPath
+  New-InstallShortcut -Name "Uninstall Rocky" -TargetPath (Join-Path $Root "Uninstall-Rocky-Windows.cmd") -IconLocation $UninstallIconPath
+  New-StartMenuShortcut -Name "Rocky" -TargetPath (Join-Path $Root "Start-Rocky-Windows.cmd") -IconLocation $AppIconPath
+  New-StartMenuShortcut -Name "Stop Rocky" -TargetPath (Join-Path $Root "Stop-Rocky-Windows.cmd") -IconLocation $AppIconPath
+  New-StartMenuShortcut -Name "Uninstall Rocky" -TargetPath (Join-Path $Root "Uninstall-Rocky-Windows.cmd") -IconLocation $UninstallIconPath
+  Register-UninstallEntry -DisplayIconPath $AppIconPath
+}
 
 Write-Host "Rocky $ReleaseTag is installed."
 Write-Host "Install directory: $Root"

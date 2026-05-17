@@ -32,9 +32,8 @@ Run the setup executable:
 Rocky-Setup-v0.1.0.exe
 ```
 
-The setup executable shows a Windows install prompt and a console window while
-it runs. If setup fails, the console stays open and the transcript is written
-to `%LOCALAPPDATA%\Rocky\install.log`.
+The setup executable is built with Inno Setup and shows a normal Windows setup
+wizard while it runs. Inno writes setup logs under `%TEMP%\Setup Log*.txt`.
 
 Advanced users can also run the extracted app payload directly:
 
@@ -114,3 +113,10 @@ releases\v0.1.0\Rocky-Setup-v0.1.0.exe
 The `rocky-v0.1.0-windows.zip` bundle is the developer-oriented fallback. The
 setup executable and `rocky-v0.1.0-windows-app.zip` use the source-free app
 payload and skip target-machine `npm ci` and build steps.
+
+`npm run release:windows:installer` requires Inno Setup 6. If `ISCC.exe` is not
+on `PATH`, pass it explicitly:
+
+```cmd
+npm run release:windows:installer -- -InnoCompilerPath "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+```

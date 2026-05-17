@@ -2,6 +2,7 @@
 param(
   [string]$Tag = "v0.1.0",
   [string]$OutputDirectory,
+  [string]$InnoCompilerPath,
   [switch]$SkipBuild
 )
 
@@ -22,6 +23,58 @@ function Resolve-Tool {
   }
 
   throw "$DisplayName is required."
+}
+
+function Resolve-InnoCompiler {
+  param([string]$RequestedPath)
+
+  $Candidates = [System.Collections.Generic.List[string]]::new()
+  function Add-Candidate {
+    param([string]$Candidate)
+
+    if (-not [string]::IsNullOrWhiteSpace($Candidate)) {
+      [void]$Candidates.Add($Candidate)
+    }
+  }
+
+  Add-Candidate $RequestedPath
+  Add-Candidate $env:INNO_SETUP_ISCC
+
+  $Command = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($Command) {
+    Add-Candidate $Command.Source
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+    Add-Candidate (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+    Add-Candidate (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    Add-Candidate (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+  }
+  Add-Candidate (Join-Path $Root ".tools\inno-setup\ISCC.exe")
+  Add-Candidate (Join-Path $Root ".tools\Inno Setup 6\ISCC.exe")
+
+  $LocalToolRoot = Join-Path $Root ".tools"
+  if (Test-Path -LiteralPath $LocalToolRoot -PathType Container) {
+    Get-ChildItem -LiteralPath $LocalToolRoot -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue |
+      Sort-Object FullName |
+      ForEach-Object { Add-Candidate $_.FullName }
+  }
+
+  foreach ($Candidate in ($Candidates | Select-Object -Unique)) {
+    if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+      return (Resolve-Path $Candidate).Path
+    }
+  }
+
+  throw @"
+Inno Setup compiler (ISCC.exe) is required to build the Windows installer.
+Install Inno Setup 6 from https://jrsoftware.org/isinfo.php, or pass:
+  npm run release:windows:installer -- -InnoCompilerPath "C:\Path\To\ISCC.exe"
+"@
 }
 
 function ConvertTo-CommandLineArgument {
@@ -149,163 +202,15 @@ function Assert-SourceFreePayload {
   }
 }
 
-function New-InstallerBootstrap {
-  param(
-    [Parameter(Mandatory = $true)][string]$BootstrapRoot,
-    [Parameter(Mandatory = $true)][string]$PayloadZipName
-  )
+function Get-AppVersion {
+  param([string]$ReleaseTag)
 
-  $SetupCmd = @"
-@echo off
-setlocal
-title Rocky Setup
-echo Rocky Setup
-echo.
-if defined LOCALAPPDATA (
-  set "ROCKY_SETUP_LOG=%LOCALAPPDATA%\Rocky\install.log"
-  if not exist "%LOCALAPPDATA%\Rocky" mkdir "%LOCALAPPDATA%\Rocky" >nul 2>nul
-) else (
-  set "ROCKY_SETUP_LOG=%TEMP%\Rocky-Setup-install.log"
-)
-echo Log: %ROCKY_SETUP_LOG%
-echo.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup.ps1" %*
-set "ROCKY_EXIT=%ERRORLEVEL%"
-echo.
-if not "%ROCKY_EXIT%"=="0" (
-  echo Rocky setup failed with exit code %ROCKY_EXIT%.
-  echo See the log above for details.
-  pause
-  exit /b %ROCKY_EXIT%
-)
-echo Rocky setup completed. The app should open in your browser.
-echo This window will close in 5 seconds.
-timeout /t 5 /nobreak >nul
-exit /b 0
-"@
-  Set-Content -Path (Join-Path $BootstrapRoot "setup.cmd") -Value $SetupCmd -Encoding ASCII
-
-  $SetupPs1 = @"
-[CmdletBinding()]
-param(
-  [Parameter(ValueFromRemainingArguments = `$true)]
-  [string[]]`$RemainingArgs
-)
-
-`$ErrorActionPreference = "Stop"
-`$PayloadZip = Join-Path `$PSScriptRoot "$PayloadZipName"
-`$ExtractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Rocky-Setup-$Tag-" + [guid]::NewGuid().ToString("N"))
-`$LogPath = `$env:ROCKY_SETUP_LOG
-if ([string]::IsNullOrWhiteSpace(`$LogPath)) {
-  if (`$env:LOCALAPPDATA) {
-    `$LogPath = Join-Path `$env:LOCALAPPDATA "Rocky\install.log"
-  } else {
-    `$LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "Rocky-Setup-install.log"
-  }
-}
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent `$LogPath) | Out-Null
-
-`$TranscriptStarted = `$false
-try {
-  Start-Transcript -Path `$LogPath -Append | Out-Null
-  `$TranscriptStarted = `$true
-} catch {
-  Write-Warning "Could not start setup transcript: `$(`$_.Exception.Message)"
-}
-
-`$ExitCode = 0
-
-try {
-  Write-Host "Extracting Rocky installer payload..."
-  New-Item -ItemType Directory -Force -Path `$ExtractRoot | Out-Null
-  Expand-Archive -LiteralPath `$PayloadZip -DestinationPath `$ExtractRoot -Force
-  `$InstallCommand = Join-Path `$ExtractRoot "Install-Rocky-Windows.cmd"
-  if (-not (Test-Path -LiteralPath `$InstallCommand)) {
-    throw "Installer payload is missing Install-Rocky-Windows.cmd."
+  $Version = $ReleaseTag.TrimStart("v")
+  if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+    return "0.0.0"
   }
 
-  `$InstallArgs = @(
-    "-SkipDependencyInstall",
-    "-SkipBuild",
-    "-IncludeBundledDependencies"
-  )
-  Write-Host "Running Rocky installer..."
-  & `$InstallCommand @InstallArgs @RemainingArgs
-  if (`$LASTEXITCODE -ne 0) {
-    throw "Rocky installer failed with exit code `$LASTEXITCODE."
-  }
-
-  Write-Host "Rocky setup completed."
-} catch {
-  Write-Error `$_.Exception.Message
-  `$ExitCode = 1
-} finally {
-  Remove-Item -LiteralPath `$ExtractRoot -Recurse -Force -ErrorAction SilentlyContinue
-  if (`$TranscriptStarted) {
-    Stop-Transcript | Out-Null
-  }
-}
-
-exit `$ExitCode
-"@
-  Set-Content -Path (Join-Path $BootstrapRoot "setup.ps1") -Value $SetupPs1 -Encoding ASCII
-}
-
-function Write-IExpressSed {
-  param(
-    [Parameter(Mandatory = $true)][string]$SedPath,
-    [Parameter(Mandatory = $true)][string]$BootstrapRoot,
-    [Parameter(Mandatory = $true)][string]$InstallerPath
-  )
-
-  $BootstrapRootWithSlash = [System.IO.Path]::GetFullPath($BootstrapRoot).TrimEnd("\", "/") + "\"
-  $InstallerFullPath = [System.IO.Path]::GetFullPath($InstallerPath)
-  $Content = @"
-[Version]
-Class=IEXPRESS
-SEDVersion=3
-
-[Options]
-PackagePurpose=InstallApp
-ShowInstallProgramWindow=0
-HideExtractAnimation=0
-UseLongFileName=1
-InsideCompressed=0
-CAB_FixedSize=0
-CAB_ResvCodeSigning=0
-RebootMode=N
-InstallPrompt=%InstallPrompt%
-DisplayLicense=%DisplayLicense%
-FinishMessage=%FinishMessage%
-TargetName=%TargetName%
-FriendlyName=%FriendlyName%
-AppLaunched=%AppLaunched%
-PostInstallCmd=%PostInstallCmd%
-AdminQuietInstCmd=
-UserQuietInstCmd=
-SourceFiles=SourceFiles
-
-[Strings]
-InstallPrompt=Rocky setup will install for the current Windows user.
-DisplayLicense=
-FinishMessage=Rocky setup finished.
-TargetName=$InstallerFullPath
-FriendlyName=Rocky $Tag
-AppLaunched=setup.cmd
-PostInstallCmd=<None>
-FILE0=setup.cmd
-FILE1=setup.ps1
-FILE2=rocky-payload.zip
-
-[SourceFiles]
-SourceFiles0=$BootstrapRootWithSlash
-
-[SourceFiles0]
-%FILE0%=
-%FILE1%=
-%FILE2%=
-"@
-  Set-Content -Path $SedPath -Value $Content -Encoding ASCII
+  return $Version
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -313,7 +218,12 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 
 $NpmPath = Resolve-Tool -Names @("npm.cmd", "npm") -DisplayName "npm"
-$IExpressPath = Resolve-Tool -Names @("iexpress.exe", "iexpress") -DisplayName "IExpress"
+$InnoPath = Resolve-InnoCompiler -RequestedPath $InnoCompilerPath
+$InstallerScript = Join-Path $Root "installer\rocky.iss"
+
+if (-not (Test-Path -LiteralPath $InstallerScript -PathType Leaf)) {
+  throw "Missing Inno Setup script: $InstallerScript"
+}
 
 if (-not $SkipBuild) {
   Invoke-Checked -FilePath $NpmPath -Arguments @("run", "build", "--silent") -WorkingDirectory $Root
@@ -327,18 +237,14 @@ if (Test-Path -LiteralPath $IconScript) {
 
 $WorkRoot = Join-Path $Root ".tmp\windows-installer\$Tag"
 $PayloadRoot = Join-Path $WorkRoot "payload"
-$BootstrapRoot = Join-Path $WorkRoot "bootstrap"
-$PayloadZipPath = Join-Path $BootstrapRoot "rocky-payload.zip"
 $SourceFreePayloadZipPath = Join-Path $OutputDirectory "rocky-$Tag-windows-app.zip"
 $InstallerPath = Join-Path $OutputDirectory "Rocky-Setup-$Tag.exe"
-$SedPath = Join-Path $WorkRoot "rocky-setup.sed"
 
 Assert-ChildPath -Parent (Join-Path $Root ".tmp") -Child $WorkRoot
 Assert-ChildPath -Parent (Join-Path $Root "releases") -Child $OutputDirectory
 
 Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $PayloadRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $BootstrapRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 Copy-RequiredDirectory -RelativePath "dist\src" -TargetRoot $PayloadRoot
@@ -369,25 +275,21 @@ Set-Content -Path (Join-Path $PayloadRoot "WINDOWS_RELEASE.txt") -Value $Release
 
 Assert-SourceFreePayload -PayloadRoot $PayloadRoot
 
-Remove-Item -LiteralPath $PayloadZipPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $SourceFreePayloadZipPath -Force -ErrorAction SilentlyContinue
-Compress-Archive -Path (Join-Path $PayloadRoot "*") -DestinationPath $PayloadZipPath -Force
-Copy-Item -LiteralPath $PayloadZipPath -Destination $SourceFreePayloadZipPath -Force
-
-New-InstallerBootstrap -BootstrapRoot $BootstrapRoot -PayloadZipName "rocky-payload.zip"
-Write-IExpressSed -SedPath $SedPath -BootstrapRoot $BootstrapRoot -InstallerPath $InstallerPath
+Compress-Archive -Path (Join-Path $PayloadRoot "*") -DestinationPath $SourceFreePayloadZipPath -Force
 
 Remove-Item -LiteralPath $InstallerPath -Force -ErrorAction SilentlyContinue
-Get-ChildItem -LiteralPath $OutputDirectory -Filter "~$([System.IO.Path]::GetFileNameWithoutExtension($InstallerPath))*" -ErrorAction SilentlyContinue |
-  Remove-Item -Force
-Invoke-Checked -FilePath $IExpressPath -Arguments @("/N", "/Q", $SedPath) -WorkingDirectory $Root
+$env:ROCKY_RELEASE_TAG = $Tag
+$env:ROCKY_APP_VERSION = Get-AppVersion -ReleaseTag $Tag
+$env:ROCKY_PAYLOAD_ROOT = $PayloadRoot
+$env:ROCKY_OUTPUT_DIR = $OutputDirectory
+$env:ROCKY_REPO_ROOT = $Root
+
+Invoke-Checked -FilePath $InnoPath -Arguments @($InstallerScript) -WorkingDirectory $Root
 
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
-  throw "IExpress completed without creating $InstallerPath."
+  throw "Inno Setup completed without creating $InstallerPath."
 }
-
-Get-ChildItem -LiteralPath $OutputDirectory -Filter "~$([System.IO.Path]::GetFileNameWithoutExtension($InstallerPath))*" -ErrorAction SilentlyContinue |
-  Remove-Item -Force
 
 Write-Host "Created $InstallerPath"
 Write-Host "Created $SourceFreePayloadZipPath"

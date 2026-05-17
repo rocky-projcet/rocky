@@ -4,7 +4,8 @@ param(
   [int]$WebPort = 4173,
   [string]$StateRoot,
   [switch]$NoBrowser,
-  [switch]$Rebuild
+  [switch]$Rebuild,
+  [switch]$UseNpmPreview
 )
 
 $ErrorActionPreference = "Stop"
@@ -140,16 +141,22 @@ New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 $StateRoot = Resolve-StateRootPath -RequestedStateRoot $StateRoot
 
 $NodePath = Resolve-Tool -Names @("node.exe", "node") -DisplayName "Node.js"
-$NpmPath = Resolve-Tool -Names @("npm.cmd", "npm") -DisplayName "npm"
+$NpmPath = $null
 
 $CliPath = Join-Path $Root "dist\src\cli.js"
 $WebIndexPath = Join-Path $Root "web\dist\index.html"
+$WebDistPath = Join-Path $Root "web\dist"
+$WebStaticServerPath = Join-Path $Root "scripts\serve-web-dist.mjs"
 
 if ($Rebuild -or -not (Test-Path $CliPath)) {
+  $NpmPath = Resolve-Tool -Names @("npm.cmd", "npm") -DisplayName "npm"
   Invoke-Checked -FilePath $NpmPath -Arguments @("run", "build", "--silent") -WorkingDirectory $Root
 }
 
 if ($Rebuild -or -not (Test-Path $WebIndexPath)) {
+  if (-not $NpmPath) {
+    $NpmPath = Resolve-Tool -Names @("npm.cmd", "npm") -DisplayName "npm"
+  }
   Invoke-Checked -FilePath $NpmPath -Arguments @("--prefix", "web", "run", "build", "--silent") -WorkingDirectory $Root
 }
 
@@ -168,29 +175,51 @@ Start-LoggedProcess `
   ) `
   -WorkingDirectory $Root
 
-$PreviousProxyTarget = $env:AGENT_ENGINE_PROXY_TARGET
-$env:AGENT_ENGINE_PROXY_TARGET = "http://127.0.0.1:$ApiPort"
-try {
+if ((Test-Path -LiteralPath $WebStaticServerPath) -and (-not $UseNpmPreview)) {
   Start-LoggedProcess `
     -Name "rocky-web" `
-    -FilePath $NpmPath `
+    -FilePath $NodePath `
     -Arguments @(
-      "--prefix",
-      "web",
-      "run",
-      "preview",
-      "--",
+      $WebStaticServerPath,
       "--host",
       "127.0.0.1",
       "--port",
-      [string]$WebPort
+      [string]$WebPort,
+      "--root",
+      $WebDistPath,
+      "--proxy-target",
+      "http://127.0.0.1:$ApiPort"
     ) `
     -WorkingDirectory $Root
-} finally {
-  if ($null -eq $PreviousProxyTarget) {
-    Remove-Item Env:\AGENT_ENGINE_PROXY_TARGET -ErrorAction SilentlyContinue
-  } else {
-    $env:AGENT_ENGINE_PROXY_TARGET = $PreviousProxyTarget
+} else {
+  if (-not $NpmPath) {
+    $NpmPath = Resolve-Tool -Names @("npm.cmd", "npm") -DisplayName "npm"
+  }
+
+  $PreviousProxyTarget = $env:AGENT_ENGINE_PROXY_TARGET
+  $env:AGENT_ENGINE_PROXY_TARGET = "http://127.0.0.1:$ApiPort"
+  try {
+    Start-LoggedProcess `
+      -Name "rocky-web" `
+      -FilePath $NpmPath `
+      -Arguments @(
+        "--prefix",
+        "web",
+        "run",
+        "preview",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        [string]$WebPort
+      ) `
+      -WorkingDirectory $Root
+  } finally {
+    if ($null -eq $PreviousProxyTarget) {
+      Remove-Item Env:\AGENT_ENGINE_PROXY_TARGET -ErrorAction SilentlyContinue
+    } else {
+      $env:AGENT_ENGINE_PROXY_TARGET = $PreviousProxyTarget
+    }
   }
 }
 

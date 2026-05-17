@@ -11,7 +11,8 @@ param(
   [string]$CodexVersion = "latest",
   [switch]$SkipNodeInstall,
   [switch]$SkipCodexInstall,
-  [switch]$InPlace
+  [switch]$InPlace,
+  [switch]$IncludeBundledDependencies
 )
 
 $ErrorActionPreference = "Stop"
@@ -350,6 +351,18 @@ function Test-SamePath {
   return [string]::Equals($LeftFull, $RightFull, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-BundledAppPayload {
+  param([Parameter(Mandatory = $true)][string]$PayloadRoot)
+
+  return (
+    (Test-Path -LiteralPath (Join-Path $PayloadRoot "dist\src\cli.js") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $PayloadRoot "web\dist\index.html") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $PayloadRoot "node_modules") -PathType Container) -and
+    (-not (Test-Path -LiteralPath (Join-Path $PayloadRoot "src"))) -and
+    (-not (Test-Path -LiteralPath (Join-Path $PayloadRoot "web\package.json")))
+  )
+}
+
 function Test-SkippedPayloadPath {
   param([Parameter(Mandatory = $true)][string]$RelativePath)
 
@@ -361,13 +374,16 @@ function Test-SkippedPayloadPath {
     ".tmp",
     ".codex",
     ".venv",
-    "node_modules",
     "releases",
     ".tools"
   )
 
   foreach ($Part in $Parts) {
     if ($SkippedDirectoryNames -contains $Part) {
+      return $true
+    }
+
+    if ($Part -eq "node_modules" -and -not $IncludeBundledDependencies) {
       return $true
     }
   }
@@ -537,6 +553,13 @@ function Register-UninstallEntry {
   }
 }
 
+$UsesBundledAppPayload = Test-BundledAppPayload -PayloadRoot $Root
+if ($UsesBundledAppPayload) {
+  $IncludeBundledDependencies = $true
+  $SkipDependencyInstall = $true
+  $SkipBuild = $true
+}
+
 $ResolvedInstallDir = Resolve-InstallDirPath -RequestedInstallDir $InstallDir
 if (-not $InPlace -and -not (Test-SamePath -Left $Root -Right $ResolvedInstallDir)) {
   Write-Host "Installing Rocky $ReleaseTag to $ResolvedInstallDir"
@@ -555,6 +578,7 @@ if (-not $InPlace -and -not (Test-SamePath -Left $Root -Right $ResolvedInstallDi
     CodexVersion = $CodexVersion
     SkipNodeInstall = $SkipNodeInstall
     SkipCodexInstall = $SkipCodexInstall
+    IncludeBundledDependencies = $IncludeBundledDependencies
   }
   if (-not [string]::IsNullOrWhiteSpace($StateRoot)) {
     $InstallArgs.StateRoot = $StateRoot

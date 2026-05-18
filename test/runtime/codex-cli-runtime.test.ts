@@ -1108,7 +1108,12 @@ test("CodexCliRuntime snapshots new workspace files into run artifacts", async (
     const child = createFakeChild();
 
     queueMicrotask(async () => {
+      await mkdir(path.join(workspaceRoot, "outputs"), { recursive: true });
       await writeFile(path.join(workspaceRoot, "generated-chart.png"), "png-bytes");
+      await writeFile(
+        path.join(workspaceRoot, "outputs", "smoke-deck.pptx"),
+        "pptx-bytes"
+      );
       await writeFile(outputLastMessagePath, "DONE");
       child.stdout.end();
       child.stderr.end();
@@ -1141,6 +1146,9 @@ test("CodexCliRuntime snapshots new workspace files into run artifacts", async (
   const workspaceArtifact = result.artifactRefs.find((artifact) =>
     artifact.role.startsWith("workspace-generated-chart")
   );
+  const pptxArtifact = result.artifactRefs.find((artifact) =>
+    artifact.role.startsWith("workspace-outputs-smoke-deck")
+  );
 
   assert.deepEqual(result.artifactRefs[0], {
     kind: "file",
@@ -1152,6 +1160,9 @@ test("CodexCliRuntime snapshots new workspace files into run artifacts", async (
     await readFile(workspaceArtifact?.path ?? "", "utf8"),
     "png-bytes"
   );
+  assert.ok(pptxArtifact);
+  assert.equal(pptxArtifact?.workspaceRelativePath, "outputs/smoke-deck.pptx");
+  assert.equal(await readFile(pptxArtifact?.path ?? "", "utf8"), "pptx-bytes");
   assert.ok(
     workspaceArtifact?.path.startsWith(path.join(artifactsDir, "workspace"))
   );

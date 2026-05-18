@@ -41,6 +41,7 @@ npm --prefix web run dev
 npm run typecheck
 npm run test:e2e
 npm run smoke -- --prompt "Reply with exactly OK"
+npm run smoke -- --pptx-smoke
 npm run runtime:probe -- --provider codex --write
 ```
 

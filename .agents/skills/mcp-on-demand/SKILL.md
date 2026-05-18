@@ -43,6 +43,6 @@ description: Enable or disable Codex MCP and plugin integrations only when neede
 ## Notes
 
 - Prefer the script over hand-editing the managed MCP blocks.
-- If `$github`, `$roc-publish`, or `$bug-report` cannot access their provider because it is disabled, use this skill first and stop after the config change.
+- If `$github` or `$roc-publish` cannot access their provider because it is disabled, use this skill first and stop after the config change.
 - Do not enable `$linear` for normal repository issue creation or publication; GitHub Issues are the primary tracker.
 - If the provider is enabled but still unavailable, the next session may need a normal OAuth or app re-auth flow.

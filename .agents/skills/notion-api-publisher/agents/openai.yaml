@@ -1,4 +1,0 @@
-interface:
-  display_name: "Notion API Publisher"
-  short_description: "Publish Markdown notes to the 픽셀베리 Notion 문서 허브 through the Notion API without loading MCP context"
-  default_prompt: "Use $notion-api-publisher to turn this conversation into a concise Markdown note and publish it to the 픽셀베리 문서 허브 through the local Notion API script. Create a new page unless I gave you an existing Notion page URL."

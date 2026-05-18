@@ -1759,6 +1759,19 @@ export class RockyChatService {
       return input.orchestration;
     }
 
+    let tistoryState;
+    try {
+      tistoryState = await this.connectorService.getState("tistory");
+    } catch {
+      return input.orchestration;
+    }
+    if (
+      tistoryState.status !== "connected" ||
+      tistoryState.loginMode !== "custom-browser"
+    ) {
+      return input.orchestration;
+    }
+
     const draft = await this.findTistoryPublishReadyDraft({
       agent: input.agent,
       chatId: input.chatId,

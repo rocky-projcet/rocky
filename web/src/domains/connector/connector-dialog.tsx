@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import {
   CheckCircle2,
   ExternalLink,
+  Hourglass,
   Loader2,
   Lock,
   Unplug,
@@ -52,6 +53,7 @@ export function ConnectorDialog({
   const loginMode = state?.loginMode ?? null;
   const isConnecting = status === "connecting";
   const isConnected = status === "connected";
+  const isPlanned = status === "planned";
 
   useEffect(() => {
     if (state?.status === "connected" && state.accountLabel && open) {
@@ -98,6 +100,12 @@ export function ConnectorDialog({
             onDisconnect={() => disconnectMutation.mutate()}
             disconnecting={disconnectMutation.isPending}
           />
+        ) : isPlanned ? (
+          <PlannedView
+            providerLabel={providerLabel}
+            message={state?.message ?? `${providerLabel} 연동은 준비 중입니다.`}
+            onClose={() => onOpenChange(false)}
+          />
         ) : isConnecting ? (
           <ConnectingView
             message={state?.message ?? "로그인 창에서 진행 중…"}
@@ -120,6 +128,33 @@ export function ConnectorDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PlannedView({
+  providerLabel,
+  message,
+  onClose,
+}: {
+  providerLabel: string;
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+        <Hourglass className="mt-0.5 size-3.5 shrink-0 text-foreground" />
+        <span>{message}</span>
+      </div>
+      <p className="text-xs leading-5 text-muted-foreground">
+        {providerLabel} 계정 연결은 아직 열지 않았습니다. 준비가 끝나면 이 화면에서 바로 연결할 수 있게 바뀝니다.
+      </p>
+      <DialogFooter className="flex flex-row items-center justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          닫기
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }
 

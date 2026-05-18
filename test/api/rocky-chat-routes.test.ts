@@ -1448,7 +1448,7 @@ test("rocky chat reports used agent skills without exposing internal ids", async
   }
 });
 
-test("rocky chat includes connected Tistory draft publisher context for agent skills", async () => {
+test("rocky chat ignores stale Tistory context while keeping connected Threads context", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
   await mkdir(path.join(stateRoot, "connectors", "threads"), { recursive: true });
@@ -1520,13 +1520,14 @@ test("rocky chat includes connected Tistory draft publisher context for agent sk
       `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
     const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
     assert.match(agentContext, /계정 연동 상태/u);
-    assert.match(agentContext, /Tistory: connected/u);
-    assert.match(agentContext, /draft_publish=server-managed/u);
+    assert.doesNotMatch(agentContext, /Tistory:/u);
+    assert.doesNotMatch(agentContext, /draft_publish=server-managed/u);
     assert.match(agentContext, /Threads: connected/u);
-    assert.ok(
+    assert.equal(
       sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
         instruction.includes("Rocky server submits the Tistory draft after this turn")
-      )
+      ),
+      false
     );
     assert.ok(
       sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
@@ -1789,7 +1790,7 @@ test("rocky chat injects Threads skill capabilities for follower requests", asyn
   }
 });
 
-test("rocky chat submits connected Tistory draft from publish-ready markdown after agent turn", async () => {
+test("rocky chat does not submit Tistory drafts while connector is planned", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });
   await writeFile(
@@ -1904,19 +1905,16 @@ test("rocky chat submits connected Tistory draft from publish-ready markdown aft
     assert.equal(refreshedResponse.statusCode, 200);
     const refreshed = refreshedResponse.json<RockyChatRecord>();
 
-    assert.equal(publishedDrafts.length, 1);
-    assert.equal(publishedDrafts[0]?.title, "샘플 티스토리 제목");
-    assert.match(publishedDrafts[0]?.contentMarkdown ?? "", /본문 첫 문단/u);
-    assert.deepEqual(publishedDrafts[0]?.tags, ["샘플", "티스토리", "자동화"]);
-    assert.match(refreshed.messages[1]?.text ?? "", /Tistory 발행 결과/u);
-    assert.match(refreshed.messages[1]?.text ?? "", /임시저장 완료/u);
+    assert.equal(publishedDrafts.length, 0);
+    assert.doesNotMatch(refreshed.messages[1]?.text ?? "", /Tistory 발행 결과/u);
+    assert.doesNotMatch(refreshed.messages[1]?.text ?? "", /임시저장 완료/u);
 
     const secondRefreshResponse = await server.inject({
       method: "GET",
       url: `/rocky/chats/${created.id}`,
     });
     assert.equal(secondRefreshResponse.statusCode, 200);
-    assert.equal(publishedDrafts.length, 1);
+    assert.equal(publishedDrafts.length, 0);
   } finally {
     await server.close();
   }

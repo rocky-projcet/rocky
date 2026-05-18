@@ -812,6 +812,7 @@ function AgentIntegrationCard({
 function connectorStatusLabel(status: AgentConnectorIntegrationRecord["status"]): string {
   if (status === "connected") return "연결됨";
   if (status === "connecting") return "연결 중";
+  if (status === "planned") return "준비 중";
   if (status === "failed") return "오류";
   return "미연결";
 }
@@ -823,6 +824,9 @@ function connectorStatusTone(status: AgentConnectorIntegrationRecord["status"]):
   if (status === "connecting") {
     return "border-sky-500/30 bg-sky-500/8 text-sky-700";
   }
+  if (status === "planned") {
+    return "border-border bg-muted text-muted-foreground";
+  }
   if (status === "failed") {
     return "border-destructive/30 bg-destructive/8 text-destructive";
   }
@@ -830,6 +834,9 @@ function connectorStatusTone(status: AgentConnectorIntegrationRecord["status"]):
 }
 
 function browserAccessLabel(integration: AgentConnectorIntegrationRecord): string {
+  if (integration.status === "planned") {
+    return "연동 준비 중";
+  }
   const access = integration.browserAccess;
   if (access.status === "granted") {
     return access.policy === "persistent" ? "브라우저 지속 권한" : "브라우저 실행별 권한";

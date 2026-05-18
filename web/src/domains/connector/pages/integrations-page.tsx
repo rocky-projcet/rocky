@@ -998,6 +998,7 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
   const status = state?.status ?? "idle";
   const connected = status === "connected";
   const connecting = status === "connecting";
+  const planned = status === "planned";
   const awaitingVerification =
     connecting && state?.loginMode === "external-browser";
   const failed = status === "failed";
@@ -1027,6 +1028,7 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
             connecting={connecting}
             awaitingVerification={awaitingVerification}
             failed={failed}
+            planned={planned}
           />
         </div>
 
@@ -1038,6 +1040,8 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
               </span>
               {state?.connectedAt ? ` · ${formatDateTime(state.connectedAt)}` : null}
             </p>
+          ) : planned ? (
+            <p>{state?.message ?? `${entry.label} 연동은 준비 중입니다.`}</p>
           ) : failed ? (
             <p className="text-destructive">{state?.lastError ?? state?.message}</p>
           ) : connecting ? (
@@ -1054,9 +1058,16 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
           variant={connected ? "outline" : "default"}
           size="sm"
           onClick={() => setOpen(true)}
+          disabled={planned}
         >
-          {connected ? <RefreshCw className="size-4" /> : <ExternalLink className="size-4" />}
-          {connected ? "관리" : awaitingVerification ? "상태" : "로그인 열기"}
+          {planned ? (
+            <Hourglass className="size-4" />
+          ) : connected ? (
+            <RefreshCw className="size-4" />
+          ) : (
+            <ExternalLink className="size-4" />
+          )}
+          {planned ? "준비 중" : connected ? "관리" : awaitingVerification ? "상태" : "로그인 열기"}
         </Button>
         {stateQuery.isFetching ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
@@ -1096,11 +1107,13 @@ function ConnectionBadge({
   connecting = false,
   awaitingVerification = false,
   failed = false,
+  planned = false,
 }: {
   connected: boolean;
   connecting?: boolean;
   awaitingVerification?: boolean;
   failed?: boolean;
+  planned?: boolean;
 }) {
   if (connected) {
     return (
@@ -1133,6 +1146,15 @@ function ConnectionBadge({
     return (
       <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive">
         실패
+      </Badge>
+    );
+  }
+
+  if (planned) {
+    return (
+      <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
+        <Hourglass className="size-3" />
+        준비 중
       </Badge>
     );
   }

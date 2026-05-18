@@ -17,6 +17,8 @@ import {
   ArrowLeft,
   AtSign,
   BarChart3,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   ExternalLink,
@@ -44,6 +46,7 @@ import { toast } from "sonner";
 
 import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
 import { RunEventsSource } from "@/domains/run/lib/run-events-source";
+import type { RuntimeEvent } from "@/domains/run/types";
 import {
   useCancelRockyChatMutation,
   useCreateRockyChatMutation,
@@ -1928,6 +1931,274 @@ function compareCreatedAtAscending(
   );
 }
 
+function runtimeEventRawRecord(event: RuntimeEvent): Record<string, unknown> | null {
+  return event.raw && typeof event.raw === "object" && !Array.isArray(event.raw)
+    ? (event.raw as Record<string, unknown>)
+    : null;
+}
+
+function runtimeEventRawItem(event: RuntimeEvent): Record<string, unknown> | null {
+  const item = runtimeEventRawRecord(event)?.item;
+  return item && typeof item === "object" && !Array.isArray(item)
+    ? (item as Record<string, unknown>)
+    : null;
+}
+
+function runtimeEventItemType(event: RuntimeEvent): string | null {
+  const dataItemType = event.data.itemType;
+  if (typeof dataItemType === "string" && dataItemType.trim()) {
+    return dataItemType.trim();
+  }
+
+  const rawItemType = runtimeEventRawItem(event)?.type;
+  return typeof rawItemType === "string" && rawItemType.trim()
+    ? rawItemType.trim()
+    : null;
+}
+
+function runtimeEventRawId(event: RuntimeEvent): string | null {
+  const raw = runtimeEventRawRecord(event);
+  const item = runtimeEventRawItem(event);
+  const candidate = raw?.id ?? raw?.call_id ?? item?.id ?? item?.call_id;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+}
+
+function isReasoningItemType(itemType: string | null): boolean {
+  if (!itemType) {
+    return false;
+  }
+
+  return /reason|think|thought|analysis|summary|progress|trace/i.test(itemType);
+}
+
+function isCommandItemType(itemType: string | null): boolean {
+  if (!itemType) {
+    return false;
+  }
+
+  return /command|tool|function|shell|exec|patch/i.test(itemType);
+}
+
+function isPublicRawTraceEvent(event: RuntimeEvent): boolean {
+  if (event.type !== "run.raw") {
+    return false;
+  }
+
+  const itemType = runtimeEventItemType(event);
+  if (isReasoningItemType(itemType) || isCommandItemType(itemType)) {
+    return true;
+  }
+
+  return [
+    "process.start",
+    "process.close",
+    "process.error",
+    "runtime.environment",
+    "runtime.policy",
+    "turn.started",
+    "turn.completed",
+  ].includes(event.rawType);
+}
+
+function isPublicReasoningEvent(event: RuntimeEvent): boolean {
+  if (
+    event.type === "session.bound" ||
+    event.type === "run.started" ||
+    event.type === "run.warning" ||
+    event.type === "run.error" ||
+    event.type === "run.stdout" ||
+    event.type === "run.stderr" ||
+    event.type === "run.completed"
+  ) {
+    return true;
+  }
+
+  if (event.type === "assistant.message.completed") {
+    return isReasoningItemType(runtimeEventItemType(event));
+  }
+
+  return isPublicRawTraceEvent(event);
+}
+
+function compactReasoningText(value: string | null | undefined, limit = 220): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length <= limit
+    ? normalized
+    : `${normalized.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function runtimeEventCommandText(event: RuntimeEvent): string | null {
+  const item = runtimeEventRawItem(event);
+  const command = item?.command ?? item?.cmd ?? item?.name ?? item?.title;
+  if (typeof command === "string") {
+    return compactReasoningText(command, 180);
+  }
+
+  if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
+    return compactReasoningText(command.join(" "), 180);
+  }
+
+  return null;
+}
+
+function reasoningEventTitle(event: RuntimeEvent): string {
+  if (event.type === "session.bound") {
+    return "세션 연결";
+  }
+
+  if (event.type === "run.started") {
+    return "실행 시작";
+  }
+
+  if (event.type === "run.warning") {
+    return "주의";
+  }
+
+  if (event.type === "run.error") {
+    return "오류";
+  }
+
+  if (event.type === "run.stdout") {
+    return "표준 출력";
+  }
+
+  if (event.type === "run.stderr") {
+    return "오류 출력";
+  }
+
+  if (event.type === "run.completed") {
+    return "실행 완료";
+  }
+
+  const itemType = runtimeEventItemType(event);
+  if (event.type === "assistant.message.completed" && isReasoningItemType(itemType)) {
+    return "추론 요약";
+  }
+
+  if (event.rawType === "item.started") {
+    return isCommandItemType(itemType) ? "도구 실행 시작" : "항목 시작";
+  }
+
+  if (event.rawType === "item.completed") {
+    return isCommandItemType(itemType) ? "도구 실행 완료" : "항목 완료";
+  }
+
+  if (event.rawType === "process.start") {
+    return "프로세스 시작";
+  }
+
+  if (event.rawType === "process.close") {
+    return "프로세스 종료";
+  }
+
+  if (event.rawType === "turn.started") {
+    return "요청 처리 시작";
+  }
+
+  if (event.rawType === "turn.completed") {
+    return "요청 처리 완료";
+  }
+
+  return itemType ?? event.rawType ?? event.type;
+}
+
+function reasoningEventDetail(event: RuntimeEvent): string | null {
+  if (event.type === "session.bound") {
+    const runtimeSessionId = event.data.runtimeSessionId ?? event.runtimeSessionId;
+    return typeof runtimeSessionId === "string" && runtimeSessionId.trim()
+      ? `런타임 세션 ${runtimeSessionId.trim()}`
+      : null;
+  }
+
+  if (event.type === "run.completed") {
+    const status = event.data.status;
+    return typeof status === "string" && status.trim()
+      ? `상태: ${status.trim()}`
+      : null;
+  }
+
+  if (
+    event.type === "run.warning" ||
+    event.type === "run.error" ||
+    event.type === "assistant.message.completed"
+  ) {
+    const message = event.data.message ?? event.data.text;
+    return typeof message === "string" ? compactReasoningText(message) : null;
+  }
+
+  if (event.type === "run.stdout" || event.type === "run.stderr") {
+    const line = event.data.line;
+    return typeof line === "string" ? compactReasoningText(line) : null;
+  }
+
+  return runtimeEventCommandText(event) ?? runtimeEventItemType(event);
+}
+
+function runtimeEventTime(event: RuntimeEvent): number {
+  const time = new Date(event.occurredAt).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function compareRuntimeEventAscending(left: RuntimeEvent, right: RuntimeEvent): number {
+  return runtimeEventTime(left) - runtimeEventTime(right);
+}
+
+function runtimeEventIdentity(event: RuntimeEvent): string {
+  let data = "";
+  try {
+    data = JSON.stringify(event.data) ?? "";
+  } catch {
+    data = "";
+  }
+
+  return [
+    event.occurredAt,
+    event.type,
+    event.rawType,
+    event.runId ?? "",
+    runtimeEventRawId(event) ?? "",
+    data,
+  ].join("\u001f");
+}
+
+function mergeRuntimeEvents(
+  ...groups: Array<RuntimeEvent[] | null | undefined>
+): RuntimeEvent[] {
+  const eventsByKey = new Map<string, RuntimeEvent>();
+  for (const group of groups) {
+    for (const event of group ?? []) {
+      eventsByKey.set(runtimeEventIdentity(event), event);
+    }
+  }
+
+  return [...eventsByKey.values()].sort(compareRuntimeEventAscending);
+}
+
+function buildReasoningTimeline(events: RuntimeEvent[]): RuntimeEvent[] {
+  return events.filter(isPublicReasoningEvent).sort(compareRuntimeEventAscending);
+}
+
+function formatReasoningEventTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function buildTemplateFilePanelContext(input: {
   chat: RockyChatRecord | null;
   outputRootPath: string;
@@ -2859,11 +3130,85 @@ function UsedSkillBadges({
   );
 }
 
+function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const timeline = useMemo(() => buildReasoningTimeline(events), [events]);
+
+  if (timeline.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/70 pt-2">
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        aria-expanded={expanded}
+        aria-label={expanded ? "추론 과정 접기" : "추론 과정 펼치기"}
+        onClick={() => setExpanded((current) => !current)}
+        className="h-7 gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
+      >
+        {expanded ? (
+          <ChevronDown className="size-3.5" />
+        ) : (
+          <ChevronRight className="size-3.5" />
+        )}
+        <span>추론 과정</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
+          {timeline.length}
+        </span>
+      </Button>
+      {expanded ? (
+        <ol className="mt-2 space-y-2 rounded-md border border-border bg-secondary/35 p-2">
+          {timeline.map((event, index) => {
+            const detail = reasoningEventDetail(event);
+            const timeLabel = formatReasoningEventTime(event.occurredAt);
+
+            return (
+              <li
+                key={`${event.occurredAt}-${event.type}-${event.rawType}-${index}`}
+                className="rounded-md bg-background/85 px-3 py-2 text-xs"
+              >
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <span className="min-w-0 truncate font-semibold text-foreground">
+                    {reasoningEventTitle(event)}
+                  </span>
+                  {timeLabel ? (
+                    <time
+                      dateTime={event.occurredAt}
+                      className="shrink-0 font-mono text-[10px] text-muted-foreground"
+                    >
+                      {timeLabel}
+                    </time>
+                  ) : null}
+                </div>
+                {detail ? (
+                  <p className="mt-1 break-words leading-5 text-muted-foreground">
+                    {detail}
+                  </p>
+                ) : null}
+                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] uppercase text-muted-foreground/75">
+                  <span>{event.type}</span>
+                  {event.rawType && event.rawType !== event.type ? (
+                    <span>{event.rawType}</span>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageBubble({
   agentWorkspaceRootsByAgentId,
   chat,
   message,
   onOpenConversationFile,
+  runEventsByRunId,
   runProgressByRunId,
   showAnswerDuration,
   transcriptsBySessionId,
@@ -2872,6 +3217,7 @@ function MessageBubble({
   chat: RockyChatRecord;
   message: RockyMessageRecord;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
+  runEventsByRunId: Record<string, RuntimeEvent[]>;
   runProgressByRunId: Record<string, string>;
   showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
@@ -2908,11 +3254,12 @@ function MessageBubble({
     message.attachmentIds.includes(attachment.id)
   );
   const usedSkills = isRocky ? message.usedSkills : [];
+  const messageRunId = dispatch?.orchestration?.runId ?? null;
+  const reasoningEvents = messageRunId ? runEventsByRunId[messageRunId] ?? [] : [];
 
   if (isPendingReply) {
-    const runId = dispatch?.orchestration?.runId ?? null;
     const progressLabel =
-      (runId ? runProgressByRunId[runId] : null) ??
+      (messageRunId ? runProgressByRunId[messageRunId] : null) ??
       defaultRockyRunProgressLabel({
         attachmentCount: dispatch?.attachmentIds.length ?? attachments.length,
         skillId: dispatch?.skillId ?? null,
@@ -2949,6 +3296,7 @@ function MessageBubble({
             현재 {progressLabel}
           </div>
           <UsedSkillBadges pending skills={usedSkills} />
+          <ReasoningProcessPanel events={reasoningEvents} />
         </article>
       </div>
     );
@@ -3020,10 +3368,11 @@ function MessageBubble({
           <RockyArtifactGrid
             artifacts={userFacingArtifacts}
             chatId={chat.id}
-            runId={dispatch?.orchestration?.runId ?? null}
+            runId={messageRunId}
             onOpenConversationFile={onOpenConversationFile}
           />
         ) : null}
+        {isRocky ? <ReasoningProcessPanel events={reasoningEvents} /> : null}
         {isRocky && rockyMessageState.kind !== "error" ? (
           <div className="mt-3 flex items-center justify-between gap-2">
             <span className="text-[11px] font-medium leading-4 text-muted-foreground">
@@ -3102,6 +3451,7 @@ function MessageList({
   endRef,
   onOpenConversationFile,
   optimisticMessage,
+  runEventsByRunId,
   runProgressByRunId,
   showAnswerDuration,
   transcriptsBySessionId,
@@ -3111,6 +3461,7 @@ function MessageList({
   endRef: RefObject<HTMLDivElement | null>;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   optimisticMessage: RockyMessageRecord | null;
+  runEventsByRunId: Record<string, RuntimeEvent[]>;
   runProgressByRunId: Record<string, string>;
   showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
@@ -3129,6 +3480,7 @@ function MessageList({
           chat={chat}
           message={message}
           onOpenConversationFile={onOpenConversationFile}
+          runEventsByRunId={runEventsByRunId}
           runProgressByRunId={runProgressByRunId}
           showAnswerDuration={showAnswerDuration}
           transcriptsBySessionId={transcriptsBySessionId}
@@ -6055,6 +6407,9 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const [runProgressByRunId, setRunProgressByRunId] = useState<Record<string, string>>(
     {}
   );
+  const [runEventsByRunId, setRunEventsByRunId] = useState<
+    Record<string, RuntimeEvent[]>
+  >({});
   const submitInFlightRef = useRef(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -6085,6 +6440,37 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     chat?.dispatches.flatMap((dispatch) =>
       dispatch.orchestration?.agentId ? [dispatch.orchestration.agentId] : []
     ) ?? [];
+  const allRunIds = useMemo(
+    () => [
+      ...new Set(
+        chat?.dispatches.flatMap((dispatch) =>
+          dispatch.orchestration?.runId ? [dispatch.orchestration.runId] : []
+        ) ?? []
+      ),
+    ],
+    [chat?.dispatches]
+  );
+  const allRunIdsKey = allRunIds.join("\n");
+  const activeRunIds = useMemo(
+    () => [
+      ...new Set(
+        chat?.dispatches.flatMap((dispatch) => {
+          const orchestration = dispatch.orchestration;
+          if (
+            orchestration?.runId &&
+            (orchestration.status === "running" ||
+              orchestration.status === "planned")
+          ) {
+            return [orchestration.runId];
+          }
+
+          return [];
+        }) ?? []
+      ),
+    ],
+    [chat?.dispatches]
+  );
+  const activeRunIdsKey = activeRunIds.join("\n");
   const uniqueTranscriptSessionIds = [...new Set(transcriptSessionIds)];
   const uniqueTranscriptAgentIds = [...new Set(transcriptAgentIds)];
   const outputAgentIds = [
@@ -6117,6 +6503,13 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         ? LIVE_TRANSCRIPT_REFRESH_INTERVAL_MS
         : false,
       refetchIntervalInBackground: activeTranscriptSessionIds.has(sessionId),
+    })),
+  });
+  const runEventQueries = useQueries({
+    queries: allRunIds.map((runId) => ({
+      queryKey: ["run-events", runId],
+      queryFn: () => agentEngineClient.getRunEvents(runId),
+      enabled: Boolean(runId) && !activeRunIds.includes(runId),
     })),
   });
   const agentQueries = useQueries({
@@ -6220,6 +6613,20 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const transcriptRefreshMarker = transcriptQueries
     .map((query) => String(query.dataUpdatedAt ?? 0))
     .join(":");
+  const runEventRefreshMarker = runEventQueries
+    .map((query) => `${query.dataUpdatedAt ?? 0}:${query.data?.length ?? 0}`)
+    .join(":");
+  const displayRunEventsByRunId = useMemo(() => {
+    const next: Record<string, RuntimeEvent[]> = {};
+    allRunIds.forEach((runId, index) => {
+      next[runId] = mergeRuntimeEvents(
+        runEventQueries[index]?.data,
+        runEventsByRunId[runId]
+      );
+    });
+
+    return next;
+  }, [allRunIdsKey, runEventRefreshMarker, runEventsByRunId]);
   const packagedInputRefreshMarker = packagedInputQueries
     .map((query) => `${query.dataUpdatedAt ?? 0}:${query.data?.length ?? 0}`)
     .join(":");
@@ -6279,26 +6686,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   }, [filePanelSignature]);
 
-  const activeRunIds = useMemo(
-    () => [
-      ...new Set(
-        chat?.dispatches.flatMap((dispatch) => {
-          const orchestration = dispatch.orchestration;
-          if (
-            orchestration?.runId &&
-            (orchestration.status === "running" ||
-              orchestration.status === "planned")
-          ) {
-            return [orchestration.runId];
-          }
-
-          return [];
-        }) ?? []
-      ),
-    ],
-    [chat?.dispatches]
-  );
-  const activeRunIdsKey = activeRunIds.join("\n");
   const mutationPending =
     submitInFlight ||
     createChatMutation.isPending ||
@@ -6356,6 +6743,24 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   }, [isTaskDetail, searchParams, setSearchParams, userTemplates]);
 
   useEffect(() => {
+    const knownRunIds = new Set(allRunIdsKey ? allRunIdsKey.split("\n") : []);
+    setRunEventsByRunId((current) => {
+      let changed = false;
+      const next: Record<string, RuntimeEvent[]> = {};
+
+      for (const [runId, events] of Object.entries(current)) {
+        if (knownRunIds.has(runId)) {
+          next[runId] = events;
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [allRunIdsKey]);
+
+  useEffect(() => {
     const active = new Set(
       activeRunIdsKey ? activeRunIdsKey.split("\n").filter(Boolean) : []
     );
@@ -6400,6 +6805,11 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         onOpen: () => updateProgress("실행 연결 중"),
         onError: () => updateProgress("상태 동기화 중"),
         onEvent: (event) => {
+          setRunEventsByRunId((current) => ({
+            ...current,
+            [runId]: mergeRuntimeEvents(current[runId], [event]),
+          }));
+
           const label = rockyRunProgressLabelForEvent(event, {
             attachmentCount: dispatch?.attachmentIds.length ?? 0,
             skillId: dispatch?.skillId ?? null,
@@ -6655,6 +7065,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
               endRef={messagesEndRef}
               onOpenConversationFile={openConversationFile}
               optimisticMessage={optimisticUserMessage}
+              runEventsByRunId={displayRunEventsByRunId}
               runProgressByRunId={runProgressByRunId}
               showAnswerDuration={isTaskDetail}
               transcriptsBySessionId={transcriptsBySessionId}

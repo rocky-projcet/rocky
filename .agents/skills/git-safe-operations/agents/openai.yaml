@@ -1,4 +1,4 @@
 interface:
   display_name: "Git Safe Ops"
   short_description: "Prepare local git changes for issue and PR workflows"
-  default_prompt: "Use $git-safe-operations to inspect the worktree, create or switch branches, stage intended files, commit, and push without handling Linear issue updates or GitHub PR creation."
+  default_prompt: "Use $git-safe-operations to inspect the worktree, create or switch branches, stage intended files, commit, and push without handling GitHub Issue updates or PR creation."

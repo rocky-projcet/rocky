@@ -1,4 +1,4 @@
 interface:
   display_name: "ROC Finish Current Work"
-  short_description: "Create one ROC issue and PR, then sync local develop"
-  default_prompt: "Use $roc-finish-current-work to turn the current Rocky-project local work into a single ROC issue, publish or merge it as a PR against develop, sync the PR back to Linear, use the PAT-backed fetch or REST fallbacks when git or GitHub access is blocked, and leave local develop reset to origin/develop after the branch is safe."
+  short_description: "Create one GitHub Issue and PR, then sync develop"
+  default_prompt: "Use $roc-finish-current-work to turn the current Rocky-project local work into a single GitHub Issue with matching labels and milestone, publish or merge it as a PR against develop, sync the PR back to the issue, use the PAT-backed fetch or REST fallbacks when git or GitHub access is blocked, and leave local develop reset to origin/develop after the branch is safe."

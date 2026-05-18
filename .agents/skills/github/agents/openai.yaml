@@ -1,4 +1,4 @@
 interface:
   display_name: "GitHub"
-  short_description: "Open and manage pull requests linked to ROC issues"
-  default_prompt: "Use $github to inspect or create GitHub pull requests for this repository, align PR metadata with the matching ROC issue, and summarize review or check status."
+  short_description: "Create and manage GitHub Issues and PRs"
+  default_prompt: "Use $github to create or update GitHub Issues for this repository with matching labels and milestones, align PR metadata with the matching issue, and summarize issue, review, or check status."

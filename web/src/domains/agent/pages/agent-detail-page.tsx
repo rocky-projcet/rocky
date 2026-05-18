@@ -598,10 +598,12 @@ export function AgentDetailPage() {
                 toast.success(`${agent.name}이(가) 작업을 시작했어요.`);
               }
               navigate(`/tasks/${encodeURIComponent(chat.id)}`);
+              return true;
             } catch (error) {
               toast.error("작업을 시작하지 못했습니다.", {
                 description: error instanceof Error ? error.message : undefined,
               });
+              return false;
             } finally {
               setTaskSubmitPending(false);
             }

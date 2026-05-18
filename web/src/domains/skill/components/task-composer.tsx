@@ -49,16 +49,18 @@ export function TaskComposer({
   pending: boolean;
   initialMessage?: string;
   initialPinnedSkillId?: string | null;
-  onSubmit: (input: TaskComposerSubmit) => Promise<void> | void;
+  onSubmit: (input: TaskComposerSubmit) => Promise<boolean> | boolean;
 }) {
   const [message, setMessage] = useState(initialMessage);
   const [files, setFiles] = useState<File[]>([]);
   const [pinnedSkillId, setPinnedSkillId] = useState<string | null>(initialPinnedSkillId);
+  const [submitPending, setSubmitPending] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const pinnedSkill = equippedSkills.find((skill) => skill.id === pinnedSkillId) ?? null;
+  const submitIsPending = pending || submitPending;
 
   useEffect(() => {
     if (initialPinnedSkillId) {
@@ -84,21 +86,49 @@ export function TaskComposer({
 
   const { isDragging, handlers: dropHandlers } = useFileDropZone({
     onFiles: appendFiles,
-    disabled: pending,
+    disabled: submitIsPending,
   });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (submitIsPending) return;
     const trimmed = message.trim();
     if (!trimmed && !pinnedSkill) {
       toast.warning("부탁할 내용을 적어주세요.");
       return;
     }
-    await onSubmit({ message: trimmed, files, skill: pinnedSkill });
+
+    const submittedMessage = message;
+    const submittedFiles = files;
+    const submittedPinnedSkillId = pinnedSkillId;
+    const submittedPinnedSkill = pinnedSkill;
     setMessage("");
     setFiles([]);
     setPinnedSkillId(null);
+    setSubmitPending(true);
+
+    try {
+      const submitted = await onSubmit({
+        message: trimmed,
+        files: submittedFiles,
+        skill: submittedPinnedSkill,
+      });
+      if (!submitted) {
+        setMessage((current) =>
+          current.trim().length > 0 ? current : submittedMessage
+        );
+        setFiles(submittedFiles);
+        setPinnedSkillId(submittedPinnedSkillId);
+      }
+    } catch {
+      setMessage((current) =>
+        current.trim().length > 0 ? current : submittedMessage
+      );
+      setFiles(submittedFiles);
+      setPinnedSkillId(submittedPinnedSkillId);
+    } finally {
+      setSubmitPending(false);
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -150,6 +180,7 @@ export function TaskComposer({
       <Textarea
         ref={textareaRef}
         value={message}
+        disabled={submitIsPending}
         onChange={(event) => setMessage(event.target.value)}
         onKeyDown={handleKeyDown}
         onFocus={() => setIsFocused(true)}
@@ -174,6 +205,7 @@ export function TaskComposer({
           type="button"
           variant="outline"
           size="sm"
+          disabled={submitIsPending}
           onClick={() => fileInputRef.current?.click()}
         >
           <Paperclip className="size-4" />
@@ -185,6 +217,7 @@ export function TaskComposer({
             options={equippedSkills}
             value={pinnedSkillId}
             onChange={setPinnedSkillId}
+            disabled={submitIsPending}
           />
         ) : null}
 
@@ -194,9 +227,16 @@ export function TaskComposer({
               <Button
                 type="submit"
                 className="ml-auto"
-                disabled={pending || (!message.trim() && !pinnedSkill)}
+                disabled={submitIsPending || (!message.trim() && !pinnedSkill)}
               >
-                <Send className="size-4" />
+                {submitIsPending ? (
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-4 animate-spin rounded-full border-2 border-card/30 border-t-card bg-transparent p-0"
+                  />
+                ) : (
+                  <Send className="size-4" />
+                )}
                 실행하기
               </Button>
             }
@@ -212,10 +252,12 @@ function SkillPinSelect({
   options,
   value,
   onChange,
+  disabled,
 }: {
   options: MdTemplateDefinition[];
   value: string | null;
   onChange: (next: string | null) => void;
+  disabled?: boolean;
 }) {
   const pinned = value ? options.find((option) => option.id === value) ?? null : null;
   const displayLabel = pinned ? pinned.title : AUTO_LABEL;
@@ -224,6 +266,7 @@ function SkillPinSelect({
     <Select
       value={value ?? AUTO_VALUE}
       onValueChange={(next) => onChange(next === AUTO_VALUE ? null : next)}
+      disabled={disabled}
     >
       <SelectTrigger
         size="sm"

@@ -83,6 +83,7 @@ import { AgentAvatar } from "../components/agent-avatar";
 import { AgentEmojiPicker } from "../components/agent-emoji-picker";
 import type { AgentLocalSkillRecord } from "../types";
 import { agentEngineClient } from "@/shared/lib/api-client";
+import { buildAgentTaskChatInput } from "../lib/agent-task-upload";
 
 type EquippedSkillItem = {
   record: AgentLocalSkillRecord;
@@ -176,6 +177,7 @@ export function AgentDetailPage() {
   const [pendingDetach, setPendingDetach] = useState<EquippedSkillItem | null>(null);
   const [pendingTaskDelete, setPendingTaskDelete] = useState<RockyChatRecord | null>(null);
   const [workspaceOpenPending, setWorkspaceOpenPending] = useState(false);
+  const [taskSubmitPending, setTaskSubmitPending] = useState(false);
   const deleteChatMutation = useDeleteRockyChatMutation(null);
 
   function confirmTaskDelete() {
@@ -567,7 +569,7 @@ export function AgentDetailPage() {
           <TaskComposer
           recipientName={agent.name}
           equippedSkills={equippedTemplateSkills}
-          pending={createChatMutation.isPending}
+          pending={createChatMutation.isPending || taskSubmitPending}
           initialPinnedSkillId={initialPinnedSkillId}
           onSubmit={async ({ message, files, skill }) => {
             const fileNames = files.map((file) => file.name);
@@ -575,11 +577,17 @@ export function AgentDetailPage() {
               message || (skill ? `${skill.title}로 진행해줘.` : ""),
               fileNames,
             );
+            setTaskSubmitPending(true);
             try {
-              const chat = await createChatMutation.mutateAsync({
-                message: composedMessage,
+              const chatInput = await buildAgentTaskChatInput({
                 agentId: agent.id,
+                message: composedMessage,
                 skillId: skill?.skill.id ?? null,
+                files,
+              });
+              const chat = await createChatMutation.mutateAsync(chatInput);
+              void queryClient.invalidateQueries({
+                queryKey: ["agent-workspace-directory", agent.id],
               });
               rememberTaskAgent(chat.id, agent.id);
               const milestoneFired = fireMilestone("first-task", {
@@ -594,6 +602,8 @@ export function AgentDetailPage() {
               toast.error("작업을 시작하지 못했습니다.", {
                 description: error instanceof Error ? error.message : undefined,
               });
+            } finally {
+              setTaskSubmitPending(false);
             }
           }}
           />

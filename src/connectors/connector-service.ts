@@ -642,7 +642,7 @@ export class ConnectorService implements ConnectorServiceLike {
       };
     }
 
-    if (/\.profile\.read$/u.test(capability.id)) {
+    if (/\.(?:account|profile)\.read$/u.test(capability.id)) {
       const result = await this.readProfile(provider);
       return {
         ok: result.ok,
@@ -1560,7 +1560,7 @@ function decorateConnectorState(
     message: sanitizeConnectorPublicText(state.message) ?? "",
     lastError: sanitizeConnectorPublicText(state.lastError),
     browserAccess: buildBrowserAccess(provider, state.status, state.loginMode),
-    capabilities: getConnectorCapabilities(provider),
+    capabilities: getConnectorExecutionCapabilities(provider),
   };
 }
 
@@ -1580,35 +1580,54 @@ function getConnectorExecutionCapabilities(
 function getConnectorSkillBridgeCapabilities(
   provider: ConnectorProvider,
 ): ConnectorCapabilityRecord[] {
-  if (provider !== "threads") {
-    return [];
+  if (provider === "threads") {
+    return [
+      {
+        id: "threads.profile.read",
+        provider,
+        label: "프로필 조회",
+        description: "Rocky가 보관한 Threads 브라우저 세션으로 현재 계정 프로필을 읽습니다.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        source: "backend",
+      },
+      {
+        id: "threads.followers.read",
+        provider,
+        label: "팔로워 목록 조회",
+        description: "Rocky가 보관한 Threads 브라우저 세션으로 팔로워 화면의 이름 목록을 읽습니다.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        source: "backend",
+      },
+    ];
   }
-  return [
-    {
-      id: "threads.profile.read",
-      provider,
-      label: "프로필 조회",
-      description: "Rocky가 보관한 Threads 브라우저 세션으로 현재 계정 프로필을 읽습니다.",
-      action: "read",
-      requiresBrowser: true,
-      requiresConnectedAccount: true,
-      requiresApproval: false,
-      status: "available",
-      source: "backend",
-    },
-    {
-      id: "threads.followers.read",
-      provider,
-      label: "팔로워 목록 조회",
-      description: "Rocky가 보관한 Threads 브라우저 세션으로 팔로워 화면의 이름 목록을 읽습니다.",
-      action: "read",
-      requiresBrowser: true,
-      requiresConnectedAccount: true,
-      requiresApproval: false,
-      status: "available",
-      source: "backend",
-    },
-  ];
+
+  if (provider === "facebook") {
+    return [
+      {
+        id: "facebook.profile.read",
+        provider,
+        label: "Facebook profile read",
+        description:
+          "Rocky reads the current Facebook account profile from the connected browser session.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        source: "backend",
+      },
+    ];
+  }
+
+  return [];
 }
 
 function readPositiveInteger(value: unknown): number | null {
@@ -1674,8 +1693,10 @@ function buildBrowserAccess(
 }
 
 function isInvalidBrowserSessionMessage(message: string): boolean {
-  return /로그인 세션이 (?:유효하지|만료)|관리 가능한 블로그를 찾지 못했습니다/u.test(
-    message,
+  return (
+    /로그인 세션이 (?:유효하지|만료)|관리 가능한 블로그를 찾지 못했습니다/u.test(
+      message,
+    ) || /login session expired|reconnect the account integration/iu.test(message)
   );
 }
 

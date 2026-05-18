@@ -258,6 +258,112 @@ test("agent integrations list connectors required by installed skills", async ()
   }
 });
 
+test("agent integrations list Facebook connector capabilities for installed skills", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-integrations-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "facebook"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "facebook", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "facebook",
+        accountLabel: "Facebook account",
+        connectedAt: "2026-05-12T10:00:00.000Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-12T10:05:00.000Z",
+    idGenerator: () => "facebook-agent",
+  });
+
+  try {
+    const createResponse = await server.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        id: "facebook-agent",
+        name: "Facebook Agent",
+      },
+    });
+    assert.equal(createResponse.statusCode, 201);
+    const agent = createResponse.json<AgentRecord>();
+
+    const installResponse = await server.inject({
+      method: "PUT",
+      url: "/agents/facebook-agent/skills/md-sns-facebook",
+      payload: {
+        replace: true,
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: md-sns-facebook\n---\n# SNS · Facebook 콘텐츠\nUse when the user asks for Facebook content or account checks.\n",
+          },
+        ],
+      },
+    });
+    assert.equal(installResponse.statusCode, 200);
+    await access(
+      path.join(
+        agent.workspaceRoot,
+        ".agents",
+        "skills",
+        "md-sns-facebook",
+        "connector-capabilities.json",
+      ),
+    );
+    await access(
+      path.join(
+        agent.workspaceRoot,
+        ".agents",
+        "skills",
+        "md-sns-facebook",
+        "scripts",
+        "facebook-crud.mjs",
+      ),
+    );
+
+    const integrationsResponse = await server.inject({
+      method: "GET",
+      url: "/agents/facebook-agent/integrations",
+    });
+    assert.equal(integrationsResponse.statusCode, 200);
+    const integrations =
+      integrationsResponse.json<AgentConnectorIntegrationRecord[]>();
+    assert.equal(integrations.length, 1);
+    assert.equal(integrations[0]?.provider, "facebook");
+    assert.equal(integrations[0]?.status, "connected");
+    assert.equal(integrations[0]?.browserAccess.status, "granted");
+    assert.equal(integrations[0]?.requiredBySkills[0]?.displayName, "SNS · Facebook 콘텐츠");
+    assert.ok(
+      integrations[0]?.capabilities.some(
+        (capability) =>
+          capability.id === "facebook.profile.read" &&
+          capability.action === "read" &&
+          capability.requiresApproval === false &&
+          capability.status === "available" &&
+          capability.scriptPath === "scripts/facebook-crud.mjs" &&
+          capability.sourceSkillName === "SNS · Facebook 콘텐츠",
+      ),
+    );
+    assert.ok(
+      integrations[0]?.capabilities.some(
+        (capability) =>
+          capability.id === "facebook.posts.publish" &&
+          capability.action === "write" &&
+          capability.requiresApproval === true &&
+          capability.status === "planned",
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("agent integrations repairs existing Threads skills missing connector files", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-integrations-api-"));
   await mkdir(path.join(stateRoot, "connectors", "threads"), { recursive: true });

@@ -44,19 +44,26 @@ npm run agent -- serve --host 0.0.0.0 --port 3000
 ```
 - Prefer putting a reverse proxy and auth layer in front of the backend if traffic comes from outside a trusted network.
 
-4. Start the web UI when needed.
-- Install web dependencies with `npm --prefix web install` if needed.
-- Launch the Vite dev server with `npm run web:dev`.
+4. Start the backend and web UI together when needed.
+- Launch both services with `npm run dev`.
 - For network access during development:
 ```bash
-npm run web:dev -- --host 0.0.0.0 --port 4173
+npm run dev -- --backend-host 0.0.0.0 --web-host 0.0.0.0 --web-port 4173
+```
+
+5. Start only the web UI when needed.
+- Install web dependencies with `npm --prefix web install` if needed.
+- Launch the Vite dev server from the web package.
+- For network access during development:
+```bash
+npm --prefix web run dev -- --host 0.0.0.0 --port 4173
 ```
 - For previewing the built frontend on the network:
 ```bash
 npm --prefix web run preview -- --host 0.0.0.0 --port 4173
 ```
 
-5. Verify the backend before deeper testing.
+6. Verify the backend before deeper testing.
 - Check a simple route such as:
 ```bash
 curl -sS http://127.0.0.1:3000/agents
@@ -69,13 +76,15 @@ curl -sS http://127.0.0.1:3000/agents
 ```bash
 npm install
 npm run build
+npm run dev
+npm run dev -- --backend-host 0.0.0.0 --web-host 0.0.0.0 --web-port 4173
 node dist/src/cli.js serve --host 127.0.0.1 --port 3000
 node dist/src/cli.js serve --state-root .runtime/manual-service --host 127.0.0.1 --port 3000
 npm run agent -- serve --host 0.0.0.0 --port 3000
 curl -sS http://127.0.0.1:3000/agents
 npm --prefix web install
-npm run web:dev
-npm run web:dev -- --host 0.0.0.0 --port 4173
+npm --prefix web run dev
+npm --prefix web run dev -- --host 0.0.0.0 --port 4173
 npm --prefix web run preview -- --host 0.0.0.0 --port 4173
 ```
 

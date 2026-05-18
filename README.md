@@ -16,17 +16,23 @@ npm run build
 npm test
 ```
 
-백엔드 실행:
+개발 서버 실행:
+
+```bash
+npm run dev
+```
+
+백엔드만 실행:
 
 ```bash
 npm run agent -- serve --host 127.0.0.1 --port 3000
 ```
 
-웹 UI 실행:
+웹 UI만 실행:
 
 ```bash
 npm --prefix web install
-npm run web:dev
+npm --prefix web run dev
 ```
 
 ## Common Commands

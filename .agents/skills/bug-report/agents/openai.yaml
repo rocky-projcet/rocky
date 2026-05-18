@@ -1,4 +1,0 @@
-interface:
-  display_name: "Bug Report"
-  short_description: "Capture Playwright screenshots for described bugs and create Notion work tracker entries with embedded images"
-  default_prompt: "Use $bug-report to document the described UI or API bugs: start the dev server if needed, find real session IDs, run Playwright to capture screenshots, upload each image to catbox.moe for a public URL, then create one 작업 트래커 entry per bug in Notion with the screenshot embedded inline. Return the Notion page URLs when done."

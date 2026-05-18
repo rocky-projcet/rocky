@@ -18,6 +18,7 @@ import {
   isSafeWorkspaceInterpreterCommand,
   isSafeWorkspaceNetworkCommand,
   isSafeWorkspacePackageManagerCommand,
+  shouldUseManagedWorkspaceExecutionBypass,
   shouldUseBrowserAutomationBypass,
   shouldUseUnsandboxedShellBypass,
 } from "../../src/sessions/session-service-helpers.js";
@@ -1894,6 +1895,7 @@ test("safe read-only shell command detection only allows inspection commands", (
   assert.equal(isSafeReadOnlyShellCommand("ls -la && pwd"), false);
   assert.equal(isSafeReadOnlyShellCommand("cat /etc/passwd"), false);
   assert.equal(isSafeReadOnlyShellCommand("curl https://example.com"), false);
+  assert.equal(isSafeWorkspaceInterpreterCommand("python --version"), true);
   assert.equal(isSafeWorkspaceInterpreterCommand("python3 hello.py"), true);
   assert.equal(isSafeWorkspaceInterpreterCommand("./.venv/bin/python script.py"), true);
   assert.equal(isSafeWorkspaceInterpreterCommand("node scripts/demo.mjs"), true);
@@ -1957,6 +1959,20 @@ test("buildRuntimeRequest inherits the managed session bypass policy", () => {
     artifactsDir: "/runs/run-1/artifacts",
     outputLastMessagePath: "/runs/run-1/artifacts/last-message.txt",
   };
+  const workspaceWriteSession: AgentSessionRecord = {
+    ...session,
+    id: "session-workspace-write",
+    runtimeConfig: {
+      ...session.runtimeConfig,
+      sandbox: "workspace-write",
+      approval: "on-request",
+    },
+  };
+  const singleTaskSession: AgentSessionRecord = {
+    ...workspaceWriteSession,
+    id: "session-single-task",
+    kind: "single-task",
+  };
 
   assert.equal(
     shouldUseUnsandboxedShellBypass("Run 'ls -la' in the current workspace."),
@@ -2009,6 +2025,51 @@ test("buildRuntimeRequest inherits the managed session bypass policy", () => {
   );
   assert.equal(shouldUseBrowserAutomationBypass("파일 목록 보여줘"), false);
 
+  assert.equal(
+    shouldUseUnsandboxedShellBypass("Run 'python --version' in the current workspace."),
+    true
+  );
+  assert.equal(
+    shouldUseManagedWorkspaceExecutionBypass({
+      session,
+      input: {
+        sessionId: session.id,
+        prompt: "Run 'python --version' in the current workspace.",
+      },
+    }),
+    false
+  );
+  assert.equal(
+    shouldUseManagedWorkspaceExecutionBypass({
+      session: workspaceWriteSession,
+      input: {
+        sessionId: workspaceWriteSession.id,
+        prompt: "Create a PowerPoint deck and save it as outputs/pitch.pptx.",
+      },
+    }),
+    true
+  );
+  assert.equal(
+    shouldUseManagedWorkspaceExecutionBypass({
+      session: workspaceWriteSession,
+      input: {
+        sessionId: workspaceWriteSession.id,
+        prompt: "Run 'touch hello.txt' in the current workspace.",
+      },
+    }),
+    false
+  );
+  assert.equal(
+    shouldUseManagedWorkspaceExecutionBypass({
+      session: singleTaskSession,
+      input: {
+        sessionId: singleTaskSession.id,
+        prompt: "Summarize the weekly notes.",
+      },
+    }),
+    true
+  );
+
   const inspectionRequest = buildRuntimeRequest({
     session,
     input: {
@@ -2019,6 +2080,67 @@ test("buildRuntimeRequest inherits the managed session bypass policy", () => {
     runPaths,
   });
   assert.equal(inspectionRequest.dangerouslyBypassApprovalsAndSandbox, false);
+
+  const workspacePythonRequest = buildRuntimeRequest({
+    session: workspaceWriteSession,
+    input: {
+      sessionId: workspaceWriteSession.id,
+      prompt: "Run 'python --version' in the current workspace.",
+    },
+    runId: "run-python-version",
+    runPaths: {
+      ...runPaths,
+      runRoot: "/runs/run-python-version",
+      metadataPath: "/runs/run-python-version/metadata.json",
+      resultPath: "/runs/run-python-version/result.json",
+      eventsPath: "/runs/run-python-version/events.jsonl",
+      artifactsDir: "/runs/run-python-version/artifacts",
+      outputLastMessagePath: "/runs/run-python-version/artifacts/last-message.txt",
+    },
+  });
+  assert.equal(workspacePythonRequest.dangerouslyBypassApprovalsAndSandbox, true);
+
+  const pptxOutputRequest = buildRuntimeRequest({
+    session: workspaceWriteSession,
+    input: {
+      sessionId: workspaceWriteSession.id,
+      prompt: "Create a PowerPoint deck and save it as outputs/pitch.pptx.",
+    },
+    runId: "run-pptx-output",
+    runPaths: {
+      ...runPaths,
+      runRoot: "/runs/run-pptx-output",
+      metadataPath: "/runs/run-pptx-output/metadata.json",
+      resultPath: "/runs/run-pptx-output/result.json",
+      eventsPath: "/runs/run-pptx-output/events.jsonl",
+      artifactsDir: "/runs/run-pptx-output/artifacts",
+      outputLastMessagePath: "/runs/run-pptx-output/artifacts/last-message.txt",
+    },
+  });
+  assert.equal(pptxOutputRequest.dangerouslyBypassApprovalsAndSandbox, true);
+
+  const explicitWorkspaceSandboxedRequest = buildRuntimeRequest({
+    session: workspaceWriteSession,
+    input: {
+      sessionId: workspaceWriteSession.id,
+      prompt: "Create a PowerPoint deck and save it as outputs/pitch.pptx.",
+      dangerouslyBypassApprovalsAndSandbox: false,
+    },
+    runId: "run-explicit-workspace-sandboxed",
+    runPaths: {
+      ...runPaths,
+      runRoot: "/runs/run-explicit-workspace-sandboxed",
+      metadataPath: "/runs/run-explicit-workspace-sandboxed/metadata.json",
+      resultPath: "/runs/run-explicit-workspace-sandboxed/result.json",
+      eventsPath: "/runs/run-explicit-workspace-sandboxed/events.jsonl",
+      artifactsDir: "/runs/run-explicit-workspace-sandboxed/artifacts",
+      outputLastMessagePath: "/runs/run-explicit-workspace-sandboxed/artifacts/last-message.txt",
+    },
+  });
+  assert.equal(
+    explicitWorkspaceSandboxedRequest.dangerouslyBypassApprovalsAndSandbox,
+    false
+  );
 
   const pythonExecutionRequest = buildRuntimeRequest({
     session,

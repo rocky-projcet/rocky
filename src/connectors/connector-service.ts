@@ -642,6 +642,47 @@ export class ConnectorService implements ConnectorServiceLike {
       };
     }
 
+    if (/\.account\.read$/u.test(capability.id)) {
+      const state = decorateConnectorState(provider, this.states[provider]);
+      const ok = state.status === "connected";
+      return {
+        ok,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: ok ? "completed" : "failed",
+        resultType: "none",
+        accountLabel: state.accountLabel,
+        profile: null,
+        followers: null,
+        draft: null,
+        message: ok
+          ? `${adapter.label} connected account is available for automation.`
+          : `${adapter.label} account connection is required before automation.`,
+        checkedAt,
+      };
+    }
+
+    if (capability.id === "threads.automation.prepare") {
+      const result = await this.readProfile(provider);
+      return {
+        ok: result.ok,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: result.ok ? "completed" : "failed",
+        resultType: "profile",
+        accountLabel: result.accountLabel,
+        profile: result.profile,
+        followers: null,
+        draft: null,
+        message: result.ok
+          ? "Threads automation readiness validated with the connected account."
+          : result.message,
+        checkedAt: result.checkedAt,
+      };
+    }
+
     if (/\.profile\.read$/u.test(capability.id)) {
       const result = await this.readProfile(provider);
       return {
@@ -1584,6 +1625,19 @@ function getConnectorSkillBridgeCapabilities(
     return [];
   }
   return [
+    {
+      id: "threads.automation.prepare",
+      provider,
+      label: "Automation readiness check",
+      description:
+        "Validate the connected Threads account and expose safe profile metadata before AI automation runs.",
+      action: "read",
+      requiresBrowser: true,
+      requiresConnectedAccount: true,
+      requiresApproval: false,
+      status: "available",
+      source: "backend",
+    },
     {
       id: "threads.profile.read",
       provider,

@@ -238,6 +238,17 @@ test("agent integrations list connectors required by installed skills", async ()
     assert.ok(
       integrations[0]?.capabilities.some(
         (capability) =>
+          capability.id === "threads.automation.prepare" &&
+          capability.action === "read" &&
+          capability.requiresApproval === false &&
+          capability.status === "available" &&
+          capability.scriptPath === "scripts/threads-crud.mjs" &&
+          capability.usage === "node scripts/threads-crud.mjs prepare",
+      ),
+    );
+    assert.ok(
+      integrations[0]?.capabilities.some(
+        (capability) =>
           capability.id === "threads.posts.publish" &&
           capability.action === "write" &&
           capability.requiresApproval === true &&

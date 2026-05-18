@@ -420,6 +420,15 @@ test("connector custom browser login connects Threads without OAuth credentials"
     assert.ok(
       connected.capabilities.some(
         (capability) =>
+          capability.id === "threads.automation.prepare" &&
+          capability.action === "read" &&
+          capability.requiresBrowser === true &&
+          capability.requiresApproval === false,
+      ),
+    );
+    assert.ok(
+      connected.capabilities.some(
+        (capability) =>
           capability.id === "threads.content.write" &&
           capability.action === "write" &&
         capability.requiresApproval === true,
@@ -442,6 +451,31 @@ test("connector custom browser login connects Threads without OAuth credentials"
     assert.equal(profileBody.ok, true);
     assert.equal(profileBody.profile.username, "rocky_threads");
     assert.equal(profileReaderCalls, 1);
+
+    const executeAccountResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/threads/capabilities/threads.account.read/execute",
+    });
+    assert.equal(executeAccountResponse.statusCode, 200);
+    const accountBody = executeAccountResponse.json();
+    assert.equal(accountBody.ok, true);
+    assert.equal(accountBody.status, "completed");
+    assert.equal(accountBody.accountLabel, connected.accountLabel);
+    assert.equal(accountBody.resultType, "none");
+    assert.equal(profileReaderCalls, 1);
+
+    const executePrepareResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/threads/capabilities/threads.automation.prepare/execute",
+    });
+    assert.equal(executePrepareResponse.statusCode, 200);
+    const prepareBody = executePrepareResponse.json();
+    assert.equal(prepareBody.ok, true);
+    assert.equal(prepareBody.status, "completed");
+    assert.equal(prepareBody.resultType, "profile");
+    assert.equal(prepareBody.profile.username, "rocky_threads");
+    assert.doesNotMatch(JSON.stringify(prepareBody), /sessionid|storageStateJson|browser-profile/u);
+    assert.equal(profileReaderCalls, 2);
 
     const executeFollowersResponse = await server.inject({
       method: "POST",
@@ -467,7 +501,7 @@ test("connector custom browser login connects Threads without OAuth credentials"
     const executeWriteBody = executeWriteResponse.json();
     assert.equal(executeWriteBody.ok, false);
     assert.equal(executeWriteBody.status, "requires-approval");
-    assert.equal(profileReaderCalls, 1);
+    assert.equal(profileReaderCalls, 2);
   } finally {
     await server.close();
   }

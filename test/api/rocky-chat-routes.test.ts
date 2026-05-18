@@ -1762,6 +1762,8 @@ test("rocky chat injects Threads skill capabilities for follower requests", asyn
       /file=inputs\/rocky-chat-.*\/integrations\/threads\/followers\.json/u,
     );
     assert.match(agentContext, /Threads: connected/u);
+    assert.match(agentContext, /threads\.automation\.prepare:read:status=available/u);
+    assert.match(agentContext, /usage=node scripts\/threads-crud\.mjs prepare/u);
     assert.match(
       agentContext,
       /threads\.followers\.read:read:status=available:skill_id=md-sns-threads:skill=SNS · Threads 콘텐츠:script=scripts\/threads-crud\.mjs/u,

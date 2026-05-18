@@ -379,6 +379,15 @@ function threadsFollowerLookupWorkspacePath(chatId: string): string {
   );
 }
 
+function instagramAutomationReadinessWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "instagram",
+    "automation-readiness.json"
+  );
+}
+
 function legacyEcountProductLookupWorkspacePath(chatId: string): string {
   return path.posix.join(
     rockyTaskInputDirectory(chatId),
@@ -628,6 +637,11 @@ function hasDeleteSignal(message: string): boolean {
 function shouldPrepareThreadsFollowerLookup(message: string): boolean {
   const compact = compactText(message).toLowerCase();
   return /팔로워|followers?|follower\s+names?/iu.test(compact);
+}
+
+function shouldPrepareInstagramAutomation(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu.test(compact);
 }
 
 function hasAvailableConnectorCapability(
@@ -2150,19 +2164,20 @@ export class RockyChatService {
     message: string;
     connectorSummaries: AgentConnectorSummary[];
   }): Promise<AgentPreparedIntegrationSummary[]> {
-    if (!this.connectorService || !shouldPrepareThreadsFollowerLookup(input.message)) {
+    if (!this.connectorService) {
       return [];
     }
 
-    const threads = input.connectorSummaries.find(
+    const summaries: AgentPreparedIntegrationSummary[] = [];
+
+    if (shouldPrepareThreadsFollowerLookup(input.message)) {
+      const threads = input.connectorSummaries.find(
       (summary) =>
         summary.provider === "threads" &&
         summary.status === "connected" &&
         hasAvailableConnectorCapability(summary, "threads.followers.read")
     );
-    if (!threads) {
-      return [];
-    }
+      if (threads) {
 
     const result = await this.connectorService.executeCapability("threads", {
       capabilityId: "threads.followers.read",
@@ -2196,7 +2211,7 @@ export class RockyChatService {
       "utf8"
     );
 
-    return [
+    summaries.push(
       {
         provider: "threads",
         dataset: "followers",
@@ -2215,7 +2230,66 @@ export class RockyChatService {
         diagnostic: result.ok ? null : result.message,
         source: "fresh",
       },
-    ];
+    );
+      }
+    }
+
+    if (shouldPrepareInstagramAutomation(input.message)) {
+      const instagram = input.connectorSummaries.find(
+        (summary) => summary.provider === "instagram"
+      );
+      const hasCapability =
+        !instagram ||
+        hasAvailableConnectorCapability(instagram, "instagram.automation.prepare");
+      if (hasCapability) {
+        const result = await this.connectorService.executeCapability("instagram", {
+          capabilityId: "instagram.automation.prepare",
+        });
+        const workspacePath = instagramAutomationReadinessWorkspacePath(input.chatId);
+        const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+        await mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeFile(
+          absolutePath,
+          `${JSON.stringify(
+            {
+              provider: "instagram",
+              dataset: "automation-readiness",
+              title: "Instagram automation readiness",
+              ok: result.ok,
+              status: result.status,
+              capabilityId: result.capabilityId,
+              accountLabel: result.accountLabel,
+              checkedAt: result.checkedAt,
+              message: result.message,
+            },
+            null,
+            2
+          )}\n`,
+          "utf8"
+        );
+
+        summaries.push({
+          provider: "instagram",
+          dataset: "automation-readiness",
+          title: "Instagram automation readiness",
+          status: result.ok
+            ? "ready"
+            : result.status === "unsupported"
+              ? "unsupported"
+              : "failed",
+          api: null,
+          count: null,
+          returnedCount: null,
+          checkedAt: result.checkedAt,
+          workspacePath,
+          message: result.message,
+          diagnostic: result.ok ? null : result.message,
+          source: "fresh",
+        });
+      }
+    }
+
+    return summaries;
   }
 
   private async resolveUsedSkills(

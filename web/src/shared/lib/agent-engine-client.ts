@@ -459,7 +459,12 @@ export type ConnectorProvider =
   | "kakao-channel"
   | "medium";
 
-export type ConnectorStatus = "idle" | "connecting" | "connected" | "failed";
+export type ConnectorStatus =
+  | "idle"
+  | "planned"
+  | "connecting"
+  | "connected"
+  | "failed";
 export type ConnectorLoginMode =
   | "oauth"
   | "custom-browser"
@@ -602,6 +607,7 @@ export interface ConnectorState {
   loginUrl: string | null;
   loginMode: ConnectorLoginMode | null;
   lastError: string | null;
+  failureKind: "authentication" | "platform" | null;
   browserAccess: ConnectorBrowserAccessRecord;
   capabilities: ConnectorCapabilityRecord[];
   updatedAt: string;

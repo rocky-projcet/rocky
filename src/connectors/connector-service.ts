@@ -1,10 +1,16 @@
-import { createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
   getConnectorAdapter,
   getConnectorCapabilities,
+  isConnectorProviderAvailable,
   listSupportedProviders,
 } from "./adapters.js";
 import {
@@ -88,6 +94,24 @@ const LEGACY_STORAGE_FILE = "storage.json";
 const OAUTH_TOKEN_FILE = "oauth-token.json";
 const BROWSER_SESSION_FILE = "browser-session.json";
 const BROWSER_PROFILE_DIR = "browser-profile";
+const CONNECTOR_SECRET_KEY_FILE = "connector-secrets.key";
+
+interface EncryptedConnectorPayload {
+  algorithm: "aes-256-gcm";
+  iv: string;
+  authTag: string;
+  ciphertext: string;
+}
+
+interface StoredOAuthTokenSecret {
+  tokenPayload: Record<string, unknown>;
+}
+
+interface StoredBrowserSessionSecret {
+  storageStateJson: string;
+  browserProfileDir: string | null;
+  browserDebuggingPort: number | null;
+}
 
 export class ConnectorService implements ConnectorServiceLike {
   private readonly stateRoot: string;
@@ -141,6 +165,10 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<ConnectorState> {
     await this.ensureHydrated();
     this.assertSupported(provider);
+    if (!isConnectorProviderAvailable(provider)) {
+      this.transition(provider, buildPlannedStatePatch(provider));
+      return decorateConnectorState(provider, this.states[provider]);
+    }
     const adapter = getConnectorAdapter(provider);
     const oauth = adapter.oauth;
 
@@ -170,6 +198,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginUrl: null,
         loginMode: null,
         lastError: credentials.message,
+        failureKind: "authentication",
       });
       return decorateConnectorState(provider, this.states[provider]);
     }
@@ -304,15 +333,28 @@ export class ConnectorService implements ConnectorServiceLike {
     await this.ensureHydrated();
     this.assertSupported(provider);
     const adapter = getConnectorAdapter(provider);
+    if (!isConnectorProviderAvailable(provider)) {
+      this.transition(provider, buildPlannedStatePatch(provider));
+      return {
+        ok: false,
+        provider,
+        title: "연동 준비 중",
+        message: `${adapter.label} 연동은 준비 중입니다.`,
+        state: decorateConnectorState(provider, this.states[provider]),
+      };
+    }
 
     if (input.error) {
-      const message = input.errorDescription ?? input.error;
+      const message =
+        sanitizeConnectorPublicText(input.errorDescription ?? input.error) ??
+        "OAuth authorization failed.";
       this.transition(provider, {
         status: "failed",
         message: "OAuth 승인이 취소되었거나 실패했습니다.",
         loginUrl: null,
         loginMode: null,
         lastError: message,
+        failureKind: "authentication",
       });
       return {
         ok: false,
@@ -331,6 +373,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginUrl: null,
         loginMode: null,
         lastError: message,
+        failureKind: "authentication",
       });
       return {
         ok: false,
@@ -350,6 +393,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginUrl: null,
         loginMode: null,
         lastError: message,
+        failureKind: "authentication",
       });
       return {
         ok: false,
@@ -392,13 +436,17 @@ export class ConnectorService implements ConnectorServiceLike {
         state: decorateConnectorState(provider, this.states[provider]),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message =
+        sanitizeConnectorPublicText(
+          error instanceof Error ? error.message : String(error),
+        ) ?? "OAuth token exchange failed.";
       this.transition(provider, {
         status: "failed",
         message: "OAuth 토큰 교환에 실패했습니다.",
         loginUrl: null,
         loginMode: null,
         lastError: message,
+        failureKind: "authentication",
       });
       return {
         ok: false,
@@ -416,6 +464,17 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<ConnectorPublishDraftResult> {
     await this.ensureHydrated();
     this.assertSupported(provider);
+    if (!isConnectorProviderAvailable(provider)) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: null,
+        url: null,
+        message: `${getConnectorAdapter(provider).label} 연동은 준비 중입니다.`,
+        checkedAt: this.now(),
+      };
+    }
 
     if (provider !== "tistory") {
       return {
@@ -463,7 +522,7 @@ export class ConnectorService implements ConnectorServiceLike {
         status: "failed",
         accountLabel: session.accountLabel,
         url: null,
-        message: diagnostics.message,
+        message: sanitizeConnectorPublicText(diagnostics.message) ?? "",
         checkedAt: this.now(),
       };
     }
@@ -489,9 +548,10 @@ export class ConnectorService implements ConnectorServiceLike {
           loginUrl: null,
           loginMode: null,
           lastError: result.message,
+          failureKind: "authentication",
         });
       }
-      return result;
+      return sanitizeConnectorPublishDraftResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isInvalidBrowserSessionMessage(message)) {
@@ -504,6 +564,7 @@ export class ConnectorService implements ConnectorServiceLike {
           loginUrl: null,
           loginMode: null,
           lastError: message,
+          failureKind: "authentication",
         });
       }
       return {
@@ -512,7 +573,7 @@ export class ConnectorService implements ConnectorServiceLike {
         status: "failed",
         accountLabel: session.accountLabel,
         url: null,
-        message,
+        message: sanitizeConnectorPublicText(message) ?? "",
         checkedAt: this.now(),
       };
     }
@@ -526,6 +587,22 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     const adapter = getConnectorAdapter(provider);
     const capabilityId = input.capabilityId.trim();
+    if (!isConnectorProviderAvailable(provider)) {
+      return {
+        ok: false,
+        provider,
+        capabilityId,
+        action: null,
+        status: "unsupported",
+        resultType: "none",
+        accountLabel: null,
+        profile: null,
+        followers: null,
+        draft: null,
+        message: `${adapter.label} 연동은 준비 중입니다.`,
+        checkedAt: this.now(),
+      };
+    }
     const capability = getConnectorExecutionCapabilities(provider).find(
       (record) => record.id === capabilityId,
     );
@@ -625,6 +702,17 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     const adapter = getConnectorAdapter(provider);
     const checkedAt = this.now();
+    if (!isConnectorProviderAvailable(provider)) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: null,
+        profile: null,
+        message: `${adapter.label} 연동은 준비 중입니다.`,
+        checkedAt,
+      };
+    }
 
     const oauth = adapter.oauth;
     if (oauth.supported === true && oauth.userInfo) {
@@ -666,7 +754,7 @@ export class ConnectorService implements ConnectorServiceLike {
         status: "failed",
         accountLabel: session.accountLabel,
         profile: null,
-        message: diagnostics.message,
+        message: sanitizeConnectorPublicText(diagnostics.message) ?? "",
         checkedAt: this.now(),
       };
     }
@@ -691,9 +779,10 @@ export class ConnectorService implements ConnectorServiceLike {
           loginUrl: null,
           loginMode: null,
           lastError: result.message,
+          failureKind: "authentication",
         });
       }
-      return result;
+      return sanitizeConnectorReadProfileResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isInvalidBrowserSessionMessage(message)) {
@@ -706,6 +795,7 @@ export class ConnectorService implements ConnectorServiceLike {
           loginUrl: null,
           loginMode: null,
           lastError: message,
+          failureKind: "authentication",
         });
       }
       return {
@@ -714,7 +804,7 @@ export class ConnectorService implements ConnectorServiceLike {
         status: "failed",
         accountLabel: session.accountLabel,
         profile: null,
-        message,
+        message: sanitizeConnectorPublicText(message) ?? "",
         checkedAt: this.now(),
       };
     }
@@ -728,6 +818,17 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     const adapter = getConnectorAdapter(provider);
     const checkedAt = this.now();
+    if (!isConnectorProviderAvailable(provider)) {
+      return {
+        ok: false,
+        provider,
+        status: "failed",
+        accountLabel: null,
+        followers: null,
+        message: `${adapter.label} 연동은 준비 중입니다.`,
+        checkedAt,
+      };
+    }
     const session = await this.readStoredBrowserSession(provider);
     if (!session) {
       return {
@@ -749,7 +850,7 @@ export class ConnectorService implements ConnectorServiceLike {
         status: "failed",
         accountLabel: session.accountLabel,
         followers: null,
-        message: diagnostics.message,
+        message: sanitizeConnectorPublicText(diagnostics.message) ?? "",
         checkedAt: this.now(),
       };
     }
@@ -775,9 +876,10 @@ export class ConnectorService implements ConnectorServiceLike {
           loginUrl: null,
           loginMode: null,
           lastError: result.message,
+          failureKind: "authentication",
         });
       }
-      return result;
+      return sanitizeConnectorReadFollowerListResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isInvalidBrowserSessionMessage(message)) {
@@ -790,6 +892,7 @@ export class ConnectorService implements ConnectorServiceLike {
           loginUrl: null,
           loginMode: null,
           lastError: message,
+          failureKind: "authentication",
         });
       }
       return {
@@ -798,7 +901,7 @@ export class ConnectorService implements ConnectorServiceLike {
         status: "failed",
         accountLabel: session.accountLabel,
         followers: null,
-        message,
+        message: sanitizeConnectorPublicText(message) ?? "",
         checkedAt: this.now(),
       };
     }
@@ -830,6 +933,10 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     await this.cancelActiveBrowserSession(provider);
     await this.removeStorage(provider);
+    if (!isConnectorProviderAvailable(provider)) {
+      this.transition(provider, buildPlannedStatePatch(provider));
+      return decorateConnectorState(provider, this.states[provider]);
+    }
     this.transition(provider, {
       status: "idle",
       message: "연결이 해제되었습니다.",
@@ -901,7 +1008,7 @@ export class ConnectorService implements ConnectorServiceLike {
     );
     try {
       const raw = await readFile(browserSessionPath, "utf8");
-      return parseStoredBrowserConnection(raw, provider);
+      return await this.parseStoredBrowserSession(raw, provider);
     } catch {
       return null;
     }
@@ -918,7 +1025,7 @@ export class ConnectorService implements ConnectorServiceLike {
     const tokenPath = path.join(this.providerDir(provider), OAUTH_TOKEN_FILE);
     try {
       const raw = await readFile(tokenPath, "utf8");
-      return parseStoredOAuthToken(raw, provider);
+      return await this.parseStoredOAuthToken(raw, provider);
     } catch {
       return null;
     }
@@ -944,6 +1051,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginUrl: null,
         loginMode: null,
         lastError: event.message,
+        failureKind: "authentication",
       });
       return;
     }
@@ -980,6 +1088,9 @@ export class ConnectorService implements ConnectorServiceLike {
 
   private async hydrateFromDisk(): Promise<void> {
     for (const provider of listSupportedProviders()) {
+      if (!isConnectorProviderAvailable(provider)) {
+        continue;
+      }
       const oauthPath = path.join(this.providerDir(provider), OAUTH_TOKEN_FILE);
       try {
         const raw = await readFile(oauthPath, "utf8");
@@ -1006,7 +1117,7 @@ export class ConnectorService implements ConnectorServiceLike {
       );
       try {
         const raw = await readFile(browserSessionPath, "utf8");
-        const stored = parseStoredBrowserConnection(raw, provider);
+        const stored = parseStoredBrowserConnectionMetadata(raw, provider);
         if (stored) {
           this.transition(provider, {
             status: "connected",
@@ -1199,9 +1310,19 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<void> {
     const dir = this.providerDir(provider);
     await mkdir(dir, { recursive: true, mode: 0o700 });
+    const stored = {
+      version: 2,
+      provider: payload.provider,
+      accountLabel: payload.accountLabel,
+      connectedAt: payload.connectedAt,
+      scopes: payload.scopes,
+      secret: await this.encryptConnectorSecret<StoredOAuthTokenSecret>({
+        tokenPayload: payload.tokenPayload,
+      }),
+    };
     await writeFile(
       path.join(dir, OAUTH_TOKEN_FILE),
-      `${JSON.stringify(payload, null, 2)}\n`,
+      `${JSON.stringify(stored, null, 2)}\n`,
       {
         encoding: "utf8",
         mode: 0o600,
@@ -1222,14 +1343,140 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<void> {
     const dir = this.providerDir(provider);
     await mkdir(dir, { recursive: true, mode: 0o700 });
+    const stored = {
+      version: 2,
+      provider: payload.provider,
+      accountLabel: payload.accountLabel,
+      connectedAt: payload.connectedAt,
+      secret: await this.encryptConnectorSecret<StoredBrowserSessionSecret>({
+        storageStateJson: payload.storageStateJson,
+        browserProfileDir: payload.browserProfileDir,
+        browserDebuggingPort: payload.browserDebuggingPort,
+      }),
+    };
     await writeFile(
       path.join(dir, BROWSER_SESSION_FILE),
-      `${JSON.stringify(payload, null, 2)}\n`,
+      `${JSON.stringify(stored, null, 2)}\n`,
       {
         encoding: "utf8",
         mode: 0o600,
       },
     );
+  }
+
+  private async parseStoredOAuthToken(
+    raw: string,
+    provider: ConnectorProvider,
+  ): Promise<{
+    accountLabel: string;
+    connectedAt: string;
+    tokenPayload: Record<string, unknown>;
+    scopes: string[];
+  } | null> {
+    const parsed = parseStoredJson(raw);
+    if (!parsed) return null;
+    if (isEncryptedStoredConnectorRecord(parsed, provider)) {
+      const secret = await this.decryptConnectorSecret<StoredOAuthTokenSecret>(
+        parsed.secret,
+      );
+      if (
+        !secret.tokenPayload ||
+        typeof secret.tokenPayload !== "object" ||
+        Array.isArray(secret.tokenPayload)
+      ) {
+        return null;
+      }
+      return {
+        accountLabel: parsed.accountLabel,
+        connectedAt: parsed.connectedAt,
+        tokenPayload: secret.tokenPayload,
+        scopes: Array.isArray(parsed.scopes)
+          ? parsed.scopes.filter((scope): scope is string => typeof scope === "string")
+          : [],
+      };
+    }
+    return parseLegacyStoredOAuthToken(parsed, provider);
+  }
+
+  private async parseStoredBrowserSession(
+    raw: string,
+    provider: ConnectorProvider,
+  ): Promise<{
+    accountLabel: string;
+    connectedAt: string;
+    storageStateJson: string;
+    browserProfileDir: string | null;
+    browserDebuggingPort: number | null;
+  } | null> {
+    const parsed = parseStoredJson(raw);
+    if (!parsed) return null;
+    if (isEncryptedStoredConnectorRecord(parsed, provider)) {
+      const secret =
+        await this.decryptConnectorSecret<StoredBrowserSessionSecret>(
+          parsed.secret,
+        );
+      if (typeof secret.storageStateJson !== "string") {
+        return null;
+      }
+      return {
+        accountLabel: parsed.accountLabel,
+        connectedAt: parsed.connectedAt,
+        storageStateJson: secret.storageStateJson,
+        browserProfileDir: readOptionalString(secret.browserProfileDir),
+        browserDebuggingPort: readPort(secret.browserDebuggingPort),
+      };
+    }
+    return parseLegacyStoredBrowserConnection(parsed, provider);
+  }
+
+  private async encryptConnectorSecret<T>(secret: T): Promise<EncryptedConnectorPayload> {
+    const key = await this.readOrCreateConnectorSecretKey();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([
+      cipher.update(JSON.stringify(secret), "utf8"),
+      cipher.final(),
+    ]);
+    const authTag = cipher.getAuthTag();
+    return {
+      algorithm: "aes-256-gcm",
+      iv: iv.toString("base64"),
+      authTag: authTag.toString("base64"),
+      ciphertext: ciphertext.toString("base64"),
+    };
+  }
+
+  private async decryptConnectorSecret<T>(
+    payload: EncryptedConnectorPayload,
+  ): Promise<T> {
+    const key = await this.readOrCreateConnectorSecretKey();
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      key,
+      Buffer.from(payload.iv, "base64"),
+    );
+    decipher.setAuthTag(Buffer.from(payload.authTag, "base64"));
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(payload.ciphertext, "base64")),
+      decipher.final(),
+    ]).toString("utf8");
+    return JSON.parse(plaintext) as T;
+  }
+
+  private async readOrCreateConnectorSecretKey(): Promise<Buffer> {
+    const dir = path.join(this.stateRoot, "connectors");
+    const keyPath = path.join(dir, CONNECTOR_SECRET_KEY_FILE);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    try {
+      return Buffer.from((await readFile(keyPath, "utf8")).trim(), "base64");
+    } catch {
+      const key = randomBytes(32);
+      await writeFile(keyPath, key.toString("base64"), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      return key;
+    }
   }
 
   private transition(
@@ -1239,10 +1486,15 @@ export class ConnectorService implements ConnectorServiceLike {
     },
   ): void {
     const prev = this.states[provider];
+    const failureKind =
+      patch.status === "failed"
+        ? patch.failureKind ?? prev.failureKind ?? "platform"
+        : null;
     this.states[provider] = {
       ...prev,
       ...patch,
       provider,
+      failureKind,
       updatedAt: this.now(),
     };
   }
@@ -1257,6 +1509,16 @@ export class ConnectorService implements ConnectorServiceLike {
 }
 
 function buildIdleState(provider: ConnectorProvider, now: string): ConnectorState {
+  if (!isConnectorProviderAvailable(provider)) {
+    return {
+      provider,
+      ...buildPlannedStatePatch(provider),
+      browserAccess: buildBrowserAccess(provider, "planned", null),
+      capabilities: [],
+      updatedAt: now,
+    };
+  }
+
   return {
     provider,
     status: "idle",
@@ -1266,9 +1528,26 @@ function buildIdleState(provider: ConnectorProvider, now: string): ConnectorStat
     loginUrl: null,
     loginMode: null,
     lastError: null,
+    failureKind: null,
     browserAccess: buildBrowserAccess(provider, "idle", null),
     capabilities: [],
     updatedAt: now,
+  };
+}
+
+function buildPlannedStatePatch(
+  provider: ConnectorProvider,
+): Omit<ConnectorState, "provider" | "updatedAt" | "browserAccess" | "capabilities"> {
+  const adapter = getConnectorAdapter(provider);
+  return {
+    status: "planned",
+    message: `${adapter.label} 연동은 준비 중입니다.`,
+    accountLabel: null,
+    connectedAt: null,
+    loginUrl: null,
+    loginMode: null,
+    lastError: null,
+    failureKind: null,
   };
 }
 
@@ -1278,6 +1557,8 @@ function decorateConnectorState(
 ): ConnectorState {
   return {
     ...state,
+    message: sanitizeConnectorPublicText(state.message) ?? "",
+    lastError: sanitizeConnectorPublicText(state.lastError),
     browserAccess: buildBrowserAccess(provider, state.status, state.loginMode),
     capabilities: getConnectorCapabilities(provider),
   };
@@ -1343,6 +1624,16 @@ function buildBrowserAccess(
   loginMode: ConnectorLoginMode | null
 ): ConnectorBrowserAccessRecord {
   const adapter = getConnectorAdapter(provider);
+  if (!isConnectorProviderAvailable(provider)) {
+    return {
+      status: "unavailable",
+      policy: null,
+      readAllowed: false,
+      writeAllowedAfterApproval: false,
+      message: `${adapter.label} 연동은 준비 중입니다.`,
+    };
+  }
+
   if (adapter.browserLogin?.supported !== true) {
     return {
       status: "not-applicable",
@@ -1386,6 +1677,62 @@ function isInvalidBrowserSessionMessage(message: string): boolean {
   return /로그인 세션이 (?:유효하지|만료)|관리 가능한 블로그를 찾지 못했습니다/u.test(
     message,
   );
+}
+
+function sanitizeConnectorPublicText(value: string | null): string | null {
+  if (value === null) return null;
+  return value
+    .replace(
+      /([?&](?:access_token|refresh_token|id_token|auth_token|session_id|SESSION_ID|api_cert_key|API_CERT_KEY)=)[^&\s]+/giu,
+      "$1[redacted]",
+    )
+    .replace(
+      /("(?:(?:access|refresh|id|auth)_token|sessionid|session_id|storageStateJson|cookies?|localStorage|sessionStorage)"\s*:\s*)("[^"]*"|[^,}\]]+)/giu,
+      '$1"[redacted]"',
+    )
+    .replace(/"value"\s*:\s*"[^"]*"/giu, '"value":"[redacted]"')
+    .replace(
+      /\b(sessionid|auth_token|access_token|refresh_token|id_token)\s*=\s*[^;\s]+/giu,
+      "$1=[redacted]",
+    )
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/giu, "$1 [redacted]")
+    .replace(/\bCookie\s*:\s*[^\r\n]+/giu, "Cookie: [redacted]")
+    .replace(
+      /(?:[A-Za-z]:)?[\\/][^\s"'<>]*connectors[\\/][^\s"'<>]+[\\/]browser-profile[^\s"'<>]*/giu,
+      "[redacted connector browser profile path]",
+    )
+    .replace(
+      /\bstorageStateJson\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      "storageStateJson=[redacted]",
+    );
+}
+
+function sanitizeConnectorPublishDraftResult(
+  result: ConnectorPublishDraftResult,
+): ConnectorPublishDraftResult {
+  return {
+    ...result,
+    url: sanitizeConnectorPublicText(result.url),
+    message: sanitizeConnectorPublicText(result.message) ?? "",
+  };
+}
+
+function sanitizeConnectorReadProfileResult(
+  result: ConnectorReadProfileResult,
+): ConnectorReadProfileResult {
+  return {
+    ...result,
+    message: sanitizeConnectorPublicText(result.message) ?? "",
+  };
+}
+
+function sanitizeConnectorReadFollowerListResult(
+  result: ConnectorReadFollowerListResult,
+): ConnectorReadFollowerListResult {
+  return {
+    ...result,
+    message: sanitizeConnectorPublicText(result.message) ?? "",
+  };
 }
 
 function normalizePublishDraftInput(
@@ -1548,8 +1895,52 @@ function profileFromOAuthPayload(
   };
 }
 
-function parseStoredOAuthToken(
-  raw: string,
+function parseStoredJson(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isEncryptedStoredConnectorRecord(
+  parsed: Record<string, unknown>,
+  provider: ConnectorProvider,
+): parsed is {
+  provider: ConnectorProvider;
+  accountLabel: string;
+  connectedAt: string;
+  scopes?: unknown;
+  secret: EncryptedConnectorPayload;
+} {
+  return (
+    parsed.version === 2 &&
+    parsed.provider === provider &&
+    typeof parsed.accountLabel === "string" &&
+    typeof parsed.connectedAt === "string" &&
+    isEncryptedConnectorPayload(parsed.secret)
+  );
+}
+
+function isEncryptedConnectorPayload(value: unknown): value is EncryptedConnectorPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    record.algorithm === "aes-256-gcm" &&
+    typeof record.iv === "string" &&
+    typeof record.authTag === "string" &&
+    typeof record.ciphertext === "string"
+  );
+}
+
+function parseLegacyStoredOAuthToken(
+  parsed: Record<string, unknown>,
   provider: ConnectorProvider,
 ): {
   accountLabel: string;
@@ -1557,65 +1948,69 @@ function parseStoredOAuthToken(
   tokenPayload: Record<string, unknown>;
   scopes: string[];
 } | null {
-  try {
-    const parsed = JSON.parse(raw) as {
-      provider?: unknown;
-      accountLabel?: unknown;
-      connectedAt?: unknown;
-      tokenPayload?: unknown;
-      scopes?: unknown;
-    };
-    if (
-      parsed.provider !== provider ||
-      typeof parsed.accountLabel !== "string" ||
-      typeof parsed.connectedAt !== "string" ||
-      !parsed.tokenPayload ||
-      typeof parsed.tokenPayload !== "object" ||
-      Array.isArray(parsed.tokenPayload)
-    ) {
-      return null;
-    }
-    return {
-      accountLabel: parsed.accountLabel,
-      connectedAt: parsed.connectedAt,
-      tokenPayload: parsed.tokenPayload as Record<string, unknown>,
-      scopes: Array.isArray(parsed.scopes)
-        ? parsed.scopes.filter((scope): scope is string => typeof scope === "string")
-        : [],
-    };
-  } catch {
+  if (
+    parsed.provider !== provider ||
+    typeof parsed.accountLabel !== "string" ||
+    typeof parsed.connectedAt !== "string" ||
+    !parsed.tokenPayload ||
+    typeof parsed.tokenPayload !== "object" ||
+    Array.isArray(parsed.tokenPayload)
+  ) {
     return null;
   }
+  return {
+    accountLabel: parsed.accountLabel,
+    connectedAt: parsed.connectedAt,
+    tokenPayload: parsed.tokenPayload as Record<string, unknown>,
+    scopes: Array.isArray(parsed.scopes)
+      ? parsed.scopes.filter((scope): scope is string => typeof scope === "string")
+      : [],
+  };
 }
 
 function parseStoredOAuthConnection(
   raw: string,
   provider: ConnectorProvider,
 ): { accountLabel: string; connectedAt: string } | null {
-  try {
-    const parsed = JSON.parse(raw) as {
-      provider?: unknown;
-      accountLabel?: unknown;
-      connectedAt?: unknown;
-    };
-    if (
-      parsed.provider !== provider ||
-      typeof parsed.accountLabel !== "string" ||
-      typeof parsed.connectedAt !== "string"
-    ) {
-      return null;
-    }
-    return {
-      accountLabel: parsed.accountLabel,
-      connectedAt: parsed.connectedAt,
-    };
-  } catch {
+  const parsed = parseStoredJson(raw);
+  if (
+    !parsed ||
+    parsed.provider !== provider ||
+    typeof parsed.accountLabel !== "string" ||
+    typeof parsed.connectedAt !== "string"
+  ) {
     return null;
   }
+  return {
+    accountLabel: parsed.accountLabel,
+    connectedAt: parsed.connectedAt,
+  };
 }
 
-function parseStoredBrowserConnection(
+function parseStoredBrowserConnectionMetadata(
   raw: string,
+  provider: ConnectorProvider,
+): { accountLabel: string; connectedAt: string } | null {
+  const parsed = parseStoredJson(raw);
+  if (
+    !parsed ||
+    parsed.provider !== provider ||
+    typeof parsed.accountLabel !== "string" ||
+    typeof parsed.connectedAt !== "string"
+  ) {
+    return null;
+  }
+  if (parsed.version === 2 && !isEncryptedConnectorPayload(parsed.secret)) {
+    return null;
+  }
+  return {
+    accountLabel: parsed.accountLabel,
+    connectedAt: parsed.connectedAt,
+  };
+}
+
+function parseLegacyStoredBrowserConnection(
+  parsed: Record<string, unknown>,
   provider: ConnectorProvider,
 ): {
   accountLabel: string;
@@ -1624,42 +2019,34 @@ function parseStoredBrowserConnection(
   browserProfileDir: string | null;
   browserDebuggingPort: number | null;
 } | null {
-  try {
-    const parsed = JSON.parse(raw) as {
-      provider?: unknown;
-      accountLabel?: unknown;
-      connectedAt?: unknown;
-      storageStateJson?: unknown;
-      browserProfileDir?: unknown;
-      browserDebuggingPort?: unknown;
-    };
-    if (
-      parsed.provider !== provider ||
-      typeof parsed.accountLabel !== "string" ||
-      typeof parsed.connectedAt !== "string" ||
-      typeof parsed.storageStateJson !== "string"
-    ) {
-      return null;
-    }
-    return {
-      accountLabel: parsed.accountLabel,
-      connectedAt: parsed.connectedAt,
-      storageStateJson: parsed.storageStateJson,
-      browserProfileDir:
-        typeof parsed.browserProfileDir === "string" && parsed.browserProfileDir.trim()
-          ? parsed.browserProfileDir
-          : null,
-      browserDebuggingPort:
-        typeof parsed.browserDebuggingPort === "number" &&
-        Number.isInteger(parsed.browserDebuggingPort) &&
-        parsed.browserDebuggingPort > 0 &&
-        parsed.browserDebuggingPort <= 65_535
-          ? parsed.browserDebuggingPort
-          : null,
-    };
-  } catch {
+  if (
+    parsed.provider !== provider ||
+    typeof parsed.accountLabel !== "string" ||
+    typeof parsed.connectedAt !== "string" ||
+    typeof parsed.storageStateJson !== "string"
+  ) {
     return null;
   }
+  return {
+    accountLabel: parsed.accountLabel,
+    connectedAt: parsed.connectedAt,
+    storageStateJson: parsed.storageStateJson,
+    browserProfileDir: readOptionalString(parsed.browserProfileDir),
+    browserDebuggingPort: readPort(parsed.browserDebuggingPort),
+  };
+}
+
+function readOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readPort(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= 65_535
+    ? value
+    : null;
 }
 
 // Re-export channel type for callers that need to inspect diagnostics.

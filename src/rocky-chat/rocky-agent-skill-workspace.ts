@@ -12,6 +12,7 @@ import type {
   ConnectorBrowserAccessRecord,
   ConnectorCapabilityRecord,
   ConnectorProfileRecord,
+  ConnectorStatus,
 } from "../connectors/connector-types.js";
 import type {
   RockyAttachmentRecord,
@@ -56,7 +57,7 @@ export interface AgentPreparedIntegrationSummary {
 export interface AgentConnectorSummary {
   provider: string;
   label: string;
-  status: "idle" | "connecting" | "connected" | "failed";
+  status: ConnectorStatus;
   loginMode: string | null;
   accountLabel: string | null;
   connectedAt: string | null;

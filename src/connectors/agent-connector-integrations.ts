@@ -102,6 +102,14 @@ function toAgentConnectorIntegration(
   requiredBySkills: Array<{ id: string; displayName: string }>,
   capabilities: ConnectorCapabilityRecord[],
 ): AgentConnectorIntegrationRecord {
+  const normalizedCapabilities =
+    state.status === "planned"
+      ? capabilities.map((capability) => ({
+          ...capability,
+          status: "planned" as const,
+        }))
+      : capabilities;
+
   return {
     provider: state.provider,
     label: getConnectorAdapter(state.provider).label,
@@ -110,7 +118,7 @@ function toAgentConnectorIntegration(
     accountLabel: state.accountLabel,
     connectedAt: state.connectedAt,
     browserAccess: state.browserAccess,
-    capabilities,
+    capabilities: normalizedCapabilities,
     requiredBySkills,
   };
 }
@@ -305,6 +313,7 @@ function buildUnavailableState(provider: ConnectorProvider): ConnectorState {
     loginUrl: null,
     loginMode: null,
     lastError: null,
+    failureKind: null,
     browserAccess: {
       status: "unavailable",
       policy: null,

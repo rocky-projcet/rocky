@@ -13,6 +13,12 @@ function capability(input: Omit<ConnectorCapabilityRecord, "provider"> & {
   return input;
 }
 
+const AVAILABLE_CONNECTOR_PROVIDERS = new Set<ConnectorProvider>([
+  "threads",
+  "instagram",
+  "facebook",
+]);
+
 const threadsOAuth: ConnectorOAuthConfig = {
   supported: true,
   envPrefix: "THREADS",
@@ -208,6 +214,9 @@ const instagramAdapter: ConnectorAdapter = {
   label: "Instagram",
   loginUrl: "https://www.instagram.com/accounts/login/",
   oauth: instagramOAuth,
+  browserLogin: {
+    supported: true,
+  },
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const session = cookies.find(
@@ -227,6 +236,9 @@ const xAdapter: ConnectorAdapter = {
   label: "X (트위터)",
   loginUrl: "https://x.com/i/flow/login",
   oauth: xOAuth,
+  browserLogin: {
+    supported: true,
+  },
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const auth = cookies.find((cookie) => cookie.name === "auth_token");
@@ -243,6 +255,9 @@ const facebookAdapter: ConnectorAdapter = {
   label: "Facebook",
   loginUrl: "https://www.facebook.com/login",
   oauth: facebookOAuth,
+  browserLogin: {
+    supported: true,
+  },
   detectLoggedIn: async (page) => {
     const cookies = await page.context().cookies();
     const cUser = cookies.find((cookie) => cookie.name === "c_user");
@@ -450,8 +465,12 @@ export function getConnectorCapabilities(
   provider: ConnectorProvider
 ): ConnectorCapabilityRecord[] {
   const adapter = getConnectorAdapter(provider);
+  const available = isConnectorProviderAvailable(provider);
   if (adapter.capabilities && adapter.capabilities.length > 0) {
-    return adapter.capabilities;
+    return adapter.capabilities.map((record) => ({
+      ...record,
+      status: available ? record.status : "planned",
+    }));
   }
 
   const capabilities: ConnectorCapabilityRecord[] = [
@@ -464,6 +483,7 @@ export function getConnectorCapabilities(
       requiresBrowser: false,
       requiresConnectedAccount: true,
       requiresApproval: false,
+      status: available ? "available" : "planned",
     }),
   ];
 
@@ -483,6 +503,7 @@ export function getConnectorCapabilities(
         requiresBrowser: adapter.browserLogin?.supported === true,
         requiresConnectedAccount: true,
         requiresApproval: true,
+        status: available ? "available" : "planned",
       })
     );
   }
@@ -492,6 +513,10 @@ export function getConnectorCapabilities(
 
 export function listSupportedProviders(): ConnectorProvider[] {
   return Object.keys(REGISTRY) as ConnectorProvider[];
+}
+
+export function isConnectorProviderAvailable(provider: ConnectorProvider): boolean {
+  return AVAILABLE_CONNECTOR_PROVIDERS.has(provider);
 }
 
 function parseTwidCookie(raw: string | undefined): string | null {

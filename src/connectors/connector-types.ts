@@ -14,9 +14,12 @@ export type ConnectorProvider =
 
 export type ConnectorStatus =
   | "idle"
+  | "planned"
   | "connecting"
   | "connected"
   | "failed";
+
+export type ConnectorFailureKind = "authentication" | "platform";
 
 export type ConnectorLoginMode =
   | "oauth"
@@ -179,6 +182,7 @@ export interface ConnectorState {
   loginUrl: string | null;
   loginMode: ConnectorLoginMode | null;
   lastError: string | null;
+  failureKind: ConnectorFailureKind | null;
   browserAccess: ConnectorBrowserAccessRecord;
   capabilities: ConnectorCapabilityRecord[];
   updatedAt: string;

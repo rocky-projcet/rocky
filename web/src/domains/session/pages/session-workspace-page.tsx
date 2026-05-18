@@ -807,14 +807,18 @@ function SessionComposer(props: {
   controlsDisabled: boolean;
   errorMessage?: string | null;
   onClearError: () => void;
-  onSubmitPrompt: (input: { prompt: string; files: File[] }) => Promise<void>;
+  onSubmitPrompt: (input: { prompt: string; files: File[] }) => Promise<boolean>;
   onCancelRun: () => Promise<void>;
 }) {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [draftPrompt, setDraftPrompt] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [submitPending, setSubmitPending] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const composerError = selectionError ?? props.errorMessage ?? null;
+  const composerSendPending = props.sendPending || submitPending;
+  const composerControlsDisabled = props.controlsDisabled || submitPending;
+  const canCancelActiveRun = props.runIsActive && !composerSendPending;
   const selectedRuntimeOption =
     props.runtimeOptions.find((runtime) => runtime.kind === props.selectedRuntime) ?? null;
   const composerProvider =
@@ -880,15 +884,36 @@ function SessionComposer(props: {
   }
 
   async function submitPrompt() {
-    const prompt = draftPrompt.trim();
-    if (!prompt || props.runIsActive || props.sendPending) {
+    const submittedDraft = composerRef.current?.value ?? draftPrompt;
+    const prompt = submittedDraft.trim();
+    const submittedFiles = selectedFiles;
+
+    if (!prompt || props.runIsActive || composerSendPending) {
       return;
     }
 
-    await props.onSubmitPrompt({ prompt, files: selectedFiles });
     setDraftPrompt("");
     setSelectedFiles([]);
     setSelectionError(null);
+    props.onClearError();
+    setSubmitPending(true);
+
+    try {
+      const submitted = await props.onSubmitPrompt({ prompt, files: submittedFiles });
+      if (!submitted) {
+        setDraftPrompt((current) =>
+          current.trim().length > 0 ? current : submittedDraft
+        );
+        setSelectedFiles(submittedFiles);
+      }
+    } catch {
+      setDraftPrompt((current) =>
+        current.trim().length > 0 ? current : submittedDraft
+      );
+      setSelectedFiles(submittedFiles);
+    } finally {
+      setSubmitPending(false);
+    }
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -898,7 +923,7 @@ function SessionComposer(props: {
 
     event.preventDefault();
 
-    if (props.runIsActive || !draftPrompt.trim() || props.sendPending) {
+    if (props.runIsActive || !event.currentTarget.value.trim() || composerSendPending) {
       return;
     }
 
@@ -930,7 +955,7 @@ function SessionComposer(props: {
                 variant="ghost"
                 size="icon-xs"
                 aria-label={`${file.name} 제거`}
-                disabled={props.runIsActive || props.sendPending}
+                disabled={props.runIsActive || composerSendPending}
                 onClick={() => handleRemoveFile(file)}
                 className="shrink-0 rounded-full"
               >
@@ -956,7 +981,7 @@ function SessionComposer(props: {
             }
           }}
           onKeyDown={handleComposerKeyDown}
-          disabled={props.runIsActive}
+          disabled={props.runIsActive || composerSendPending}
           placeholder="메시지를 입력하세요"
           className="min-h-[72px] rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-6 text-foreground shadow-none focus-visible:border-transparent focus-visible:ring-0"
           style={{ minHeight: "72px", maxHeight: `${MAX_COMPOSER_HEIGHT_PX}px` }}
@@ -970,7 +995,7 @@ function SessionComposer(props: {
               <Button
                 type="button"
                 variant="outline"
-                disabled={props.controlsDisabled}
+                disabled={composerControlsDisabled}
                 className="h-9 max-w-full rounded-full border-border bg-muted/50 px-3 text-left shadow-none hover:bg-muted"
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -1007,7 +1032,7 @@ function SessionComposer(props: {
                 <Select
                   value={props.selectedRuntime}
                   onValueChange={(value) => props.onRuntimeChange(value as RuntimeKind)}
-                  disabled={props.controlsDisabled}
+                  disabled={composerControlsDisabled}
                 >
                   <SelectTrigger
                     aria-label="실행 엔진"
@@ -1036,7 +1061,7 @@ function SessionComposer(props: {
                     onValueChange={(value) =>
                       props.onOllamaLaunchTargetChange(value as RuntimeOllamaLaunchTarget)
                     }
-                    disabled={props.controlsDisabled}
+                    disabled={composerControlsDisabled}
                   >
                     <SelectTrigger
                       aria-label="Ollama 실행기"
@@ -1060,7 +1085,7 @@ function SessionComposer(props: {
                   <Select
                     value={props.selectedModel}
                     onValueChange={(value) => props.onModelChange(value)}
-                    disabled={props.controlsDisabled}
+                    disabled={composerControlsDisabled}
                   >
                     <SelectTrigger
                       aria-label="모델"
@@ -1096,7 +1121,7 @@ function SessionComposer(props: {
                   <Select
                     value={props.selectedReasoningEffort}
                     onValueChange={props.onReasoningEffortChange}
-                    disabled={props.controlsDisabled}
+                    disabled={composerControlsDisabled}
                   >
                     <SelectTrigger
                       aria-label="추론 수준"
@@ -1127,7 +1152,7 @@ function SessionComposer(props: {
                   <Select
                     value={props.selectedServiceTier}
                     onValueChange={props.onServiceTierChange}
-                    disabled={props.controlsDisabled}
+                    disabled={composerControlsDisabled}
                   >
                     <SelectTrigger
                       aria-label="응답 속도"
@@ -1161,7 +1186,7 @@ function SessionComposer(props: {
 
         <CompactFileAttachmentPicker
           files={selectedFiles}
-          disabled={props.runIsActive || props.sendPending}
+          disabled={props.runIsActive || composerSendPending}
           buttonLabel="파일 추가"
           inline
           iconOnly
@@ -1172,46 +1197,46 @@ function SessionComposer(props: {
         />
 
         <Button
-          type={props.runIsActive ? "button" : "submit"}
+          type={canCancelActiveRun ? "button" : "submit"}
           aria-label={
-            props.runIsActive
+            canCancelActiveRun
               ? props.cancelPending
                 ? "실행 취소 중"
                 : "실행 취소"
-              : props.sendPending
+              : composerSendPending
                 ? "프롬프트 전송 중"
                 : "프롬프트 전송"
           }
           onClick={
-            props.runIsActive
+            canCancelActiveRun
               ? () => {
                 void props.onCancelRun();
               }
               : undefined
           }
           disabled={
-            props.runIsActive
+            canCancelActiveRun
               ? props.cancelPending
-              : !draftPrompt.trim() || props.sendPending
+              : !draftPrompt.trim() || composerSendPending
           }
           className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-30"
         >
-          {props.runIsActive && props.cancelPending ? (
+          {canCancelActiveRun && props.cancelPending ? (
             <span
               aria-hidden="true"
               className="h-4 w-4 animate-spin rounded-full border-2 border-card/30 border-t-card bg-transparent p-0"
             />
           ) : null}
-          {!props.runIsActive && props.sendPending ? (
+          {!canCancelActiveRun && composerSendPending ? (
             <span
               aria-hidden="true"
               className="h-4 w-4 animate-spin rounded-full border-2 border-card/30 border-t-card bg-transparent p-0"
             />
           ) : null}
-          {props.runIsActive && !props.cancelPending ? (
+          {canCancelActiveRun && !props.cancelPending ? (
             <Square size={16} className="fill-current" />
           ) : null}
-          {!props.runIsActive && !props.sendPending ? (
+          {!canCancelActiveRun && !composerSendPending ? (
             <Send size={16} />
           ) : null}
         </Button>
@@ -1973,16 +1998,16 @@ export function SessionWorkspacePage() {
     reasoningEffort?: string | null;
     serviceTier?: string | null;
     optimistic?: boolean;
-  }) {
+  }): Promise<boolean> {
     const currentSession = session;
     const prompt = input.prompt.trim();
 
     if (!currentSession || isArchivedSession) {
-      return;
+      return false;
     }
 
     if (!prompt) {
-      return;
+      return false;
     }
 
     const execution = resolveExecutionSelection(input);
@@ -2021,6 +2046,7 @@ export function SessionWorkspacePage() {
       } catch {
         // Keep optimistic state until the next run poll or terminal sync catches up.
       }
+      return true;
     } catch (error) {
       const detail =
         error instanceof Error ? error.message : "메시지 전송 요청을 처리하지 못했습니다.";
@@ -2032,6 +2058,7 @@ export function SessionWorkspacePage() {
       toast.error("메시지 전송에 실패했습니다", {
         description: detail,
       });
+      return false;
     }
   }
 

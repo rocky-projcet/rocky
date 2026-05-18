@@ -160,6 +160,19 @@ type FileMentionRange = {
   end: number;
 };
 
+type FileMentionInsertRequest = {
+  id: number;
+  file: TemplatePanelFile;
+  range?: FileMentionRange;
+};
+
+type ChatComposerSubmitState = {
+  message: string;
+  files: File[];
+  canSend: boolean;
+  submitPending: boolean;
+};
+
 type TemplateFilePanelContext = {
   title: string;
   outputFormatLabel: string;
@@ -3034,11 +3047,61 @@ function MessageBubble({
   );
 }
 
+function hasCommittedOptimisticMessage(
+  messages: RockyMessageRecord[],
+  optimisticMessage: RockyMessageRecord
+): boolean {
+  const optimisticCreatedAt = Date.parse(optimisticMessage.createdAt);
+
+  return messages.some(
+    (message) =>
+      message.role === "user" &&
+      message.text === optimisticMessage.text &&
+      Date.parse(message.createdAt) >= optimisticCreatedAt
+  );
+}
+
+function appendOptimisticMessage(
+  messages: RockyMessageRecord[],
+  optimisticMessage: RockyMessageRecord | null,
+  chatId: string
+): RockyMessageRecord[] {
+  if (!optimisticMessage || optimisticMessage.chatId !== chatId) {
+    return messages;
+  }
+
+  return hasCommittedOptimisticMessage(messages, optimisticMessage)
+    ? messages
+    : [...messages, optimisticMessage];
+}
+
+function buildOptimisticUserMessage(
+  chat: RockyChatRecord,
+  text: string,
+  createdAt: string
+): RockyMessageRecord {
+  return {
+    id: `optimistic-user-${createdAt}`,
+    chatId: chat.id,
+    role: "user",
+    intent: chat.intent,
+    text,
+    attachmentIds: [],
+    domain: chat.domain,
+    workerId: chat.worker?.id ?? null,
+    skillCandidateIds: [],
+    usedSkills: [],
+    dispatchId: null,
+    createdAt,
+  };
+}
+
 function MessageList({
   agentWorkspaceRootsByAgentId,
   chat,
   endRef,
   onOpenConversationFile,
+  optimisticMessage,
   runProgressByRunId,
   showAnswerDuration,
   transcriptsBySessionId,
@@ -3047,13 +3110,19 @@ function MessageList({
   chat: RockyChatRecord;
   endRef: RefObject<HTMLDivElement | null>;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
+  optimisticMessage: RockyMessageRecord | null;
   runProgressByRunId: Record<string, string>;
   showAnswerDuration: boolean;
   transcriptsBySessionId: Record<string, AgentSessionMessage[]>;
 }) {
+  const messages = useMemo(
+    () => appendOptimisticMessage(chat.messages, optimisticMessage, chat.id),
+    [chat.id, chat.messages, optimisticMessage]
+  );
+
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-5 pb-8">
-      {chat.messages.map((message) => (
+      {messages.map((message) => (
         <MessageBubble
           agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
           key={message.id}
@@ -3118,22 +3187,30 @@ type ActiveFileMention = FileMentionRange & {
 };
 
 function activeFileMentionAt(value: string, caretIndex: number): ActiveFileMention | null {
-  const beforeCaret = value.slice(0, caretIndex);
-  const match = /(^|\s)@([^\s@]*)$/.exec(beforeCaret);
-
-  if (!match) {
-    return null;
+  let start = caretIndex;
+  while (start > 0 && !/\s/.test(value[start - 1] ?? "")) {
+    start -= 1;
   }
 
-  const leadingSpace = match[1] ?? "";
-  const query = match[2] ?? "";
-  const start = beforeCaret.length - match[0].length + leadingSpace.length;
+  const token = value.slice(start, caretIndex);
+  if (!token.startsWith("@") || token.includes("@", 1)) {
+    return null;
+  }
 
   return {
     start,
     end: caretIndex,
-    query,
+    query: token.slice(1),
   };
+}
+
+function canSubmitChatComposer({
+  message,
+  files,
+  canSend,
+  submitPending,
+}: ChatComposerSubmitState): boolean {
+  return (message.trim().length > 0 || files.length > 0) && canSend && !submitPending;
 }
 
 function fileMentionMatches(file: TemplatePanelFile, query: string): boolean {
@@ -3211,13 +3288,11 @@ function ChatComposer({
   canStop,
   errorMessage,
   files,
+  mentionInsertRequest,
   mentionableFiles,
-  message,
   onFilesChange,
   onFileRemove,
-  onInsertFileMention,
   onStop,
-  onMessageChange,
   onSubmit,
   textareaRef,
   stopPending,
@@ -3226,19 +3301,20 @@ function ChatComposer({
   canStop: boolean;
   errorMessage: string | undefined;
   files: File[];
+  mentionInsertRequest: FileMentionInsertRequest | null;
   mentionableFiles: TemplatePanelFile[];
-  message: string;
   onFilesChange: (files: File[]) => void;
   onFileRemove: (file: File) => void;
-  onInsertFileMention: (file: TemplatePanelFile, range?: FileMentionRange) => void;
   onStop: () => void;
-  onMessageChange: (message: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmit: (message: string, files: File[]) => Promise<boolean>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   stopPending: boolean;
 }) {
+  const [message, setMessage] = useState("");
+  const [submitPending, setSubmitPending] = useState(false);
   const [activeMention, setActiveMention] = useState<ActiveFileMention | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const handledMentionRequestIdRef = useRef(0);
   const mentionOptions = useMemo(() => {
     if (!activeMention) {
       return [];
@@ -3261,24 +3337,119 @@ function ChatComposer({
     );
   }
 
+  function insertMentionIntoDraft(
+    file: TemplatePanelFile,
+    range?: FileMentionRange
+  ) {
+    let nextCursor = 0;
+
+    setMessage((current) => {
+      const textarea = textareaRef.current;
+      const fallbackStart = textarea?.selectionStart ?? current.length;
+      const fallbackEnd = textarea?.selectionEnd ?? fallbackStart;
+      const start = Math.max(0, Math.min(range?.start ?? fallbackStart, current.length));
+      const end = Math.max(start, Math.min(range?.end ?? fallbackEnd, current.length));
+      const prefix = current.slice(0, start);
+      const suffix = current.slice(end);
+      const leadingSpace = prefix.length > 0 && !/\s$/.test(prefix) ? " " : "";
+      const trailingSpace = suffix.length === 0 || !/^\s/.test(suffix) ? " " : "";
+      const mention = `${leadingSpace}${fileMentionToken(file)}${trailingSpace}`;
+      nextCursor = prefix.length + mention.length;
+
+      return `${prefix}${mention}${suffix}`;
+    });
+
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
   function insertMention(file: TemplatePanelFile) {
-    if (!activeMention) {
-      onInsertFileMention(file);
+    insertMentionIntoDraft(
+      file,
+      activeMention
+        ? {
+            start: activeMention.start,
+            end: activeMention.end,
+          }
+        : undefined
+    );
+    setActiveMention(null);
+  }
+
+  useEffect(() => {
+    if (
+      !mentionInsertRequest ||
+      handledMentionRequestIdRef.current === mentionInsertRequest.id
+    ) {
       return;
     }
 
-    onInsertFileMention(file, {
-      start: activeMention.start,
-      end: activeMention.end,
-    });
+    handledMentionRequestIdRef.current = mentionInsertRequest.id;
+    insertMentionIntoDraft(mentionInsertRequest.file, mentionInsertRequest.range);
     setActiveMention(null);
+  }, [mentionInsertRequest]);
+
+  function restoreSubmittedDraft(submittedMessage: string, submittedFiles: File[]) {
+    setMessage((current) =>
+      current.trim().length > 0 ? current : submittedMessage
+    );
+    onFilesChange(submittedFiles);
   }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const submittedMessage = textareaRef.current?.value ?? message;
+    const submittedFiles = files;
+
+    if (
+      !canSubmitChatComposer({
+        message: submittedMessage,
+        files: submittedFiles,
+        canSend,
+        submitPending,
+      })
+    ) {
+      return;
+    }
+
+    setMessage("");
+    setActiveMention(null);
+    onFilesChange([]);
+    setSubmitPending(true);
+
+    try {
+      const submitted = await onSubmit(submittedMessage, submittedFiles);
+      if (!submitted) {
+        restoreSubmittedDraft(submittedMessage, submittedFiles);
+      }
+    } catch {
+      restoreSubmittedDraft(submittedMessage, submittedFiles);
+    } finally {
+      setSubmitPending(false);
+    }
+  }
+
+  const submitEnabled = canSubmitChatComposer({
+    message,
+    files,
+    canSend,
+    submitPending,
+  });
 
   return (
     <footer className="shrink-0 bg-background px-3 pb-4 pt-2 md:px-6 md:pb-6">
       <form
         className="mx-auto w-full max-w-4xl rounded-2xl border bg-card p-2 shadow-sm"
-        onSubmit={onSubmit}
+        onSubmit={(event) => {
+          void handleSubmit(event);
+        }}
       >
         <SelectedFileList files={files} onRemove={onFileRemove} />
 
@@ -3295,6 +3466,7 @@ function ChatComposer({
             variant="ghost"
             size="icon"
             nativeButton={false}
+            disabled={submitPending}
             aria-label="자료 추가"
             className="shrink-0"
             render={<label />}
@@ -3313,11 +3485,12 @@ function ChatComposer({
           <Textarea
             ref={textareaRef}
             value={message}
+            disabled={submitPending}
             onBlur={() => {
               window.setTimeout(() => setActiveMention(null), 120);
             }}
             onChange={(event) => {
-              onMessageChange(event.target.value);
+              setMessage(event.target.value);
               updateActiveMention(
                 event.target.value,
                 event.target.selectionStart ?? event.target.value.length
@@ -3357,6 +3530,9 @@ function ChatComposer({
               }
 
               if (event.key === "Enter" && !event.shiftKey) {
+                if (event.nativeEvent.isComposing) {
+                  return;
+                }
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
               }
@@ -3379,11 +3555,18 @@ function ChatComposer({
           <Button
             type="submit"
             size="icon"
-            disabled={!canSend}
-            aria-label="보내기"
+            disabled={!submitEnabled}
+            aria-label={submitPending ? "전송 중" : "보내기"}
             className="shrink-0"
           >
-            <Send />
+            {submitPending ? (
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 animate-spin rounded-full border-2 border-card/30 border-t-card bg-transparent p-0"
+              />
+            ) : (
+              <Send />
+            )}
           </Button>
         </div>
 
@@ -5852,7 +6035,8 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const isTaskDetail = mode === "task-detail";
   const routeTaskId = isTaskDetail ? params.taskId ?? null : null;
   const [chat, setChat] = useState<RockyChatRecord | null>(null);
-  const [message, setMessage] = useState("");
+  const [optimisticUserMessage, setOptimisticUserMessage] =
+    useState<RockyMessageRecord | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const pageDrop = useFileDropZone({
     onFiles: (incoming) => setFiles((current) => [...current, ...incoming]),
@@ -5860,6 +6044,8 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const [submitInFlight, setSubmitInFlight] = useState(false);
   const [templateExecutionTemplate, setTemplateExecutionTemplate] =
     useState<MdTemplateDefinition | null>(null);
+  const [fileMentionInsertRequest, setFileMentionInsertRequest] =
+    useState<FileMentionInsertRequest | null>(null);
   const [filePanelSelectionRequest, setFilePanelSelectionRequest] =
     useState<TemplateFilePanelSelectionRequest | null>(null);
   const [filePanelOpen, setFilePanelOpen] = useState(true);
@@ -5884,6 +6070,8 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   );
   const { data: refreshedChat, refetch: refetchRockyChat } = rockyChatQuery;
   const messageCount = chat?.messages.length ?? 0;
+  const visibleMessageCount =
+    messageCount + (optimisticUserMessage?.chatId === chat?.id ? 1 : 0);
   const hasActiveOrchestration =
     chat?.dispatches.some((dispatch) => {
       const status = dispatch.orchestration?.status;
@@ -6117,7 +6305,6 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     sendMessageMutation.isPending;
   const pending = mutationPending || cancelRockyChatMutation.isPending;
   const canSend =
-    (message.trim().length > 0 || files.length > 0) &&
     !mutationPending &&
     !cancelRockyChatMutation.isPending &&
     !hasActiveOrchestration &&
@@ -6140,11 +6327,13 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   useEffect(() => {
     if (!isTaskDetail) {
       setChat(null);
+      setOptimisticUserMessage(null);
       setFilePanelSelectionRequest(null);
       return;
     }
 
     setChat((current) => (current?.id === routeTaskId ? current : null));
+    setOptimisticUserMessage(null);
     setFilePanelSelectionRequest(null);
     setTemplateExecutionTemplate(null);
   }, [isTaskDetail, routeTaskId]);
@@ -6253,15 +6442,25 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [messageCount, transcriptRefreshMarker]);
+  }, [visibleMessageCount, transcriptRefreshMarker]);
 
-  const sendRockyInput = async (inputMessage: string, inputFiles: File[]) => {
+  const sendRockyInput = async (
+    inputMessage: string,
+    inputFiles: File[]
+  ): Promise<boolean> => {
     if (submitInFlightRef.current) {
-      return;
+      return false;
     }
 
     submitInFlightRef.current = true;
     setSubmitInFlight(true);
+    const trimmedMessage = inputMessage.trim();
+    if (chat && trimmedMessage) {
+      const createdAt = new Date().toISOString();
+      setOptimisticUserMessage(
+        buildOptimisticUserMessage(chat, trimmedMessage, createdAt)
+      );
+    }
     try {
       const attachments = await Promise.all(
         inputFiles.map(async (file) => ({
@@ -6272,7 +6471,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         }))
       );
       const input = {
-        message: inputMessage.trim(),
+        message: trimmedMessage,
         attachments,
       };
       const nextChat = chat
@@ -6280,25 +6479,31 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         : await createChatMutation.mutateAsync(input);
 
       setChat(nextChat);
-      setMessage("");
+      setOptimisticUserMessage(null);
       setFiles([]);
       setFilePanelSelectionRequest(null);
       if (!isTaskDetail) {
         navigate(`/tasks/${encodeURIComponent(nextChat.id)}`);
       }
+      return true;
+    } catch (error) {
+      setOptimisticUserMessage(null);
+      throw error;
     } finally {
       submitInFlightRef.current = false;
       setSubmitInFlight(false);
     }
   };
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submit = async (
+    inputMessage: string,
+    inputFiles: File[]
+  ): Promise<boolean> => {
     if (!canSend) {
-      return;
+      return false;
     }
 
-    await sendRockyInput(message, files);
+    return sendRockyInput(inputMessage, inputFiles);
   };
 
   const startTemplate = async (
@@ -6309,14 +6514,16 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       return;
     }
 
-    await sendRockyInput(
+    const submitted = await sendRockyInput(
       buildTemplateRunPrompt(template, {
         selectedFileNames: files.map((file) => file.name),
         userBrief,
       }),
       files
     );
-    setTemplateExecutionTemplate(null);
+    if (submitted) {
+      setTemplateExecutionTemplate(null);
+    }
   };
 
   const stopActiveResponse = async () => {
@@ -6371,33 +6578,16 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     file: TemplatePanelFile,
     range?: FileMentionRange
   ) => {
-    let nextCursor = 0;
-
-    setMessage((current) => {
-      const textarea = composerTextareaRef.current;
-      const fallbackStart = textarea?.selectionStart ?? current.length;
-      const fallbackEnd = textarea?.selectionEnd ?? fallbackStart;
-      const start = Math.max(0, Math.min(range?.start ?? fallbackStart, current.length));
-      const end = Math.max(start, Math.min(range?.end ?? fallbackEnd, current.length));
-      const prefix = current.slice(0, start);
-      const suffix = current.slice(end);
-      const leadingSpace = prefix.length > 0 && !/\s$/.test(prefix) ? " " : "";
-      const trailingSpace = suffix.length === 0 || !/^\s/.test(suffix) ? " " : "";
-      const mention = `${leadingSpace}${fileMentionToken(file)}${trailingSpace}`;
-      nextCursor = prefix.length + mention.length;
-
-      return `${prefix}${mention}${suffix}`;
-    });
-
-    window.requestAnimationFrame(() => {
-      const textarea = composerTextareaRef.current;
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCursor, nextCursor);
-    });
+    const nextId = filePanelSelectionRequestIdRef.current + 1;
+    filePanelSelectionRequestIdRef.current = nextId;
+    const request: FileMentionInsertRequest = {
+      id: nextId,
+      file,
+    };
+    if (range) {
+      request.range = range;
+    }
+    setFileMentionInsertRequest(request);
   };
 
   return (
@@ -6458,12 +6648,13 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
                 </Button>
               ) : null}
             </div>
-          ) : chat && messageCount > 0 ? (
+          ) : chat && visibleMessageCount > 0 ? (
             <MessageList
               agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
               chat={chat}
               endRef={messagesEndRef}
               onOpenConversationFile={openConversationFile}
+              optimisticMessage={optimisticUserMessage}
               runProgressByRunId={runProgressByRunId}
               showAnswerDuration={isTaskDetail}
               transcriptsBySessionId={transcriptsBySessionId}
@@ -6484,17 +6675,15 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
           canStop={canStop}
           errorMessage={errorMessage}
           files={files}
+          mentionInsertRequest={fileMentionInsertRequest}
           mentionableFiles={mentionablePanelFiles}
-          message={message}
           onFilesChange={setFiles}
           onFileRemove={(file) =>
             setFiles((current) => current.filter((item) => item !== file))
           }
-          onInsertFileMention={insertFileMention}
           onStop={() => {
             void stopActiveResponse();
           }}
-          onMessageChange={setMessage}
           onSubmit={submit}
           textareaRef={composerTextareaRef}
           stopPending={cancelRockyChatMutation.isPending}

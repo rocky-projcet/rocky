@@ -20,6 +20,30 @@ const FALLBACK_OFFICE_CONVERTERS = [
   "/usr/bin/libreoffice",
 ];
 
+function buildConverterInvocation(
+  converter: string,
+  args: string[]
+): { file: string; args: string[]; shell: boolean } {
+  if (process.platform !== "win32") {
+    return { file: converter, args, shell: false };
+  }
+
+  const extension = path.extname(converter).toLowerCase();
+  if (extension === ".ps1") {
+    return {
+      file: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", converter, ...args],
+      shell: false,
+    };
+  }
+
+  return {
+    file: converter,
+    args,
+    shell: extension === ".cmd" || extension === ".bat",
+  };
+}
+
 function officeConverterCandidates(): string[] {
   const configured = process.env.ROCKY_OFFICE_CONVERTER?.trim();
 
@@ -98,10 +122,19 @@ export async function convertPresentationToPdfPreview(sourcePath: string): Promi
   let lastError: unknown = null;
   for (const converter of officeConverterCandidates()) {
     try {
+      const invocation = buildConverterInvocation(converter, [
+        "--headless",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        outDir,
+        sourcePath,
+      ]);
       await execFileAsync(
-        converter,
-        ["--headless", "--convert-to", "pdf", "--outdir", outDir, sourcePath],
+        invocation.file,
+        invocation.args,
         {
+          shell: invocation.shell,
           timeout: OFFICE_CONVERSION_TIMEOUT_MS,
           windowsHide: true,
         }

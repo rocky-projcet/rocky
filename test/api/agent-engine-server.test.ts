@@ -233,6 +233,30 @@ class FakeRuntime extends RuntimeAdapter {
 }
 
 async function createFakeOfficeConverter(directory: string): Promise<string> {
+  if (process.platform === "win32") {
+    const converterPath = path.join(directory, "fake-office-converter.ps1");
+    await writeFile(
+      converterPath,
+      `param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+$OutDir = $null
+for ($Index = 0; $Index -lt $Args.Count; $Index += 1) {
+  if ($Args[$Index] -eq "--outdir") {
+    $OutDir = $Args[$Index + 1]
+    break
+  }
+}
+if (-not $OutDir) {
+  throw "Missing --outdir"
+}
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+Set-Content -LiteralPath (Join-Path $OutDir "converted.pdf") -Value "%PDF-fake-converted" -NoNewline
+`,
+      "utf8"
+    );
+
+    return converterPath;
+  }
+
   const converterPath = path.join(directory, "fake-office-converter.sh");
   await writeFile(
     converterPath,

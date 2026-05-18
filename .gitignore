@@ -6,7 +6,9 @@ __pycache__/
 node_modules/
 .runtime/
 .tmp/
+.tools/
 dist/
+releases/
 web/node_modules/
 web/dist/
 web/.vite/

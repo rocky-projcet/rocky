@@ -103,8 +103,8 @@ function folderOpenCommand(
 
   if (platform === "win32") {
     return {
-      file: "explorer.exe",
-      args: [folderPath],
+      file: "cmd.exe",
+      args: ["/c", "start", "", folderPath],
       application: "File Explorer",
     };
   }

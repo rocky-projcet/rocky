@@ -1,0 +1,3 @@
+display_name: Rocky Release
+short_description: Build and publish Rocky GitHub releases.
+default_prompt: Prepare and publish a Rocky release.

@@ -1,6 +1,6 @@
 ---
 name: git-safe-operations
-description: Prepare local git state for publication in this repository. Use when inspecting the worktree, syncing or rebasing with develop, creating or switching branches, staging intended files, committing, or pushing without handling Linear issue updates or GitHub PR metadata directly.
+description: Prepare local git state for publication in this repository. Use when inspecting the worktree, syncing or rebasing with develop, creating or switching branches, staging intended files, committing, or pushing without handling GitHub Issue or PR metadata directly.
 ---
 
 # Git Safe Operations
@@ -9,7 +9,8 @@ description: Prepare local git state for publication in this repository. Use whe
 
 - Keep local git work narrow, explicit, and reversible.
 - Own only branch, staging, commit, and push operations.
-- Hand off issue tracking to `$linear` and pull request work to `$github`.
+- Hand off GitHub Issue tracking and pull request work to `$github`.
+- Do not use Linear unless the user explicitly asks for legacy Linear handling.
 
 ## Workflow
 
@@ -24,7 +25,7 @@ description: Prepare local git state for publication in this repository. Use whe
 - In this repository, treat `develop` as the integration base branch for publication work.
 - When preparing a publish branch, start from updated `origin/develop` rather than from the current local topic branch unless the user explicitly asked to keep the current branch.
 - If work starts from the integration branch, prefer an issue-based branch name when one exists.
-- In this repository, prefer the Linear-provided branch name such as `devgurata/roc-5-short-topic` when the issue already exists.
+- In this repository, prefer a GitHub Issue branch name such as `codex/123-short-topic` when the issue already exists.
 - If scoped work already exists on another branch, move only the intended commits or restage the scoped diff onto the fresh issue branch.
 - Do not rename, recreate, or reset a user branch unless explicitly asked.
 
@@ -40,7 +41,7 @@ description: Prepare local git state for publication in this repository. Use whe
 - Stage only the intended files.
 - Exclude transient files such as `__pycache__/`, `*.pyc`, editor leftovers, and unrelated local config.
 - If the user says only "commit", choose a concise message that matches the actual diff.
-- Include the issue key in the commit message only when it clarifies traceability.
+- Include a GitHub Issue reference such as `#123` in the commit message only when it clarifies traceability.
 - If `git commit` fails because `user.name` or `user.email` is missing, reuse the most recent local author from `git log -5 --format='%an <%ae>'` and set it with repository-local `git config`.
 - Do not amend, rebase, or force-push unless explicitly requested.
 
@@ -52,7 +53,7 @@ description: Prepare local git state for publication in this repository. Use whe
 
 6. Hand off after push.
 - After the branch is pushed, use `$github` for PR creation or PR state inspection.
-- If the branch maps to a Linear issue, use `$linear` to attach the PR URL and leave a short progress note.
+- If the branch maps to a GitHub Issue, use `$github` to attach the PR URL or leave a short progress note.
 
 7. Report the outcome.
 - For commits, report the short hash and commit message.

@@ -1,6 +1,6 @@
 ---
 name: mcp-on-demand
-description: Enable or disable Codex MCP and plugin integrations only when needed for this repository. Use when a workflow needs Notion, Linear, GitHub, or Google Drive access and the default state should remain disabled until explicitly turned on.
+description: Enable or disable Codex MCP and plugin integrations only when needed for this repository. Use when a workflow needs Notion, GitHub, Google Drive, or explicitly requested legacy Linear access and the default state should remain disabled until explicitly turned on.
 ---
 
 # MCP On Demand
@@ -15,7 +15,7 @@ description: Enable or disable Codex MCP and plugin integrations only when neede
 ## Managed Providers
 
 - `notion`: project-local Notion MCP in `.codex/config.toml` and `.mcp.json`
-- `linear`: global Linear MCP in `~/.codex/config.toml`
+- `linear`: legacy global Linear MCP in `~/.codex/config.toml`; enable only when the user explicitly asks for Linear
 - `github`: global GitHub plugin in `~/.codex/config.toml`
 - `google-drive`: global Google Drive plugin in `~/.codex/config.toml`
 
@@ -26,8 +26,10 @@ description: Enable or disable Codex MCP and plugin integrations only when neede
 
 2. Enable only the providers required for the next task.
 - Run `bash .agents/skills/mcp-on-demand/scripts/mcp-on-demand.sh enable notion`
-- Run `bash .agents/skills/mcp-on-demand/scripts/mcp-on-demand.sh enable linear github`
-- Run `bash .agents/skills/mcp-on-demand/scripts/mcp-on-demand.sh enable notion linear github`
+- Run `bash .agents/skills/mcp-on-demand/scripts/mcp-on-demand.sh enable github`
+- Run `bash .agents/skills/mcp-on-demand/scripts/mcp-on-demand.sh enable notion github`
+- Run `bash .agents/skills/mcp-on-demand/scripts/mcp-on-demand.sh enable linear` only for explicit legacy Linear requests.
+- Use the `linear` provider only when the user explicitly asks for Linear or provides a Linear URL/key.
 - The script always disables all managed providers first, then re-enables only the requested set.
 
 3. Stop and ask for a restart.
@@ -41,5 +43,6 @@ description: Enable or disable Codex MCP and plugin integrations only when neede
 ## Notes
 
 - Prefer the script over hand-editing the managed MCP blocks.
-- If `$linear`, `$github`, `$roc-publish`, or `$bug-report` cannot access their provider because it is disabled, use this skill first and stop after the config change.
+- If `$github`, `$roc-publish`, or `$bug-report` cannot access their provider because it is disabled, use this skill first and stop after the config change.
+- Do not enable `$linear` for normal repository issue creation or publication; GitHub Issues are the primary tracker.
 - If the provider is enabled but still unavailable, the next session may need a normal OAuth or app re-auth flow.

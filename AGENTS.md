@@ -12,12 +12,19 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 - `rocky-runtime-probe` -> `.agents/skills/rocky-runtime-probe/SKILL.md`
 - `mcp-on-demand` -> `.agents/skills/mcp-on-demand/SKILL.md`
 - `git-safe-operations` -> `.agents/skills/git-safe-operations/SKILL.md`
-- `linear` -> `.agents/skills/linear/SKILL.md`
+- `linear` -> `.agents/skills/linear/SKILL.md` (legacy; explicit use only)
 - `github` -> `.agents/skills/github/SKILL.md`
 - `roc-publish` -> `.agents/skills/roc-publish/SKILL.md`
 - `roc-finish-current-work` -> `.agents/skills/roc-finish-current-work/SKILL.md`
 - `bug-report` -> `.agents/skills/bug-report/SKILL.md`
 - `notion-api-publisher` -> `.agents/skills/notion-api-publisher/SKILL.md`
+
+## Issue Tracking Defaults
+
+- GitHub Issues are the primary tracker for repository implementation work.
+- Do not create or update Linear issues unless the user explicitly asks for Linear or provides a Linear URL/key.
+- When creating GitHub Issues, match existing repository labels and milestone conventions.
+- For code publication, prefer GitHub Issue -> branch -> commit/push -> GitHub PR -> GitHub Issue update.
 
 ## Notion Defaults
 

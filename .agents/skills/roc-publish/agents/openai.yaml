@@ -1,4 +1,4 @@
 interface:
   display_name: "ROC Publish"
-  short_description: "Run the ROC issue to PR publication flow end to end"
-  default_prompt: "Use $roc-publish to turn the current Rocky-project repository changes into a scoped ROC issue, then create a fresh ROC branch from main, move only the related work onto that branch, push it, open the PR, sync Linear, and close the issue after merge if automation does not."
+  short_description: "Run the GitHub Issue to PR publication flow"
+  default_prompt: "Use $roc-publish to turn the current Rocky-project repository changes into a scoped GitHub Issue with matching labels and milestone, then create a fresh issue branch from develop, move only the related work onto that branch, push it, open the PR, update the issue, and close it after merge if automation does not."

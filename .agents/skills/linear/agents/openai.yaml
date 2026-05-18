@@ -1,4 +1,4 @@
 interface:
-  display_name: "Linear"
-  short_description: "Track ROC issues and sync them with code and PR work"
-  default_prompt: "Use $linear to create or update Rocky-project Linear issues, keep ROC issue descriptions and comments current, and attach branch or PR context after code work."
+  display_name: "Linear Legacy"
+  short_description: "Use Linear only for explicit legacy requests"
+  default_prompt: "Use $linear only when the user explicitly asks for Linear, provides a Linear URL, or references a ROC key; otherwise use GitHub Issues for Rocky repository tracking."

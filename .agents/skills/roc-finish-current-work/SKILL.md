@@ -1,17 +1,18 @@
 ---
 name: roc-finish-current-work
-description: Create one Rocky-project ROC issue for the current local work, publish or merge it as a PR against develop, sync Linear, then restore local develop to origin/develop. Use when the user wants the current commits turned into a single tracked issue/PR and may also want the PR merged in the same turn.
+description: Create one GitHub Issue for the current Rocky local work, publish or merge it as a PR against develop, sync the GitHub Issue, then restore local develop to origin/develop. Use when the user wants the current commits turned into a single tracked GitHub issue/PR and may also want the PR merged in the same turn.
 ---
 
 # ROC Finish Current Work
 
 ## Goal
 
-- Turn the current Rocky-project local work into one `ROC-*` issue and one PR.
+- Turn the current Rocky-project local work into one GitHub Issue and one PR.
 - Keep the publication scope explicit and preserve the current HEAD before touching `develop`.
 - End with local `develop` reset to `origin/develop` after the issue branch and PR are safely created or merged.
 - When this skill is explicitly invoked, carry the work through to an open PR by default, or through merge when the user explicitly asked for merge, without conversational confirmation between intermediate publish steps.
-- When merge was part of the request, end with the PR merged, Linear synced, and local `develop` updated to the merged tip.
+- When merge was part of the request, end with the PR merged, the GitHub Issue updated or closed, and local `develop` updated to the merged tip.
+- Do not create or update Linear issues unless the user explicitly asks for Linear.
 
 ## When To Use
 
@@ -27,7 +28,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - If the current work is mixed or uncommitted in unrelated ways, stop and ask before publishing.
 
 2. Ensure provider access exists.
-- If Linear MCP access is unavailable, use `mcp-on-demand` and stop after enabling it.
+- If GitHub connector access is unavailable, use `mcp-on-demand` and stop after enabling it.
 - Before GitHub publish or merge steps, confirm `.env` contains `GITHUB_PAT`; if it is missing, stop and ask the user to configure it.
 
 3. Treat explicit skill invocation as authorization to continue.
@@ -35,10 +36,15 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - Carry the workflow through to an open PR unless the user explicitly asked for merge, in which case continue through merge as well.
 - If a tool-level approval prompt is unavoidable, request it immediately through the tool instead of asking in chat first.
 
-4. Create or resolve the Linear issue.
-- Create one `ROC-*` issue that summarizes the full local change set.
+4. Create or resolve the GitHub Issue.
+- Create one GitHub Issue that summarizes the full local change set.
 - Include sections for summary, scope, validation, and any notable follow-up.
-- Use the issue's `gitBranchName` when it is reasonable; shorten only if needed for shell safety.
+- If an existing GitHub Issue was named, fetch it first and use it as the publication target.
+- Before creating or updating the issue, resolve labels and milestone from existing repository patterns.
+- For v0.1.1 work, attach the `v0.1.1` milestone when it exists.
+- Apply existing labels such as `type:*`, `area:*`, and `priority:*`; leave `area:*` unset when no existing area label fits.
+- Follow the existing release issue title style, for example `v0.1.1: concise Korean summary`, when the issue belongs to a release milestone.
+- Use a branch name like `codex/123-short-topic` when the issue number exists; shorten only if needed for shell safety.
 
 5. Preserve the current HEAD on the issue branch before modifying `develop`.
 - Always invoke repo-local scripts with `bash`; do not rely on execute bits.
@@ -53,16 +59,17 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - If push fails with `Repository not found`, another auth error, or a private-origin credential failure and `.env` contains `GITHUB_PAT`, run `bash scripts/push-github-current-branch.sh`.
 - Open or update a PR targeting `develop` through GitHub REST with `.env` `GITHUB_PAT`.
 - Search for an existing PR for the issue branch before creating a new one.
-- Use a PR title like `[ROC-23] concise summary`.
-- Include summary, why, validation, and Linear link in the PR body.
+- Use a PR title like `[#123] concise summary`.
+- Include summary, why, validation, and GitHub Issue link in the PR body.
+- Use `Closes #123` only when the PR fully resolves the issue; otherwise use `Related to #123`.
 - When using ad hoc REST or GraphQL fallbacks from the shell, prefer a quoting-stable form such as `node --input-type=module <<'EOF'` over a long `node -e` one-liner.
 - If a GitHub REST call fails with `ENOTFOUND api.github.com` or another host-resolution error, treat it as a sandbox network problem, not a PAT or payload problem, and rerun the exact same command with escalation first.
 - If REST fallback fails with DNS lookup, host resolution, or other sandboxed network errors, rerun the same request with escalation instead of changing the workflow.
 
-7. Sync Linear after the PR exists.
-- Add the PR URL to the Linear issue.
-- Leave a short progress comment with branch name, commit, PR URL, and validation.
-- Move the issue to `In Review` unless the user asked for a different state.
+7. Sync the GitHub Issue after the PR exists.
+- Ensure the GitHub Issue records the branch name, commit, PR URL, and validation result.
+- Prefer a short issue comment when the connector or REST fallback can create one.
+- Keep labels and milestone aligned with the repository's issue taxonomy; change assignees or state only when the user asked or the workflow clearly calls for it.
 
 8. Merge when the user explicitly asks for it.
 - If the PR is draft, mark it ready first.
@@ -75,7 +82,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - Confirm the expected PR head SHA before merging when the PR changed during the turn.
 - When the PR is one logical change and the user did not ask for another strategy, prefer `squash` merge and use the current PR title as the default squash commit title.
 - If the merge endpoint returns `405`, `409`, or a head SHA mismatch, refetch the PR resource once. If the PR is already merged, continue with post-merge sync; otherwise report the blocker instead of retrying blindly.
-- After merge, capture the returned merge commit SHA, update Linear to `Done`, and leave a short note with the merged PR URL and merge SHA.
+- After merge, capture the returned merge commit SHA, close the GitHub Issue with a completed reason when the PR fully resolved it and automation did not already close it, and leave a short note with the merged PR URL and merge SHA when comments are available.
 
 9. Restore local develop only after publication is safe.
 - Confirm the issue branch exists locally and the PR URL is created.
@@ -88,7 +95,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 
 - Never reset local `develop` before the issue branch exists at the publication HEAD.
 - Never publish unrelated local commits under the same issue just because they are nearby.
-- If the current branch is already the intended `ROC-*` branch, keep using it instead of creating another branch.
+- If the current branch is already the intended GitHub Issue branch, keep using it instead of creating another branch.
 - If push or PR creation fails, do not touch local `develop`.
 - Do not call repo-local helper scripts directly; use `bash <script>` so missing execute bits do not block the workflow.
 - If sandboxed git writes fail on `.git/index.lock` or `.git/refs/...lock`, rerun the same branch or reset command with escalation instead of inventing a new git path.
@@ -102,7 +109,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - If draft-to-ready fails through REST but PR reads still work, switch to GraphQL `markPullRequestReadyForReview` instead of retrying the same REST endpoint.
 - If commit status or check-run endpoints fail with `403 Resource not accessible by personal access token`, use PR mergeability fields for the go/no-go decision and mention the missing check visibility in the report.
 - Do not derive the squash merge title from a stale local commit message when the PR title has been refined; default to the current PR title.
-- If the merge API reports the PR is already merged or closed, verify the merged state and continue with Linear/local sync instead of failing the workflow.
+- If the merge API reports the PR is already merged or closed, verify the merged state and continue with GitHub Issue/local sync instead of failing the workflow.
 - If merge is blocked, leave the PR open, report the blocker, and do not say the workflow is complete.
 
 ## Default Command Sequence
@@ -110,7 +117,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - `git status --short --branch`
 - `git diff --stat`
 - `git log --oneline --decorate -N`
-- Linear issue create or fetch
+- GitHub Issue create or fetch
 - `bash .agents/skills/roc-finish-current-work/scripts/capture_head_on_issue_branch.sh <issue-branch>`
 - `git fetch origin develop`
 - `bash .agents/skills/roc-finish-current-work/scripts/fetch_remote_ref_with_pat.sh origin develop`
@@ -119,7 +126,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 - GitHub REST PR lookup/create/update with `.env` `GITHUB_PAT`
 - If the REST call returns `ENOTFOUND api.github.com`, rerun the exact same command with escalation
 - Optional GitHub REST PR lookup for `mergeable`, `mergeable_state`, and head SHA
-- Linear comment and state update
+- GitHub Issue comment and state update when needed
 - Optional GitHub REST ready-for-review or GraphQL fallback, then merge
 - Optional GitHub REST merge retry after PR refetch when `405`, `409`, or head SHA mismatch occurs
 - Optional post-merge `bash .agents/skills/roc-finish-current-work/scripts/fetch_remote_ref_with_pat.sh origin develop`
@@ -127,7 +134,7 @@ description: Create one Rocky-project ROC issue for the current local work, publ
 
 ## Output
 
-- Linear issue key and URL
+- GitHub Issue number and URL
 - Branch name
 - PR URL and draft, review, or merged state
 - Merge commit SHA when merged

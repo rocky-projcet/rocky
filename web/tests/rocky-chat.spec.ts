@@ -296,6 +296,13 @@ test("Rocky replies expose natural completed progress markdown", async ({ page }
   const toggle = page.getByRole("button", { name: /진행 원본/ });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("1");
+  await expect(page.getByText(answer)).toHaveCount(1);
+  const toggleBox = await toggle.boundingBox();
+  const answerBox = await page.getByText(answer).boundingBox();
+  expect(toggleBox).not.toBeNull();
+  expect(answerBox).not.toBeNull();
+  expect(toggleBox!.y).toBeLessThan(answerBox!.y);
   await expect(page.getByText("세션 연결")).toHaveCount(0);
   await expect(page.getByText("npm test")).toHaveCount(0);
 
@@ -310,6 +317,7 @@ test("Rocky replies expose natural completed progress markdown", async ({ page }
   await expect(page.getByText("item.completed")).toHaveCount(0);
   await expect(page.getByText("Public progress")).toBeVisible();
   await expect(page.getByText("Requirement reviewed")).toBeVisible();
+  await expect(page.getByText(answer)).toHaveCount(1);
   await expect(page.getByText("assistant.message.completed")).toHaveCount(0);
   await expect(page.getByText("item.started")).toHaveCount(0);
   await expect(page.getByText("stderr output should stay in logs")).toHaveCount(0);

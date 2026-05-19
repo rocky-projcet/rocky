@@ -1969,7 +1969,6 @@ function isNaturalLanguageItemType(itemType: string | null): boolean {
   }
 
   return (
-    itemType === "agent_message" ||
     itemType === "assistant_message" ||
     itemType === "message" ||
     itemType === "text" ||
@@ -3019,12 +3018,14 @@ function ReasoningProcessPanel({
   artifacts,
   events,
   onOpenConversationFile,
+  placement = "below",
   workspaceRoot,
 }: {
   agentId: string | null;
   artifacts: AgentSessionArtifactManifestEntry[];
   events: RuntimeEvent[];
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
+  placement?: "above" | "below";
   workspaceRoot: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -3042,7 +3043,13 @@ function ReasoningProcessPanel({
   }
 
   return (
-    <div className="mt-3 border-t border-border/70 pt-2">
+    <div
+      className={cn(
+        placement === "above"
+          ? "mb-3 border-b border-border/70 pb-2"
+          : "mt-3 border-t border-border/70 pt-2"
+      )}
+    >
       <Button
         type="button"
         variant="ghost"
@@ -3234,6 +3241,16 @@ function MessageBubble({
       >
         {isRocky ? <UsedSkillBadges skills={usedSkills} /> : null}
         {isRocky ? (
+          <ReasoningProcessPanel
+            agentId={agentId}
+            artifacts={userFacingArtifacts}
+            events={reasoningEvents}
+            onOpenConversationFile={onOpenConversationFile}
+            placement="above"
+            workspaceRoot={workspaceRoot}
+          />
+        ) : null}
+        {isRocky ? (
           rockyMessageState.kind === "error" ? (
             <div className="whitespace-pre-wrap">{bubbleText}</div>
           ) : (
@@ -3259,15 +3276,6 @@ function MessageBubble({
             chatId={chat.id}
             runId={messageRunId}
             onOpenConversationFile={onOpenConversationFile}
-          />
-        ) : null}
-        {isRocky ? (
-          <ReasoningProcessPanel
-            agentId={agentId}
-            artifacts={userFacingArtifacts}
-            events={reasoningEvents}
-            onOpenConversationFile={onOpenConversationFile}
-            workspaceRoot={workspaceRoot}
           />
         ) : null}
         {isRocky && rockyMessageState.kind !== "error" ? (

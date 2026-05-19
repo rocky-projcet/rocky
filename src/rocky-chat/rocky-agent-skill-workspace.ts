@@ -40,7 +40,7 @@ export interface AgentEcountLookupInstruction {
 }
 
 export interface AgentPreparedIntegrationSummary {
-  provider: "ecount" | "threads";
+  provider: "ecount" | "threads" | "instagram";
   dataset: string;
   title: string;
   status: "ready" | "failed" | "unsupported" | "not-configured";
@@ -621,8 +621,8 @@ export function buildAgentTurnSystemInstructions(input: {
       : []),
     ...(input.hasPreparedIntegrationResults
       ? [
-          "Prepared integration lookup results may be listed in the turn context. Use those results and files as the source of truth before attempting any connector capability script for the same read.",
-          "If a prepared connector lookup file is listed, read that file once and reuse it for summaries and follow-up analysis instead of calling localhost, 127.0.0.1, or Rocky HTTP connector endpoints.",
+          "Prepared integration lookup or readiness results may be listed in the turn context. Use those results and files as the source of truth before attempting any connector capability script for the same read.",
+          "If a prepared connector lookup or readiness file is listed, read that file once and reuse it for summaries and follow-up analysis instead of calling localhost, 127.0.0.1, or Rocky HTTP connector endpoints.",
         ]
       : []),
     ...(input.hasTistoryDraftPublisher

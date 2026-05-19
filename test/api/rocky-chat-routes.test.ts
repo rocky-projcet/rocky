@@ -1784,7 +1784,115 @@ test("rocky chat injects Threads skill capabilities for follower requests", asyn
     assert.doesNotMatch(agentContext, /Threads: ready/u);
     assert.ok(
       sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
-        instruction.includes("Prepared integration lookup results may be listed")
+        instruction.includes("Prepared integration lookup or readiness results may be listed")
+      )
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat prepares Instagram automation readiness for Instagram requests", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "instagram"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "instagram", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "instagram",
+        accountLabel: "Instagram account",
+        connectedAt: "2026-05-11T08:15:00.000Z",
+        storageStateJson: JSON.stringify({
+          cookies: [
+            {
+              name: "sessionid",
+              value: "instagram-session-secret",
+              domain: ".instagram.com",
+              path: "/",
+            },
+          ],
+          origins: [],
+        }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBrowserDetector: async () => ({
+        available: true,
+        channel: "chromium",
+        message: "Playwright Chromium available",
+      }),
+    });
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram Agent",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  completedRunSummaries.push("Instagram readiness checked.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "Prepare Instagram reel automation.",
+        agentId: "instagram-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /Instagram automation readiness: ready/u);
+    assert.match(
+      agentContext,
+      /file=inputs\/rocky-chat-.*\/integrations\/instagram\/automation-readiness\.json/u,
+    );
+    assert.match(agentContext, /Instagram: connected/u);
+    assert.match(agentContext, /instagram\.automation\.prepare:read:status=available/u);
+    assert.doesNotMatch(agentContext, /instagram-session-secret|sessionid|browser-profile/u);
+
+    const readinessPath = path.join(
+      workspaceRoot,
+      "inputs",
+      created.id,
+      "integrations",
+      "instagram",
+      "automation-readiness.json"
+    );
+    const readiness = JSON.parse(await readFile(readinessPath, "utf8"));
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.status, "completed");
+    assert.equal(readiness.accountLabel, "Instagram account");
+    assert.match(readiness.message, /instagram\.automation\.prepare/u);
+    assert.doesNotMatch(JSON.stringify(readiness), /instagram-session-secret|sessionid/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Prepared integration lookup or readiness results may be listed")
       )
     );
   } finally {

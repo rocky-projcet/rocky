@@ -526,6 +526,23 @@ export function getConnectorCapabilities(
     );
   }
 
+  if (provider === "instagram") {
+    capabilities.push(
+      capability({
+        id: "instagram.automation.prepare",
+        provider,
+        label: "Automation readiness",
+        description:
+          "Checks whether the connected Instagram account can be used for Rocky-managed automation preparation.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: available ? "available" : "planned",
+      })
+    );
+  }
+
   return capabilities;
 }
 

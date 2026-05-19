@@ -7,7 +7,10 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 
-import type { ConnectorState } from "../../src/connectors/connector-types.js";
+import type {
+  ConnectorExecuteCapabilityResult,
+  ConnectorState,
+} from "../../src/connectors/connector-types.js";
 import type { ConnectorRunnerEvent } from "../../src/connectors/connector-runner.js";
 
 test("Facebook connector browser login connects without OAuth credentials", async () => {
@@ -241,6 +244,30 @@ test("social connector browser login connects without OAuth credentials", async 
     assert.equal(connected.accountLabel, "Instagram account");
     assert.equal(connected.connectedAt, "2026-05-11T08:15:00.000Z");
     assert.equal(connected.loginMode, "custom-browser");
+    assert.ok(
+      connected.capabilities.some(
+        (capability) =>
+          capability.id === "instagram.automation.prepare" &&
+          capability.action === "read" &&
+          capability.status === "available" &&
+          capability.requiresApproval === false,
+      ),
+    );
+
+    const readinessResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.automation.prepare/execute",
+    });
+    assert.equal(readinessResponse.statusCode, 200);
+    const readinessBody =
+      readinessResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(readinessBody.ok, true);
+    assert.equal(readinessBody.status, "completed");
+    assert.equal(readinessBody.resultType, "none");
+    assert.equal(readinessBody.accountLabel, "Instagram account");
+    assert.match(readinessBody.message, /automation readiness verified/u);
+    assert.match(readinessBody.message, /instagram\.automation\.prepare/u);
+    assert.doesNotMatch(readinessBody.message, /instagram-session-secret/u);
 
     const sessionFile = await readFile(
       path.join(stateRoot, "connectors", "instagram", "browser-session.json"),
@@ -290,6 +317,59 @@ test("connector API responses redact browser session secrets and profile paths",
     assert.equal(body.failureKind, "platform");
     assert.doesNotMatch(body.lastError ?? "", /session-secret|browser-profile|storageStateJson=\{/u);
     assert.match(body.lastError ?? "", /\[redacted/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram automation readiness fails expired stored sessions without exposing secrets", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  await mkdir(path.join(stateRoot, "connectors", "instagram"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "instagram", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "instagram",
+        accountLabel: "Instagram account",
+        connectedAt: "2026-05-11T08:15:00.000Z",
+        storageStateJson: JSON.stringify({
+          cookies: [{ name: "sessionid", value: "", domain: ".instagram.com" }],
+          origins: [],
+        }),
+        browserProfileDir: path.join(stateRoot, "connectors", "instagram", "browser-profile"),
+      },
+      null,
+      2,
+    ),
+  );
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBrowserDetector: async () => {
+      throw new Error("should not launch browser for expired sessions");
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.automation.prepare/execute",
+    });
+    assert.equal(response.statusCode, 409);
+    const body = response.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(body.ok, false);
+    assert.equal(body.status, "failed");
+    assert.equal(body.accountLabel, "Instagram account");
+    assert.match(body.message, /missing or expired/u);
+    assert.doesNotMatch(body.message, /browser-profile|sessionid/u);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    const state = stateResponse.json<ConnectorState>();
+    assert.equal(state.status, "failed");
+    assert.equal(state.failureKind, "authentication");
+    assert.equal(state.accountLabel, null);
   } finally {
     await server.close();
   }

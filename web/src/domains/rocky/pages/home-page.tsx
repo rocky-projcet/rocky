@@ -1971,12 +1971,52 @@ function isReasoningItemType(itemType: string | null): boolean {
   return /reason|think|thought|analysis|summary|progress|trace/i.test(itemType);
 }
 
-function isPublicReasoningEvent(event: RuntimeEvent): boolean {
-  if (event.type === "assistant.message.completed") {
-    return isReasoningItemType(runtimeEventItemType(event));
+function isCommandItemType(itemType: string | null): boolean {
+  if (!itemType) {
+    return false;
   }
 
-  return false;
+  return /command|tool|function|shell|exec|patch|mcp_tool_call/i.test(itemType);
+}
+
+function isAgentMessageItemType(itemType: string | null): boolean {
+  return itemType === "agent_message";
+}
+
+function isVisibleRawProgressEvent(event: RuntimeEvent): boolean {
+  if (event.type !== "run.raw") {
+    return false;
+  }
+
+  return [
+    "item.started",
+    "item.completed",
+    "process.start",
+    "process.close",
+    "runtime.environment",
+    "runtime.policy",
+    "turn.started",
+    "turn.completed",
+  ].includes(event.rawType);
+}
+
+function isPublicReasoningEvent(event: RuntimeEvent): boolean {
+  if (
+    event.type === "session.bound" ||
+    event.type === "run.started" ||
+    event.type === "run.warning" ||
+    event.type === "run.error" ||
+    event.type === "run.stdout" ||
+    event.type === "run.completed"
+  ) {
+    return true;
+  }
+
+  if (event.type === "assistant.message.completed") {
+    return true;
+  }
+
+  return isVisibleRawProgressEvent(event);
 }
 
 function compactReasoningText(value: string | null | undefined, limit = 220): string | null {
@@ -1994,13 +2034,133 @@ function compactReasoningText(value: string | null | undefined, limit = 220): st
     : `${normalized.slice(0, Math.max(0, limit - 1))}…`;
 }
 
+function runtimeEventCommandText(event: RuntimeEvent): string | null {
+  const item = runtimeEventRawItem(event);
+  const tool = item?.tool;
+  const server = item?.server;
+  if (typeof tool === "string" && tool.trim()) {
+    return typeof server === "string" && server.trim()
+      ? `${server.trim()}.${tool.trim()}`
+      : tool.trim();
+  }
+
+  const command = item?.command ?? item?.cmd ?? item?.name ?? item?.title;
+  if (typeof command === "string") {
+    return compactReasoningText(command, 180);
+  }
+
+  if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
+    return compactReasoningText(command.join(" "), 180);
+  }
+
+  return null;
+}
+
 function reasoningEventTitle(event: RuntimeEvent): string {
-  return event.type === "assistant.message.completed" ? "진행 단계" : "처리 단계";
+  if (event.type === "session.bound") {
+    return "세션 연결";
+  }
+
+  if (event.type === "run.started") {
+    return "실행 시작";
+  }
+
+  if (event.type === "run.warning") {
+    return "경고";
+  }
+
+  if (event.type === "run.error") {
+    return "오류";
+  }
+
+  if (event.type === "run.stdout") {
+    return "표준 출력";
+  }
+
+  if (event.type === "run.completed") {
+    return event.rawType === "turn.completed" ? "턴 완료" : "실행 완료";
+  }
+
+  const itemType = runtimeEventItemType(event);
+  if (event.type === "assistant.message.completed") {
+    if (isAgentMessageItemType(itemType)) {
+      return "최종 답변 생성";
+    }
+
+    return isReasoningItemType(itemType) ? "추론 요약" : "메시지 생성";
+  }
+
+  if (event.rawType === "item.started") {
+    return isCommandItemType(itemType) ? "도구 호출 시작" : "항목 시작";
+  }
+
+  if (event.rawType === "item.completed") {
+    return isCommandItemType(itemType) ? "도구 호출 완료" : "항목 완료";
+  }
+
+  if (event.rawType === "process.start") {
+    return "프로세스 시작";
+  }
+
+  if (event.rawType === "process.close") {
+    return "프로세스 종료";
+  }
+
+  if (event.rawType === "runtime.environment") {
+    return "실행 환경";
+  }
+
+  if (event.rawType === "runtime.policy") {
+    return "실행 정책";
+  }
+
+  if (event.rawType === "turn.started") {
+    return "턴 시작";
+  }
+
+  if (event.rawType === "turn.completed") {
+    return "턴 완료";
+  }
+
+  return itemType ?? event.rawType ?? event.type;
 }
 
 function reasoningEventDetail(event: RuntimeEvent): string | null {
+  if (event.type === "session.bound") {
+    const runtimeSessionId = event.data.runtimeSessionId ?? event.runtimeSessionId;
+    return typeof runtimeSessionId === "string" && runtimeSessionId.trim()
+      ? `런타임 세션 ${runtimeSessionId.trim()}`
+      : null;
+  }
+
+  if (event.type === "run.completed") {
+    const status = event.data.status;
+    if (typeof status === "string" && status.trim()) {
+      return `상태: ${status.trim()}`;
+    }
+
+    const exitCode = event.data.exitCode;
+    return typeof exitCode === "number" ? `종료 코드: ${exitCode}` : null;
+  }
+
+  if (event.type === "assistant.message.completed") {
+    const itemType = runtimeEventItemType(event);
+    if (isAgentMessageItemType(itemType)) {
+      return null;
+    }
+  }
+
   const message = event.data.message ?? event.data.text;
-  return typeof message === "string" ? compactReasoningText(message) : null;
+  if (typeof message === "string") {
+    return compactReasoningText(message);
+  }
+
+  if (event.type === "run.stdout") {
+    const line = event.data.line;
+    return typeof line === "string" ? compactReasoningText(line) : null;
+  }
+
+  return runtimeEventCommandText(event) ?? runtimeEventItemType(event);
 }
 
 function runtimeEventTime(event: RuntimeEvent): number {
@@ -3006,7 +3166,7 @@ function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
         variant="ghost"
         size="xs"
         aria-expanded={expanded}
-        aria-label={expanded ? "추론 과정 접기" : "추론 과정 펼치기"}
+        aria-label={expanded ? "진행 원본 접기" : "진행 원본 펼치기"}
         onClick={() => setExpanded((current) => !current)}
         className="h-7 gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
       >
@@ -3015,7 +3175,7 @@ function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
         ) : (
           <ChevronRight className="size-3.5" />
         )}
-        <span>추론 과정</span>
+        <span>진행 원본</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
           {timeline.length}
         </span>
@@ -3049,6 +3209,12 @@ function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
                     {detail}
                   </p>
                 ) : null}
+                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] uppercase text-muted-foreground/75">
+                  <span>{event.type}</span>
+                  {event.rawType && event.rawType !== event.type ? (
+                    <span>{event.rawType}</span>
+                  ) : null}
+                </div>
               </li>
             );
           })}

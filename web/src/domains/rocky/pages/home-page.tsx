@@ -2034,6 +2034,51 @@ function compactReasoningText(value: string | null | undefined, limit = 220): st
     : `${normalized.slice(0, Math.max(0, limit - 1))}…`;
 }
 
+function collectOriginalContentParts(value: unknown, parts: string[] = []): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      parts.push(trimmed);
+    }
+    return parts;
+  }
+
+  if (!value || typeof value !== "object") {
+    return parts;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectOriginalContentParts(item, parts));
+    return parts;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  for (const key of ["text", "message", "value", "output", "stdout"]) {
+    collectOriginalContentParts(record[key], parts);
+  }
+
+  for (const key of ["content", "items", "result"]) {
+    collectOriginalContentParts(record[key], parts);
+  }
+
+  return parts;
+}
+
+function itemCompletedOriginalContent(event: RuntimeEvent): string | null {
+  if (event.rawType !== "item.completed") {
+    return null;
+  }
+
+  const item = runtimeEventRawItem(event);
+  if (!item) {
+    return null;
+  }
+
+  const content = collectOriginalContentParts(item).join("\n\n");
+  return compactReasoningText(content, 700);
+}
+
 function runtimeEventCommandText(event: RuntimeEvent): string | null {
   const item = runtimeEventRawItem(event);
   const tool = item?.tool;
@@ -2081,6 +2126,10 @@ function reasoningEventTitle(event: RuntimeEvent): string {
     return event.rawType === "turn.completed" ? "턴 완료" : "실행 완료";
   }
 
+  if (event.rawType === "item.completed") {
+    return "item.completed";
+  }
+
   const itemType = runtimeEventItemType(event);
   if (event.type === "assistant.message.completed") {
     if (isAgentMessageItemType(itemType)) {
@@ -2126,6 +2175,11 @@ function reasoningEventTitle(event: RuntimeEvent): string {
 }
 
 function reasoningEventDetail(event: RuntimeEvent): string | null {
+  const completedContent = itemCompletedOriginalContent(event);
+  if (completedContent) {
+    return completedContent;
+  }
+
   if (event.type === "session.bound") {
     const runtimeSessionId = event.data.runtimeSessionId ?? event.runtimeSessionId;
     return typeof runtimeSessionId === "string" && runtimeSessionId.trim()
@@ -3209,12 +3263,14 @@ function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
                     {detail}
                   </p>
                 ) : null}
-                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] uppercase text-muted-foreground/75">
-                  <span>{event.type}</span>
-                  {event.rawType && event.rawType !== event.type ? (
-                    <span>{event.rawType}</span>
-                  ) : null}
-                </div>
+                {event.rawType !== "item.completed" ? (
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] uppercase text-muted-foreground/75">
+                    <span>{event.type}</span>
+                    {event.rawType && event.rawType !== event.type ? (
+                      <span>{event.rawType}</span>
+                    ) : null}
+                  </div>
+                ) : null}
               </li>
             );
           })}

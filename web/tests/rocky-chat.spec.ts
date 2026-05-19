@@ -57,6 +57,25 @@ test("Rocky replies expose raw progress events", async ({ page }) => {
     },
     {
       source: "codex-cli",
+      type: "run.raw",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.650Z",
+      data: {},
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "cmd-2",
+          type: "command_execution",
+          command: "hidden completed command",
+          output: "raw completed output only",
+        },
+      },
+    },
+    {
+      source: "codex-cli",
       type: "assistant.message.completed",
       runId,
       sessionId,
@@ -286,12 +305,13 @@ test("Rocky replies expose raw progress events", async ({ page }) => {
   await expect(page.getByText("세션 연결")).toBeVisible();
   await expect(page.getByText("도구 호출 시작")).toBeVisible();
   await expect(page.getByText("npm test")).toBeVisible();
-  await expect(page.getByText("추론 요약")).toBeVisible();
+  await expect(page.getByText("raw completed output only")).toBeVisible();
+  await expect(page.getByText("hidden completed command")).toHaveCount(0);
+  await expect(page.getByText("item.completed")).toHaveCount(3);
   await expect(
     page.getByText("요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.")
   ).toBeVisible();
-  await expect(page.getByText("최종 답변 생성")).toBeVisible();
-  await expect(page.getByText("assistant.message.completed")).toHaveCount(2);
+  await expect(page.getByText("assistant.message.completed")).toHaveCount(0);
   await expect(page.getByText("item.started")).toBeVisible();
   await expect(page.getByText("stderr output should stay in logs")).toHaveCount(0);
 

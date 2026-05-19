@@ -325,11 +325,165 @@ function printUsage() {
 }
 `;
 
+const FACEBOOK_CONNECTOR_CAPABILITY_MANIFEST = `${JSON.stringify(
+  {
+    provider: "facebook",
+    capabilities: [
+      {
+        id: "facebook.profile.read",
+        label: "Facebook profile read",
+        description:
+          "Rocky reads the currently connected Facebook account profile from its stored browser session.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        scriptPath: "scripts/facebook-crud.mjs",
+        usage: "node scripts/facebook-crud.mjs profile.read",
+      },
+      {
+        id: "facebook.pages.read",
+        label: "Facebook page list read",
+        description: "Reads Facebook Pages available to the connected account.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "planned",
+      },
+      {
+        id: "facebook.posts.publish",
+        label: "Facebook post publish",
+        description: "Publishes a Facebook post or Page post.",
+        action: "write",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+        status: "planned",
+      },
+      {
+        id: "facebook.posts.update",
+        label: "Facebook post update",
+        description: "Updates a Facebook post or Page post.",
+        action: "write",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+        status: "planned",
+      },
+      {
+        id: "facebook.posts.delete",
+        label: "Facebook post delete",
+        description: "Deletes a Facebook post or Page post.",
+        action: "write",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: true,
+        status: "planned",
+      },
+    ],
+  },
+  null,
+  2,
+)}\n`;
+
+const FACEBOOK_CONNECTOR_SCRIPT = `#!/usr/bin/env node
+const operation = process.argv[2] || "help";
+const supported = new Map([
+  ["profile.read", "facebook.profile.read"],
+]);
+
+if (operation === "help" || operation === "--help" || operation === "-h") {
+  printUsage();
+  process.exit(0);
+}
+
+const capabilityId = supported.get(operation);
+if (!capabilityId) {
+  console.error(JSON.stringify({
+    ok: false,
+    message: "Unsupported Facebook skill operation.",
+    operation,
+    supported: Array.from(supported.keys()),
+  }, null, 2));
+  process.exit(2);
+}
+
+const baseUrl = (
+  process.env.ROCKY_CONNECTOR_BASE_URL ||
+  process.env.ROCKY_API_BASE_URL ||
+  process.env.ROCKY_AGENT_ENGINE_URL ||
+  "http://127.0.0.1:3000"
+).replace(/\\/+$/u, "");
+
+try {
+  const response = await fetch(
+    new URL("/connectors/facebook/capabilities/" + encodeURIComponent(capabilityId) + "/execute", baseUrl),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ args: {} }),
+    },
+  );
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok || !payload || payload.ok === false) {
+    console.error(JSON.stringify(payload || {
+      ok: false,
+      statusCode: response.status,
+      message: response.statusText,
+    }, null, 2));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(payload, null, 2));
+} catch (error) {
+  const cause = error instanceof Error && error.cause ? String(error.cause) : null;
+  console.error(JSON.stringify({
+    ok: false,
+    message: error instanceof Error ? error.message : String(error),
+    cause,
+    hint: cause && /EPERM|Operation not permitted/iu.test(cause)
+      ? "This execution session cannot access the local Rocky connector endpoint. Run with local network permission or execute the read through the Rocky backend host."
+      : "Set ROCKY_CONNECTOR_BASE_URL when Rocky backend is not listening on http://127.0.0.1:3000.",
+  }, null, 2));
+  process.exit(1);
+}
+
+function printUsage() {
+  console.log([
+    "Usage:",
+    "  node scripts/facebook-crud.mjs profile.read",
+    "",
+    "Environment:",
+    "  ROCKY_CONNECTOR_BASE_URL=http://127.0.0.1:3000",
+  ].join("\\n"));
+}
+`;
+
+const CONNECTOR_SKILL_AUGMENTS = [
+  {
+    pattern: /threads|스레드|쓰레드/iu,
+    manifestContent: THREADS_CONNECTOR_CAPABILITY_MANIFEST,
+    scriptPath: "scripts/threads-crud.mjs",
+    scriptContent: THREADS_CONNECTOR_SCRIPT,
+  },
+  {
+    pattern: /facebook|페이스북/iu,
+    manifestContent: FACEBOOK_CONNECTOR_CAPABILITY_MANIFEST,
+    scriptPath: "scripts/facebook-crud.mjs",
+    scriptContent: FACEBOOK_CONNECTOR_SCRIPT,
+  },
+] as const;
+
+type ConnectorSkillAugment = (typeof CONNECTOR_SKILL_AUGMENTS)[number];
+
 function augmentConnectorSkillFiles(
   skillId: string,
   files: AgentLocalSkillFileInput[],
 ): AgentLocalSkillFileInput[] {
-  if (!shouldAugmentThreadsConnectorSkill(skillId, files)) {
+  const augment = resolveConnectorSkillAugment(skillId, files);
+  if (!augment) {
     return files;
   }
 
@@ -342,22 +496,22 @@ function augmentConnectorSkillFiles(
   if (!paths.has("connector-capabilities.json")) {
     next.push({
       path: "connector-capabilities.json",
-      content: THREADS_CONNECTOR_CAPABILITY_MANIFEST,
+      content: augment.manifestContent,
     });
   }
-  if (!paths.has("scripts/threads-crud.mjs")) {
+  if (!paths.has(augment.scriptPath)) {
     next.push({
-      path: "scripts/threads-crud.mjs",
-      content: THREADS_CONNECTOR_SCRIPT,
+      path: augment.scriptPath,
+      content: augment.scriptContent,
     });
   }
   return next;
 }
 
-function shouldAugmentThreadsConnectorSkill(
+function resolveConnectorSkillAugment(
   skillId: string,
   files: AgentLocalSkillFileInput[],
-): boolean {
+): ConnectorSkillAugment | null {
   const skillFile = files.find(
     (file) =>
       typeof file?.path === "string" &&
@@ -365,7 +519,10 @@ function shouldAugmentThreadsConnectorSkill(
   );
   const skillMarkdown = skillFile ? readSkillInputText(skillFile) : "";
   const signal = `${skillId}\n${skillMarkdown}`;
-  return /threads|쓰레드|스레드/iu.test(signal);
+  return (
+    CONNECTOR_SKILL_AUGMENTS.find((augment) => augment.pattern.test(signal)) ??
+    null
+  );
 }
 
 function normalizeSkillInputPath(filePath: string): string {
@@ -477,14 +634,15 @@ export class AgentLocalSkillService {
     }
 
     const skillInput = [{ path: "SKILL.md", content: skillMarkdown }];
-    if (!shouldAugmentThreadsConnectorSkill(id, skillInput)) {
+    const augment = resolveConnectorSkillAugment(id, skillInput);
+    if (!augment) {
       return false;
     }
 
     const skillDir = path.dirname(skill.skillPath);
     if (
       (await exists(path.join(skillDir, "connector-capabilities.json"))) &&
-      (await exists(path.join(skillDir, "scripts", "threads-crud.mjs")))
+      (await exists(path.join(skillDir, augment.scriptPath)))
     ) {
       return false;
     }

@@ -1900,6 +1900,120 @@ test("rocky chat prepares Instagram automation readiness for Instagram requests"
   }
 });
 
+test("rocky chat injects Facebook profile capability for account checks", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  await mkdir(path.join(stateRoot, "connectors", "facebook"), { recursive: true });
+  await writeFile(
+    path.join(stateRoot, "connectors", "facebook", "browser-session.json"),
+    JSON.stringify(
+      {
+        provider: "facebook",
+        accountLabel: "Facebook account",
+        connectedAt: "2026-05-12T10:00:00.000Z",
+        storageStateJson: JSON.stringify({ cookies: [], origins: [] }),
+      },
+      null,
+      2,
+    ),
+  );
+
+  let profileReaderCalls = 0;
+  const { completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBrowserDetector: async () => ({
+        available: true,
+        channel: "chromium",
+        message: "Playwright bundled Chromium available",
+      }),
+      connectorBrowserProfileReader: async (input) => {
+        profileReaderCalls += 1;
+        assert.equal(input.provider, "facebook");
+        assert.equal(input.accountLabel, "Facebook account");
+        return {
+          ok: true,
+          provider: "facebook",
+          status: "profile-read",
+          accountLabel: input.accountLabel,
+          profile: {
+            id: "1234567890",
+            username: "rocky.facebook",
+            displayName: "Rocky Facebook",
+            bio: "Facebook connector test profile",
+            followersText: null,
+            url: "https://www.facebook.com/rocky.facebook",
+            rawText: null,
+          },
+          message: "Facebook profile read from the connected browser session.",
+          checkedAt: input.now(),
+        };
+      },
+    });
+
+  try {
+    const createAgentResponse = await server.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        id: "facebook-agent",
+        name: "Facebook Agent",
+      },
+    });
+    assert.equal(createAgentResponse.statusCode, 201);
+    const agent = createAgentResponse.json<AgentRecord>();
+
+    const installSkillResponse = await server.inject({
+      method: "PUT",
+      url: "/agents/facebook-agent/skills/md-sns-facebook",
+      payload: {
+        replace: true,
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: md-sns-facebook\n---\n# SNS · Facebook 콘텐츠\nUse when the user asks for Facebook content or account checks.\n",
+          },
+        ],
+      },
+    });
+    assert.equal(installSkillResponse.statusCode, 200);
+    completedRunSummaries.push("Facebook account status checked.");
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "Facebook 계정 상태 확인해줘",
+        agentId: "facebook-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const created = response.json<RockyChatRecord>();
+    const agentContext = await readFile(path.join(agent.workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /Facebook: connected/u);
+    assert.match(agentContext, /Facebook.*ready/u);
+    assert.match(agentContext, /display_name=Rocky Facebook/u);
+    assert.match(
+      agentContext,
+      /facebook\.profile\.read:read:status=available:skill_id=md-sns-facebook:skill=SNS · Facebook 콘텐츠:script=scripts\/facebook-crud\.mjs/u,
+    );
+    assert.equal(profileReaderCalls, 1);
+    assert.ok(created.messages.length > 0);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Connector profile read results may be listed")
+      )
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat does not submit Tistory drafts while connector is planned", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   await mkdir(path.join(stateRoot, "connectors", "tistory"), { recursive: true });

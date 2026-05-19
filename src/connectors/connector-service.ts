@@ -642,6 +642,10 @@ export class ConnectorService implements ConnectorServiceLike {
       };
     }
 
+    if (capability.id === "instagram.automation.prepare") {
+      return this.prepareInstagramAutomation(capabilityId, capability.action);
+    }
+
     if (/\.(?:account|profile)\.read$/u.test(capability.id)) {
       const result = await this.readProfile(provider);
       return {
@@ -694,6 +698,91 @@ export class ConnectorService implements ConnectorServiceLike {
       draft: null,
       message: `${capability.label} capability 실행 핸들러가 아직 준비되지 않았습니다.`,
       checkedAt,
+    };
+  }
+
+  private async prepareInstagramAutomation(
+    capabilityId: string,
+    action: ConnectorCapabilityRecord["action"],
+  ): Promise<ConnectorExecuteCapabilityResult> {
+    const provider: ConnectorProvider = "instagram";
+    const adapter = getConnectorAdapter(provider);
+    const checkedAt = this.now();
+    const state = this.states[provider];
+    const base = {
+      provider,
+      capabilityId,
+      action,
+      resultType: "none" as const,
+      profile: null,
+      followers: null,
+      draft: null,
+      checkedAt,
+    };
+
+    if (state.status !== "connected") {
+      return {
+        ...base,
+        ok: false,
+        status: "failed",
+        accountLabel: state.accountLabel,
+        message: `${adapter.label} account connection is required before automation can run.`,
+      };
+    }
+
+    const session = await this.readStoredBrowserSession(provider);
+    if (!session || !hasInstagramSessionCookie(session.storageStateJson)) {
+      await this.removeStorage(provider);
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram browser session is missing or expired. Reconnect the account.",
+        accountLabel: null,
+        connectedAt: null,
+        loginUrl: null,
+        loginMode: null,
+        lastError: "Instagram browser session is missing or expired.",
+        failureKind: "authentication",
+      });
+      return {
+        ...base,
+        ok: false,
+        status: "failed",
+        accountLabel: state.accountLabel,
+        message: "Instagram browser session is missing or expired. Reconnect the account.",
+      };
+    }
+
+    const diagnostics = await this.detectBrowser().catch((error) => ({
+      available: false,
+      channel: null,
+      message: error instanceof Error ? error.message : String(error),
+    }));
+    if (!diagnostics.available || !diagnostics.channel) {
+      return {
+        ...base,
+        ok: false,
+        status: "failed",
+        accountLabel: session.accountLabel,
+        message:
+          sanitizeConnectorPublicText(
+            `Instagram browser automation is unavailable: ${diagnostics.message}`,
+          ) ?? "Instagram browser automation is unavailable.",
+      };
+    }
+
+    const availableCapabilities = getConnectorCapabilities(provider)
+      .filter((record) => record.status === undefined || record.status === "available")
+      .map((record) => record.id)
+      .sort();
+    return {
+      ...base,
+      ok: true,
+      status: "completed",
+      accountLabel: session.accountLabel,
+      message:
+        `Instagram automation readiness verified for ${session.accountLabel}. ` +
+        `loginMode=custom-browser; browser=${diagnostics.channel}; ` +
+        `capabilities=${availableCapabilities.join(", ")}`,
     };
   }
 
@@ -1635,6 +1724,35 @@ function readPositiveInteger(value: unknown): number | null {
     return null;
   }
   return Math.max(1, Math.trunc(value));
+}
+
+function hasInstagramSessionCookie(storageStateJson: string): boolean {
+  try {
+    const parsed = JSON.parse(storageStateJson) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const cookies = (parsed as { cookies?: unknown }).cookies;
+    if (!Array.isArray(cookies)) {
+      return false;
+    }
+    return cookies.some((cookie) => {
+      if (!cookie || typeof cookie !== "object" || Array.isArray(cookie)) {
+        return false;
+      }
+      const record = cookie as Record<string, unknown>;
+      const name = typeof record.name === "string" ? record.name : "";
+      const value = typeof record.value === "string" ? record.value : "";
+      const domain = typeof record.domain === "string" ? record.domain : "";
+      return (
+        name === "sessionid" &&
+        value.length > 0 &&
+        (!domain || domain.includes("instagram"))
+      );
+    });
+  } catch {
+    return false;
+  }
 }
 
 function buildBrowserAccess(

@@ -639,6 +639,16 @@ function shouldPrepareThreadsFollowerLookup(message: string): boolean {
   return /팔로워|followers?|follower\s+names?/iu.test(compact);
 }
 
+function shouldPrepareFacebookProfileLookup(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  const facebookSignal = /facebook|페이스북/iu.test(compact);
+  const profileIntent =
+    /profile|account|status|connected|login|check|read|프로필|계정|상태|연동|로그인|확인|조회/iu.test(
+      compact,
+  );
+  return facebookSignal && profileIntent;
+}
+
 function shouldPrepareInstagramAutomation(message: string): boolean {
   const compact = compactText(message).toLowerCase();
   return /instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu.test(compact);
@@ -1574,18 +1584,23 @@ export class RockyChatService {
     return template.skill.displayName.trim() || template.title;
   }
 
-  private isThreadsConnectorTemplateSkill(
+  private connectorTemplateSkillScript(
     template: RuntimeSkillTemplateRecord
-  ): boolean {
-    return /threads|쓰레드|스레드/iu.test(
-      [
-        template.skill.id,
-        template.skill.displayName,
-        template.title,
-        template.description,
-        template.skill.skillMarkdown,
-      ].join("\n"),
-    );
+  ): string | null {
+    const signal = [
+      template.skill.id,
+      template.skill.displayName,
+      template.title,
+      template.description,
+      template.skill.skillMarkdown,
+    ].join("\n");
+    if (/threads|쓰레드|스레드/iu.test(signal)) {
+      return "threads-crud.mjs";
+    }
+    if (/facebook|페이스북/iu.test(signal)) {
+      return "facebook-crud.mjs";
+    }
+    return null;
   }
 
   private async savedSkillTemplateBySkillId(): Promise<
@@ -1607,12 +1622,13 @@ export class RockyChatService {
       return true;
     }
 
-    if (this.isThreadsConnectorTemplateSkill(template)) {
+    const connectorScript = this.connectorTemplateSkillScript(template);
+    if (connectorScript) {
       const skillDir = path.dirname(installed.skillPath);
       if (!(await this.fileExists(path.join(skillDir, "connector-capabilities.json")))) {
         return true;
       }
-      if (!(await this.fileExists(path.join(skillDir, "scripts", "threads-crud.mjs")))) {
+      if (!(await this.fileExists(path.join(skillDir, "scripts", connectorScript)))) {
         return true;
       }
     }
@@ -2292,6 +2308,44 @@ export class RockyChatService {
     return summaries;
   }
 
+  private async prepareAgentConnectorProfileResults(input: {
+    message: string;
+    connectorSummaries: AgentConnectorSummary[];
+  }): Promise<AgentConnectorProfileSummary[]> {
+    if (!this.connectorService || !shouldPrepareFacebookProfileLookup(input.message)) {
+      return [];
+    }
+
+    const facebook = input.connectorSummaries.find(
+      (summary) =>
+        summary.provider === "facebook" &&
+        summary.status === "connected" &&
+        hasAvailableConnectorCapability(summary, "facebook.profile.read")
+    );
+    if (!facebook) {
+      return [];
+    }
+
+    const result = await this.connectorService.executeCapability("facebook", {
+      capabilityId: "facebook.profile.read",
+    });
+    return [
+      {
+        provider: "facebook",
+        label: facebook.label,
+        status: result.ok
+          ? "ready"
+          : result.status === "unsupported"
+            ? "unsupported"
+            : "failed",
+        accountLabel: result.accountLabel,
+        profile: result.profile,
+        message: result.message,
+        checkedAt: result.checkedAt,
+      },
+    ];
+  }
+
   private async resolveUsedSkills(
     agent: AgentRecord,
     refs: string[]
@@ -2402,7 +2456,10 @@ export class RockyChatService {
       selectedSkillId: input.selectedSkillId,
     });
     const connectorSummaries = await this.listAgentConnectorSummaries(input.agent);
-    const connectorProfileResults: AgentConnectorProfileSummary[] = [];
+    const connectorProfileResults = await this.prepareAgentConnectorProfileResults({
+      message: input.message,
+      connectorSummaries,
+    });
     const preparedConnectorLookups = await this.prepareAgentConnectorLookups({
       agent: input.agent,
       chatId: input.chatId,

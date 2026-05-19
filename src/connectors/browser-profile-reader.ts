@@ -49,19 +49,23 @@ type BrowserStorageState = Exclude<
 >;
 
 export const readBrowserProfile: ConnectorBrowserProfileReader = async (input) => {
-  if (input.provider !== "threads") {
-    return {
-      ok: false,
-      provider: input.provider,
-      status: "failed",
-      accountLabel: input.accountLabel,
-      profile: null,
-      message: "현재 브라우저 기반 프로필 조회는 Threads만 지원합니다.",
-      checkedAt: input.now(),
-    };
+  if (input.provider === "threads") {
+    return readThreadsProfile(input);
   }
 
-  return readThreadsProfile(input);
+  if (input.provider === "facebook") {
+    return readFacebookProfile(input);
+  }
+
+  return {
+    ok: false,
+    provider: input.provider,
+    status: "failed",
+    accountLabel: input.accountLabel,
+    profile: null,
+    message: "Browser-based profile reads currently support Threads and Facebook.",
+    checkedAt: input.now(),
+  };
 };
 
 export const readBrowserFollowerList: ConnectorBrowserFollowerListReader = async (
@@ -85,7 +89,7 @@ export const readBrowserFollowerList: ConnectorBrowserFollowerListReader = async
 async function readThreadsProfile(
   input: ConnectorBrowserProfileReadInput,
 ): Promise<ConnectorReadProfileResult> {
-  return withThreadsBrowserPage(input, async (page) => {
+  return withConnectorBrowserPage(input, async (page) => {
     const profile = await readThreadsProfileFromPage(page, input.accountLabel);
     return {
       ok: true,
@@ -102,7 +106,7 @@ async function readThreadsProfile(
 async function readThreadsFollowerList(
   input: ConnectorBrowserFollowerListReadInput,
 ): Promise<ConnectorReadFollowerListResult> {
-  return withThreadsBrowserPage(input, async (page) => {
+  return withConnectorBrowserPage(input, async (page) => {
     await openThreadsProfilePage(page, input.accountLabel);
     await openThreadsFollowersPanel(page);
     const followers = await readThreadsFollowersFromPage(
@@ -124,7 +128,24 @@ async function readThreadsFollowerList(
   });
 }
 
-async function withThreadsBrowserPage<T>(
+async function readFacebookProfile(
+  input: ConnectorBrowserProfileReadInput,
+): Promise<ConnectorReadProfileResult> {
+  return withConnectorBrowserPage(input, async (page) => {
+    const profile = await readFacebookProfileFromPage(page, input.accountLabel);
+    return {
+      ok: true,
+      provider: "facebook",
+      status: "profile-read",
+      accountLabel: input.accountLabel,
+      profile,
+      message: "Facebook profile read from the connected browser session.",
+      checkedAt: input.now(),
+    };
+  });
+}
+
+async function withConnectorBrowserPage<T>(
   input: ConnectorBrowserProfileReadInput,
   callback: (page: Page) => Promise<T>,
 ): Promise<T> {
@@ -366,6 +387,46 @@ async function readPageMetadata(
   return { title, description };
 }
 
+async function readFacebookProfileFromPage(
+  page: Page,
+  accountLabel: string,
+): Promise<ConnectorProfileRecord> {
+  await openFacebookProfilePage(page);
+  const bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
+  const metadata = await readPageMetadata(page);
+  return buildFacebookProfileRecord({
+    accountLabel,
+    url: page.url(),
+    title: metadata.title,
+    description: metadata.description,
+    bodyText,
+  });
+}
+
+async function openFacebookProfilePage(page: Page): Promise<void> {
+  await page.goto("https://www.facebook.com/me", {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
+  await assertFacebookLoggedIn(page);
+}
+
+async function assertFacebookLoggedIn(page: Page): Promise<void> {
+  const url = page.url();
+  if (/\/login|\/checkpoint|\/recover|\/reg\//iu.test(url)) {
+    throw new Error("Facebook login session expired. Reconnect the account integration and try again.");
+  }
+
+  const bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
+  if (
+    /log in|create new account|forgot password/iu.test(bodyText) &&
+    !/profile|home|friends|notifications/iu.test(bodyText)
+  ) {
+    throw new Error("Facebook login session expired. Reconnect the account integration and try again.");
+  }
+}
+
 async function readThreadsFollowersFromPage(
   page: Page,
   limit: number,
@@ -394,6 +455,44 @@ async function readThreadsFollowersFromPage(
     items,
     url: page.url() || null,
     rawText: uniqueNonEmptyLines(bodyText).slice(0, 80).join("\n") || null,
+  };
+}
+
+function buildFacebookProfileRecord(input: {
+  accountLabel: string;
+  url: string;
+  title: string;
+  description: string | null;
+  bodyText: string;
+}): ConnectorProfileRecord {
+  const lines = uniqueNonEmptyLines(
+    [input.title, input.description ?? "", input.bodyText].join("\n"),
+  );
+  const displayName =
+    cleanFacebookTitle(input.title) ??
+    cleanProfileLine(lines.find((line) => !isFacebookChromeLine(line)) ?? null) ??
+    input.accountLabel;
+  const followersText =
+    lines.find((line) => /followers|people follow|likes|팔로워|좋아요/iu.test(line)) ??
+    null;
+  const bio =
+    cleanProfileLine(
+      lines.find(
+        (line) =>
+          line !== displayName &&
+          line !== followersText &&
+          !isFacebookChromeLine(line),
+      ) ?? null,
+    ) ?? null;
+
+  return {
+    id: extractFacebookId(input.accountLabel) ?? extractFacebookId(input.url),
+    username: extractFacebookUsername(input.url),
+    displayName,
+    bio,
+    followersText,
+    url: input.url || null,
+    rawText: lines.slice(0, 40).join("\n") || null,
   };
 }
 
@@ -555,6 +654,47 @@ function normalizeFollowerLimit(value: number | null | undefined): number {
     return 50;
   }
   return Math.max(1, Math.min(Math.trunc(value), 200));
+}
+
+function cleanFacebookTitle(value: string): string | null {
+  const withoutSuffix = value
+    .replace(/\s*\|\s*Facebook\s*$/iu, "")
+    .replace(/\s*-\s*Facebook\s*$/iu, "")
+    .trim();
+  return cleanProfileLine(withoutSuffix);
+}
+
+function extractFacebookId(value: string): string | null {
+  const match = value.match(/(?:^|[^\d])(?:id:)?(\d{4,})(?:[^\d]|$)/iu);
+  return match?.[1] ?? null;
+}
+
+function extractFacebookUsername(value: string): string | null {
+  let pathname = value;
+  try {
+    pathname = new URL(value).pathname;
+  } catch {
+    // Treat non-URL strings as path-like input.
+  }
+  const firstSegment = pathname
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)[0];
+  if (
+    !firstSegment ||
+    firstSegment === "profile.php" ||
+    isFacebookChromeLine(firstSegment) ||
+    /^\d+$/u.test(firstSegment)
+  ) {
+    return null;
+  }
+  return /^[a-z0-9.]+$/iu.test(firstSegment) ? firstSegment : null;
+}
+
+function isFacebookChromeLine(value: string): boolean {
+  return /^(facebook|home|watch|marketplace|groups|friends|profile|menu|notifications|messenger|search|log in|login|create new account|forgot password|메뉴|홈|친구|알림|로그인)$/iu.test(
+    value,
+  );
 }
 
 function escapeRegExp(value: string): string {

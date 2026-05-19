@@ -15,6 +15,7 @@ import type { ConnectorRunnerEvent } from "../../src/connectors/connector-runner
 
 test("Facebook connector browser login connects without OAuth credentials", async () => {
   let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
+  let profileReaderCalls = 0;
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
     stateRoot,
@@ -36,6 +37,29 @@ test("Facebook connector browser login connects without OAuth credentials", asyn
       onEvent = input.onEvent;
       return {
         cancel: async () => {},
+      };
+    },
+    connectorBrowserProfileReader: async (input) => {
+      profileReaderCalls += 1;
+      assert.equal(input.provider, "facebook");
+      assert.equal(input.accountLabel, "Facebook account");
+      assert.equal(input.channel, "chrome");
+      return {
+        ok: true,
+        provider: "facebook",
+        status: "profile-read",
+        accountLabel: input.accountLabel,
+        profile: {
+          id: "1234567890",
+          username: "rocky.facebook",
+          displayName: "Rocky Facebook",
+          bio: "Facebook connector test profile",
+          followersText: null,
+          url: "https://www.facebook.com/rocky.facebook",
+          rawText: null,
+        },
+        message: "Facebook profile read from the connected browser session.",
+        checkedAt: input.now(),
       };
     },
     nativeUrlOpener: async () => {
@@ -73,6 +97,44 @@ test("Facebook connector browser login connects without OAuth credentials", asyn
     assert.equal(connected.accountLabel, "Facebook account");
     assert.equal(connected.connectedAt, "2026-05-09T12:42:00.000Z");
     assert.equal(connected.loginMode, "custom-browser");
+    assert.equal(connected.browserAccess.status, "granted");
+    assert.ok(
+      connected.capabilities.some(
+        (capability) =>
+          capability.id === "facebook.profile.read" &&
+          capability.action === "read" &&
+          capability.requiresApproval === false,
+      ),
+    );
+
+    const profileResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/facebook/profile",
+    });
+    assert.equal(profileResponse.statusCode, 200);
+    const profileBody = profileResponse.json();
+    assert.equal(profileBody.ok, true);
+    assert.equal(profileBody.profile.displayName, "Rocky Facebook");
+
+    const executeProfileResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/facebook/capabilities/facebook.profile.read/execute",
+    });
+    assert.equal(executeProfileResponse.statusCode, 200);
+    const executeProfileBody = executeProfileResponse.json();
+    assert.equal(executeProfileBody.ok, true);
+    assert.equal(executeProfileBody.resultType, "profile");
+    assert.equal(executeProfileBody.profile.username, "rocky.facebook");
+    assert.equal(profileReaderCalls, 2);
+
+    const executeWriteResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/facebook/capabilities/facebook.content.write/execute",
+    });
+    assert.equal(executeWriteResponse.statusCode, 409);
+    const executeWriteBody = executeWriteResponse.json();
+    assert.equal(executeWriteBody.ok, false);
+    assert.equal(executeWriteBody.status, "requires-approval");
   } finally {
     await server.close();
   }

@@ -102,6 +102,27 @@ test("Rocky replies expose natural completed progress markdown", async ({ page }
       sessionId,
       runtimeSessionId: "thread-reasoning",
       rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.850Z",
+      data: {
+        itemType: "agent_message",
+        text: "**Agent progress**\n\n- Still working",
+      },
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "progress-1",
+          type: "agent_message",
+          text: "**Agent progress**\n\n- Still working",
+        },
+      },
+    },
+    {
+      source: "codex-cli",
+      type: "assistant.message.completed",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
       occurredAt: "2026-01-01T00:00:03.900Z",
       data: {
         itemType: "agent_message",
@@ -296,7 +317,7 @@ test("Rocky replies expose natural completed progress markdown", async ({ page }
   const toggle = page.getByRole("button", { name: /진행 원본/ });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(toggle).toContainText("1");
+  await expect(toggle).toContainText("2");
   await expect(page.getByText(answer)).toHaveCount(1);
   const toggleBox = await toggle.boundingBox();
   const answerBox = await page.getByText(answer).boundingBox();
@@ -317,6 +338,8 @@ test("Rocky replies expose natural completed progress markdown", async ({ page }
   await expect(page.getByText("item.completed")).toHaveCount(0);
   await expect(page.getByText("Public progress")).toBeVisible();
   await expect(page.getByText("Requirement reviewed")).toBeVisible();
+  await expect(page.getByText("Agent progress")).toBeVisible();
+  await expect(page.getByText("Still working")).toBeVisible();
   await expect(page.getByText(answer)).toHaveCount(1);
   await expect(page.getByText("assistant.message.completed")).toHaveCount(0);
   await expect(page.getByText("item.started")).toHaveCount(0);

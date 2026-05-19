@@ -1969,6 +1969,7 @@ function isNaturalLanguageItemType(itemType: string | null): boolean {
   }
 
   return (
+    itemType === "agent_message" ||
     itemType === "assistant_message" ||
     itemType === "message" ||
     itemType === "text" ||
@@ -1986,6 +1987,13 @@ function isNaturalLanguageItemCompletedEvent(event: RuntimeEvent): boolean {
 
 function isPublicReasoningEvent(event: RuntimeEvent): boolean {
   return isNaturalLanguageItemCompletedEvent(event);
+}
+
+function isAgentMessageItemCompletedEvent(event: RuntimeEvent): boolean {
+  return (
+    event.rawType === "item.completed" &&
+    runtimeEventItemType(event) === "agent_message"
+  );
 }
 
 function collectOriginalContentParts(value: unknown, parts: string[] = []): string[] {
@@ -2036,6 +2044,10 @@ function itemCompletedOriginalContent(event: RuntimeEvent): string | null {
   const content = collectOriginalContentParts(item).join("\n\n");
   const trimmed = content.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeReasoningMarkdown(value: string | null | undefined): string {
+  return value ? value.replace(/\r\n?/g, "\n").trim() : "";
 }
 
 function runtimeEventTime(event: RuntimeEvent): number {
@@ -3017,6 +3029,7 @@ function ReasoningProcessPanel({
   agentId,
   artifacts,
   events,
+  excludedMarkdown,
   onOpenConversationFile,
   placement = "below",
   workspaceRoot,
@@ -3024,18 +3037,42 @@ function ReasoningProcessPanel({
   agentId: string | null;
   artifacts: AgentSessionArtifactManifestEntry[];
   events: RuntimeEvent[];
+  excludedMarkdown?: string | null;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   placement?: "above" | "below";
   workspaceRoot: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const timeline = useMemo(
-    () =>
-      buildReasoningTimeline(events).flatMap((event) => {
+    () => {
+      const entries = buildReasoningTimeline(events).flatMap((event) => {
         const markdown = itemCompletedOriginalContent(event);
         return markdown ? [{ event, markdown }] : [];
-      }),
-    [events]
+      });
+      const normalizedExcluded = normalizeReasoningMarkdown(excludedMarkdown);
+      if (!normalizedExcluded) {
+        return entries;
+      }
+
+      let lastAgentMessageIndex = -1;
+      entries.forEach(({ event }, index) => {
+        if (isAgentMessageItemCompletedEvent(event)) {
+          lastAgentMessageIndex = index;
+        }
+      });
+
+      return entries.filter(({ event, markdown }, index) => {
+        if (!isAgentMessageItemCompletedEvent(event)) {
+          return true;
+        }
+
+        return (
+          normalizeReasoningMarkdown(markdown) !== normalizedExcluded &&
+          index !== lastAgentMessageIndex
+        );
+      });
+    },
+    [events, excludedMarkdown]
   );
 
   if (timeline.length === 0) {
@@ -3245,6 +3282,7 @@ function MessageBubble({
             agentId={agentId}
             artifacts={userFacingArtifacts}
             events={reasoningEvents}
+            excludedMarkdown={rockyMessageState.kind === "error" ? null : bubbleText}
             onOpenConversationFile={onOpenConversationFile}
             placement="above"
             workspaceRoot={workspaceRoot}

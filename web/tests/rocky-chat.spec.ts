@@ -305,9 +305,9 @@ test("Rocky replies expose raw progress events", async ({ page }) => {
   await expect(page.getByText("세션 연결")).toBeVisible();
   await expect(page.getByText("도구 호출 시작")).toBeVisible();
   await expect(page.getByText("npm test")).toBeVisible();
-  await expect(page.getByText("raw completed output only")).toBeVisible();
+  await expect(page.getByText("raw completed output only")).toHaveCount(0);
   await expect(page.getByText("hidden completed command")).toHaveCount(0);
-  await expect(page.getByText("item.completed")).toHaveCount(3);
+  await expect(page.getByText("item.completed")).toHaveCount(2);
   await expect(
     page.getByText("요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.")
   ).toBeVisible();

@@ -1983,14 +1983,39 @@ function isAgentMessageItemType(itemType: string | null): boolean {
   return itemType === "agent_message";
 }
 
+function isNaturalLanguageItemType(itemType: string | null): boolean {
+  if (!itemType) {
+    return false;
+  }
+
+  return (
+    itemType === "agent_message" ||
+    itemType === "assistant_message" ||
+    itemType === "message" ||
+    itemType === "text" ||
+    /reason|summary|progress/i.test(itemType)
+  );
+}
+
+function isNaturalLanguageItemCompletedEvent(event: RuntimeEvent): boolean {
+  if (event.rawType !== "item.completed") {
+    return false;
+  }
+
+  return isNaturalLanguageItemType(runtimeEventItemType(event));
+}
+
 function isVisibleRawProgressEvent(event: RuntimeEvent): boolean {
   if (event.type !== "run.raw") {
     return false;
   }
 
+  if (event.rawType === "item.completed") {
+    return isNaturalLanguageItemCompletedEvent(event);
+  }
+
   return [
     "item.started",
-    "item.completed",
     "process.start",
     "process.close",
     "runtime.environment",
@@ -2013,7 +2038,7 @@ function isPublicReasoningEvent(event: RuntimeEvent): boolean {
   }
 
   if (event.type === "assistant.message.completed") {
-    return true;
+    return isNaturalLanguageItemCompletedEvent(event);
   }
 
   return isVisibleRawProgressEvent(event);
@@ -2067,6 +2092,10 @@ function collectOriginalContentParts(value: unknown, parts: string[] = []): stri
 
 function itemCompletedOriginalContent(event: RuntimeEvent): string | null {
   if (event.rawType !== "item.completed") {
+    return null;
+  }
+
+  if (!isNaturalLanguageItemCompletedEvent(event)) {
     return null;
   }
 

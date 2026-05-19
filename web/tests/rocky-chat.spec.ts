@@ -46,6 +46,17 @@ test("Rocky replies expose a collapsed reasoning process panel", async ({ page }
     },
     {
       source: "codex-cli",
+      type: "run.stderr",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "stderr.line",
+      occurredAt: "2026-01-01T00:00:03.500Z",
+      data: { line: "stderr output should stay in logs" },
+      raw: { line: "stderr output should stay in logs" },
+    },
+    {
+      source: "codex-cli",
       type: "run.completed",
       runId,
       sessionId,
@@ -232,6 +243,7 @@ test("Rocky replies expose a collapsed reasoning process panel", async ({ page }
   await expect(page.getByText("세션 연결")).toBeVisible();
   await expect(page.getByText("도구 실행 시작")).toBeVisible();
   await expect(page.getByText("npm test")).toBeVisible();
+  await expect(page.getByText("stderr output should stay in logs")).toHaveCount(0);
 
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");

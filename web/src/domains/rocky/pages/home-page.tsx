@@ -2007,7 +2007,6 @@ function isPublicReasoningEvent(event: RuntimeEvent): boolean {
     event.type === "run.warning" ||
     event.type === "run.error" ||
     event.type === "run.stdout" ||
-    event.type === "run.stderr" ||
     event.type === "run.completed"
   ) {
     return true;

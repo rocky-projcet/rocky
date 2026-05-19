@@ -1963,26 +1963,6 @@ function runtimeEventRawId(event: RuntimeEvent): string | null {
   return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
 }
 
-function isReasoningItemType(itemType: string | null): boolean {
-  if (!itemType) {
-    return false;
-  }
-
-  return /reason|think|thought|analysis|summary|progress|trace/i.test(itemType);
-}
-
-function isCommandItemType(itemType: string | null): boolean {
-  if (!itemType) {
-    return false;
-  }
-
-  return /command|tool|function|shell|exec|patch|mcp_tool_call/i.test(itemType);
-}
-
-function isAgentMessageItemType(itemType: string | null): boolean {
-  return itemType === "agent_message";
-}
-
 function isNaturalLanguageItemType(itemType: string | null): boolean {
   if (!itemType) {
     return false;
@@ -2005,58 +1985,8 @@ function isNaturalLanguageItemCompletedEvent(event: RuntimeEvent): boolean {
   return isNaturalLanguageItemType(runtimeEventItemType(event));
 }
 
-function isVisibleRawProgressEvent(event: RuntimeEvent): boolean {
-  if (event.type !== "run.raw") {
-    return false;
-  }
-
-  if (event.rawType === "item.completed") {
-    return isNaturalLanguageItemCompletedEvent(event);
-  }
-
-  return [
-    "item.started",
-    "process.start",
-    "process.close",
-    "runtime.environment",
-    "runtime.policy",
-    "turn.started",
-    "turn.completed",
-  ].includes(event.rawType);
-}
-
 function isPublicReasoningEvent(event: RuntimeEvent): boolean {
-  if (
-    event.type === "session.bound" ||
-    event.type === "run.started" ||
-    event.type === "run.warning" ||
-    event.type === "run.error" ||
-    event.type === "run.stdout" ||
-    event.type === "run.completed"
-  ) {
-    return true;
-  }
-
-  if (event.type === "assistant.message.completed") {
-    return isNaturalLanguageItemCompletedEvent(event);
-  }
-
-  return isVisibleRawProgressEvent(event);
-}
-
-function compactReasoningText(value: string | null | undefined, limit = 220): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return null;
-  }
-
-  return normalized.length <= limit
-    ? normalized
-    : `${normalized.slice(0, Math.max(0, limit - 1))}…`;
+  return isNaturalLanguageItemCompletedEvent(event);
 }
 
 function collectOriginalContentParts(value: unknown, parts: string[] = []): string[] {
@@ -2105,145 +2035,8 @@ function itemCompletedOriginalContent(event: RuntimeEvent): string | null {
   }
 
   const content = collectOriginalContentParts(item).join("\n\n");
-  return compactReasoningText(content, 700);
-}
-
-function runtimeEventCommandText(event: RuntimeEvent): string | null {
-  const item = runtimeEventRawItem(event);
-  const tool = item?.tool;
-  const server = item?.server;
-  if (typeof tool === "string" && tool.trim()) {
-    return typeof server === "string" && server.trim()
-      ? `${server.trim()}.${tool.trim()}`
-      : tool.trim();
-  }
-
-  const command = item?.command ?? item?.cmd ?? item?.name ?? item?.title;
-  if (typeof command === "string") {
-    return compactReasoningText(command, 180);
-  }
-
-  if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
-    return compactReasoningText(command.join(" "), 180);
-  }
-
-  return null;
-}
-
-function reasoningEventTitle(event: RuntimeEvent): string {
-  if (event.type === "session.bound") {
-    return "세션 연결";
-  }
-
-  if (event.type === "run.started") {
-    return "실행 시작";
-  }
-
-  if (event.type === "run.warning") {
-    return "경고";
-  }
-
-  if (event.type === "run.error") {
-    return "오류";
-  }
-
-  if (event.type === "run.stdout") {
-    return "표준 출력";
-  }
-
-  if (event.type === "run.completed") {
-    return event.rawType === "turn.completed" ? "턴 완료" : "실행 완료";
-  }
-
-  if (event.rawType === "item.completed") {
-    return "item.completed";
-  }
-
-  const itemType = runtimeEventItemType(event);
-  if (event.type === "assistant.message.completed") {
-    if (isAgentMessageItemType(itemType)) {
-      return "최종 답변 생성";
-    }
-
-    return isReasoningItemType(itemType) ? "추론 요약" : "메시지 생성";
-  }
-
-  if (event.rawType === "item.started") {
-    return isCommandItemType(itemType) ? "도구 호출 시작" : "항목 시작";
-  }
-
-  if (event.rawType === "item.completed") {
-    return isCommandItemType(itemType) ? "도구 호출 완료" : "항목 완료";
-  }
-
-  if (event.rawType === "process.start") {
-    return "프로세스 시작";
-  }
-
-  if (event.rawType === "process.close") {
-    return "프로세스 종료";
-  }
-
-  if (event.rawType === "runtime.environment") {
-    return "실행 환경";
-  }
-
-  if (event.rawType === "runtime.policy") {
-    return "실행 정책";
-  }
-
-  if (event.rawType === "turn.started") {
-    return "턴 시작";
-  }
-
-  if (event.rawType === "turn.completed") {
-    return "턴 완료";
-  }
-
-  return itemType ?? event.rawType ?? event.type;
-}
-
-function reasoningEventDetail(event: RuntimeEvent): string | null {
-  const completedContent = itemCompletedOriginalContent(event);
-  if (completedContent) {
-    return completedContent;
-  }
-
-  if (event.type === "session.bound") {
-    const runtimeSessionId = event.data.runtimeSessionId ?? event.runtimeSessionId;
-    return typeof runtimeSessionId === "string" && runtimeSessionId.trim()
-      ? `런타임 세션 ${runtimeSessionId.trim()}`
-      : null;
-  }
-
-  if (event.type === "run.completed") {
-    const status = event.data.status;
-    if (typeof status === "string" && status.trim()) {
-      return `상태: ${status.trim()}`;
-    }
-
-    const exitCode = event.data.exitCode;
-    return typeof exitCode === "number" ? `종료 코드: ${exitCode}` : null;
-  }
-
-  if (event.type === "assistant.message.completed") {
-    const itemType = runtimeEventItemType(event);
-    if (isAgentMessageItemType(itemType)) {
-      return null;
-    }
-  }
-
-  const message = event.data.message ?? event.data.text;
-  if (typeof message === "string") {
-    return compactReasoningText(message);
-  }
-
-  if (event.type === "run.stdout") {
-    const line = event.data.line;
-    return typeof line === "string" ? compactReasoningText(line) : null;
-  }
-
-  return runtimeEventCommandText(event) ?? runtimeEventItemType(event);
+  const trimmed = content.trim();
+  return trimmed ? trimmed : null;
 }
 
 function runtimeEventTime(event: RuntimeEvent): number {
@@ -2288,19 +2081,6 @@ function mergeRuntimeEvents(
 
 function buildReasoningTimeline(events: RuntimeEvent[]): RuntimeEvent[] {
   return events.filter(isPublicReasoningEvent).sort(compareRuntimeEventAscending);
-}
-
-function formatReasoningEventTime(value: string): string {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) {
-    return "";
-  }
-
-  return date.toLocaleTimeString("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 }
 
 function buildTemplateFilePanelContext(input: {
@@ -3234,9 +3014,28 @@ function UsedSkillBadges({
   );
 }
 
-function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
+function ReasoningProcessPanel({
+  agentId,
+  artifacts,
+  events,
+  onOpenConversationFile,
+  workspaceRoot,
+}: {
+  agentId: string | null;
+  artifacts: AgentSessionArtifactManifestEntry[];
+  events: RuntimeEvent[];
+  onOpenConversationFile: (target: RockyConversationFileTarget) => void;
+  workspaceRoot: string | null;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const timeline = useMemo(() => buildReasoningTimeline(events), [events]);
+  const timeline = useMemo(
+    () =>
+      buildReasoningTimeline(events).flatMap((event) => {
+        const markdown = itemCompletedOriginalContent(event);
+        return markdown ? [{ event, markdown }] : [];
+      }),
+    [events]
+  );
 
   if (timeline.length === 0) {
     return null;
@@ -3264,46 +3063,24 @@ function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
         </span>
       </Button>
       {expanded ? (
-        <ol className="mt-2 space-y-2 rounded-md border border-border bg-secondary/35 p-2">
-          {timeline.map((event, index) => {
-            const detail = reasoningEventDetail(event);
-            const timeLabel = formatReasoningEventTime(event.occurredAt);
-
+        <div className="mt-2 space-y-2 rounded-md border border-border bg-secondary/35 p-2">
+          {timeline.map(({ event, markdown }, index) => {
             return (
-              <li
+              <div
                 key={`${event.occurredAt}-${event.type}-${event.rawType}-${index}`}
-                className="rounded-md bg-background/85 px-3 py-2 text-xs"
+                className="rounded-md bg-background/85 px-3 py-2"
               >
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <span className="min-w-0 truncate font-semibold text-foreground">
-                    {reasoningEventTitle(event)}
-                  </span>
-                  {timeLabel ? (
-                    <time
-                      dateTime={event.occurredAt}
-                      className="shrink-0 font-mono text-[10px] text-muted-foreground"
-                    >
-                      {timeLabel}
-                    </time>
-                  ) : null}
-                </div>
-                {detail ? (
-                  <p className="mt-1 break-words leading-5 text-muted-foreground">
-                    {detail}
-                  </p>
-                ) : null}
-                {event.rawType !== "item.completed" ? (
-                  <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] uppercase text-muted-foreground/75">
-                    <span>{event.type}</span>
-                    {event.rawType && event.rawType !== event.type ? (
-                      <span>{event.rawType}</span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </li>
+                <RockyMarkdownViewer
+                  agentId={agentId}
+                  artifacts={artifacts}
+                  markdown={markdown}
+                  onOpenConversationFile={onOpenConversationFile}
+                  workspaceRoot={workspaceRoot}
+                />
+              </div>
             );
           })}
-        </ol>
+        </div>
       ) : null}
     </div>
   );
@@ -3402,7 +3179,13 @@ function MessageBubble({
             현재 {progressLabel}
           </div>
           <UsedSkillBadges pending skills={usedSkills} />
-          <ReasoningProcessPanel events={reasoningEvents} />
+          <ReasoningProcessPanel
+            agentId={agentId}
+            artifacts={[]}
+            events={reasoningEvents}
+            onOpenConversationFile={onOpenConversationFile}
+            workspaceRoot={workspaceRoot}
+          />
         </article>
       </div>
     );
@@ -3478,7 +3261,15 @@ function MessageBubble({
             onOpenConversationFile={onOpenConversationFile}
           />
         ) : null}
-        {isRocky ? <ReasoningProcessPanel events={reasoningEvents} /> : null}
+        {isRocky ? (
+          <ReasoningProcessPanel
+            agentId={agentId}
+            artifacts={userFacingArtifacts}
+            events={reasoningEvents}
+            onOpenConversationFile={onOpenConversationFile}
+            workspaceRoot={workspaceRoot}
+          />
+        ) : null}
         {isRocky && rockyMessageState.kind !== "error" ? (
           <div className="mt-3 flex items-center justify-between gap-2">
             <span className="text-[11px] font-medium leading-4 text-muted-foreground">

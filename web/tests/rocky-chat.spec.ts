@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Rocky replies expose raw progress events", async ({ page }) => {
+test("Rocky replies expose natural completed progress markdown", async ({ page }) => {
   const now = "2026-01-01T00:00:00.000Z";
   const chatId = "reasoning-panel-test";
   const agentId = "agent-reasoning-panel";
@@ -84,14 +84,14 @@ test("Rocky replies expose raw progress events", async ({ page }) => {
       occurredAt: "2026-01-01T00:00:03.750Z",
       data: {
         itemType: "reasoning_summary",
-        text: "요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.",
+        text: "**Public progress**\n\n- Requirement reviewed",
       },
       raw: {
         type: "item.completed",
         item: {
           id: "reasoning-1",
           type: "reasoning_summary",
-          text: "요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.",
+          text: "**Public progress**\n\n- Requirement reviewed",
         },
       },
     },
@@ -302,17 +302,16 @@ test("Rocky replies expose raw progress events", async ({ page }) => {
   await toggle.click();
 
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByText("세션 연결")).toBeVisible();
-  await expect(page.getByText("도구 호출 시작")).toBeVisible();
-  await expect(page.getByText("npm test")).toBeVisible();
+  await expect(page.getByText("세션 연결")).toHaveCount(0);
+  await expect(page.getByText("도구 호출 시작")).toHaveCount(0);
+  await expect(page.getByText("npm test")).toHaveCount(0);
   await expect(page.getByText("raw completed output only")).toHaveCount(0);
   await expect(page.getByText("hidden completed command")).toHaveCount(0);
-  await expect(page.getByText("item.completed")).toHaveCount(2);
-  await expect(
-    page.getByText("요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.")
-  ).toBeVisible();
+  await expect(page.getByText("item.completed")).toHaveCount(0);
+  await expect(page.getByText("Public progress")).toBeVisible();
+  await expect(page.getByText("Requirement reviewed")).toBeVisible();
   await expect(page.getByText("assistant.message.completed")).toHaveCount(0);
-  await expect(page.getByText("item.started")).toBeVisible();
+  await expect(page.getByText("item.started")).toHaveCount(0);
   await expect(page.getByText("stderr output should stay in logs")).toHaveCount(0);
 
   await toggle.click();

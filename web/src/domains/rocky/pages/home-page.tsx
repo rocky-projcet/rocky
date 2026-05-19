@@ -1971,52 +1971,12 @@ function isReasoningItemType(itemType: string | null): boolean {
   return /reason|think|thought|analysis|summary|progress|trace/i.test(itemType);
 }
 
-function isCommandItemType(itemType: string | null): boolean {
-  if (!itemType) {
-    return false;
-  }
-
-  return /command|tool|function|shell|exec|patch/i.test(itemType);
-}
-
-function isPublicRawTraceEvent(event: RuntimeEvent): boolean {
-  if (event.type !== "run.raw") {
-    return false;
-  }
-
-  const itemType = runtimeEventItemType(event);
-  if (isReasoningItemType(itemType) || isCommandItemType(itemType)) {
-    return true;
-  }
-
-  return [
-    "process.start",
-    "process.close",
-    "process.error",
-    "runtime.environment",
-    "runtime.policy",
-    "turn.started",
-    "turn.completed",
-  ].includes(event.rawType);
-}
-
 function isPublicReasoningEvent(event: RuntimeEvent): boolean {
-  if (
-    event.type === "session.bound" ||
-    event.type === "run.started" ||
-    event.type === "run.warning" ||
-    event.type === "run.error" ||
-    event.type === "run.stdout" ||
-    event.type === "run.completed"
-  ) {
-    return true;
-  }
-
   if (event.type === "assistant.message.completed") {
     return isReasoningItemType(runtimeEventItemType(event));
   }
 
-  return isPublicRawTraceEvent(event);
+  return false;
 }
 
 function compactReasoningText(value: string | null | undefined, limit = 220): string | null {
@@ -2034,111 +1994,13 @@ function compactReasoningText(value: string | null | undefined, limit = 220): st
     : `${normalized.slice(0, Math.max(0, limit - 1))}…`;
 }
 
-function runtimeEventCommandText(event: RuntimeEvent): string | null {
-  const item = runtimeEventRawItem(event);
-  const command = item?.command ?? item?.cmd ?? item?.name ?? item?.title;
-  if (typeof command === "string") {
-    return compactReasoningText(command, 180);
-  }
-
-  if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
-    return compactReasoningText(command.join(" "), 180);
-  }
-
-  return null;
-}
-
 function reasoningEventTitle(event: RuntimeEvent): string {
-  if (event.type === "session.bound") {
-    return "세션 연결";
-  }
-
-  if (event.type === "run.started") {
-    return "실행 시작";
-  }
-
-  if (event.type === "run.warning") {
-    return "주의";
-  }
-
-  if (event.type === "run.error") {
-    return "오류";
-  }
-
-  if (event.type === "run.stdout") {
-    return "표준 출력";
-  }
-
-  if (event.type === "run.stderr") {
-    return "오류 출력";
-  }
-
-  if (event.type === "run.completed") {
-    return "실행 완료";
-  }
-
-  const itemType = runtimeEventItemType(event);
-  if (event.type === "assistant.message.completed" && isReasoningItemType(itemType)) {
-    return "추론 요약";
-  }
-
-  if (event.rawType === "item.started") {
-    return isCommandItemType(itemType) ? "도구 실행 시작" : "항목 시작";
-  }
-
-  if (event.rawType === "item.completed") {
-    return isCommandItemType(itemType) ? "도구 실행 완료" : "항목 완료";
-  }
-
-  if (event.rawType === "process.start") {
-    return "프로세스 시작";
-  }
-
-  if (event.rawType === "process.close") {
-    return "프로세스 종료";
-  }
-
-  if (event.rawType === "turn.started") {
-    return "요청 처리 시작";
-  }
-
-  if (event.rawType === "turn.completed") {
-    return "요청 처리 완료";
-  }
-
-  return itemType ?? event.rawType ?? event.type;
+  return event.type === "assistant.message.completed" ? "진행 단계" : "처리 단계";
 }
 
 function reasoningEventDetail(event: RuntimeEvent): string | null {
-  if (event.type === "session.bound") {
-    const runtimeSessionId = event.data.runtimeSessionId ?? event.runtimeSessionId;
-    return typeof runtimeSessionId === "string" && runtimeSessionId.trim()
-      ? `런타임 세션 ${runtimeSessionId.trim()}`
-      : null;
-  }
-
-  if (event.type === "run.completed") {
-    const status = event.data.status;
-    return typeof status === "string" && status.trim()
-      ? `상태: ${status.trim()}`
-      : null;
-  }
-
-  if (
-    event.type === "run.warning" ||
-    event.type === "run.error" ||
-    event.type === "assistant.message.completed"
-  ) {
-    const message = event.data.message ?? event.data.text;
-    return typeof message === "string" ? compactReasoningText(message) : null;
-  }
-
-  if (event.type === "run.stdout" || event.type === "run.stderr") {
-    const line = event.data.line;
-    return typeof line === "string" ? compactReasoningText(line) : null;
-  }
-
-  return runtimeEventCommandText(event) ?? runtimeEventItemType(event);
+  const message = event.data.message ?? event.data.text;
+  return typeof message === "string" ? compactReasoningText(message) : null;
 }
 
 function runtimeEventTime(event: RuntimeEvent): number {
@@ -3187,12 +3049,6 @@ function ReasoningProcessPanel({ events }: { events: RuntimeEvent[] }) {
                     {detail}
                   </p>
                 ) : null}
-                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] uppercase text-muted-foreground/75">
-                  <span>{event.type}</span>
-                  {event.rawType && event.rawType !== event.type ? (
-                    <span>{event.rawType}</span>
-                  ) : null}
-                </div>
               </li>
             );
           })}

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Rocky replies expose a collapsed reasoning process panel", async ({ page }) => {
+test("Rocky replies expose only human reasoning steps", async ({ page }) => {
   const now = "2026-01-01T00:00:00.000Z";
   const chatId = "reasoning-panel-test";
   const agentId = "agent-reasoning-panel";
@@ -54,6 +54,27 @@ test("Rocky replies expose a collapsed reasoning process panel", async ({ page }
       occurredAt: "2026-01-01T00:00:03.500Z",
       data: { line: "stderr output should stay in logs" },
       raw: { line: "stderr output should stay in logs" },
+    },
+    {
+      source: "codex-cli",
+      type: "assistant.message.completed",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.750Z",
+      data: {
+        itemType: "reasoning_summary",
+        text: "요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.",
+      },
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "reasoning-1",
+          type: "reasoning_summary",
+          text: "요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.",
+        },
+      },
     },
     {
       source: "codex-cli",
@@ -235,19 +256,28 @@ test("Rocky replies expose a collapsed reasoning process panel", async ({ page }
   const toggle = page.getByRole("button", { name: /추론 과정/ });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByText("도구 실행 시작")).toHaveCount(0);
+  await expect(
+    page.getByText("요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.")
+  ).toHaveCount(0);
 
   await toggle.click();
 
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByText("세션 연결")).toBeVisible();
-  await expect(page.getByText("도구 실행 시작")).toBeVisible();
-  await expect(page.getByText("npm test")).toBeVisible();
+  await expect(page.getByText("진행 단계")).toBeVisible();
+  await expect(
+    page.getByText("요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.")
+  ).toBeVisible();
+  await expect(page.getByText("세션 연결")).toHaveCount(0);
+  await expect(page.getByText("도구 실행 시작")).toHaveCount(0);
+  await expect(page.getByText("npm test")).toHaveCount(0);
+  await expect(page.getByText("assistant.message.completed")).toHaveCount(0);
   await expect(page.getByText("stderr output should stay in logs")).toHaveCount(0);
 
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByText("도구 실행 시작")).toHaveCount(0);
+  await expect(
+    page.getByText("요청 내용을 확인하고 필요한 검증 단계를 정리하고 있어요.")
+  ).toHaveCount(0);
 });
 
 test("right file preview does not reload while Rocky is answering", async ({ page }) => {

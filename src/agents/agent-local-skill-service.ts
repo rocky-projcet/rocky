@@ -139,6 +139,19 @@ const THREADS_CONNECTOR_CAPABILITY_MANIFEST = `${JSON.stringify(
     provider: "threads",
     capabilities: [
       {
+        id: "threads.automation.prepare",
+        label: "Automation readiness check",
+        description:
+          "Validate the connected Threads account and expose safe profile metadata before AI automation runs.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        scriptPath: "scripts/threads-crud.mjs",
+        usage: "node scripts/threads-crud.mjs prepare",
+      },
+      {
         id: "threads.profile.read",
         label: "프로필 조회",
         description: "Rocky가 보관한 Threads 브라우저 세션으로 현재 계정 프로필을 읽습니다.",
@@ -221,6 +234,7 @@ const THREADS_CONNECTOR_CAPABILITY_MANIFEST = `${JSON.stringify(
 const THREADS_CONNECTOR_SCRIPT = `#!/usr/bin/env node
 const operation = process.argv[2] || "help";
 const supported = new Map([
+  ["prepare", "threads.automation.prepare"],
   ["profile.read", "threads.profile.read"],
   ["followers.read", "threads.followers.read"],
 ]);
@@ -301,6 +315,7 @@ function parseArgs(argv) {
 function printUsage() {
   console.log([
     "Usage:",
+    "  node scripts/threads-crud.mjs prepare",
     "  node scripts/threads-crud.mjs profile.read",
     "  node scripts/threads-crud.mjs followers.read --limit 50",
     "",

@@ -487,6 +487,24 @@ export function getConnectorCapabilities(
     }),
   ];
 
+  if (provider === "threads") {
+    capabilities.push(
+      capability({
+        id: "threads.automation.prepare",
+        provider,
+        label: "Automation readiness check",
+        description:
+          "Validate the connected Threads account and expose safe profile metadata before AI automation runs.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: available ? "available" : "planned",
+        source: "backend",
+      })
+    );
+  }
+
   const scopeText =
     adapter.oauth.supported === true ? adapter.oauth.scopes.join(" ") : "";
   const hasWriteScope = /write|manage|publish|upload|content_publish/iu.test(

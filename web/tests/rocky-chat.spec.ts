@@ -1,5 +1,356 @@
 import { expect, test } from "@playwright/test";
 
+test("Rocky replies expose natural completed progress markdown", async ({ page }) => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const chatId = "reasoning-panel-test";
+  const agentId = "agent-reasoning-panel";
+  const sessionId = "session-reasoning-panel";
+  const runId = "run-reasoning-panel";
+  const answer = "Completed the requested check.";
+  const events = [
+    {
+      source: "codex-cli",
+      type: "session.bound",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "thread.started",
+      occurredAt: "2026-01-01T00:00:01.000Z",
+      data: { runtimeSessionId: "thread-reasoning" },
+      raw: { type: "thread.started", thread_id: "thread-reasoning" },
+    },
+    {
+      source: "codex-cli",
+      type: "run.started",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "turn.started",
+      occurredAt: "2026-01-01T00:00:02.000Z",
+      data: {},
+      raw: { type: "turn.started" },
+    },
+    {
+      source: "codex-cli",
+      type: "run.raw",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.started",
+      occurredAt: "2026-01-01T00:00:03.000Z",
+      data: {},
+      raw: {
+        type: "item.started",
+        item: { id: "cmd-1", type: "command_execution", command: "npm test" },
+      },
+    },
+    {
+      source: "codex-cli",
+      type: "run.stderr",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "stderr.line",
+      occurredAt: "2026-01-01T00:00:03.500Z",
+      data: { line: "stderr output should stay in logs" },
+      raw: { line: "stderr output should stay in logs" },
+    },
+    {
+      source: "codex-cli",
+      type: "run.raw",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.650Z",
+      data: {},
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "cmd-2",
+          type: "command_execution",
+          command: "hidden completed command",
+          output: "raw completed output only",
+        },
+      },
+    },
+    {
+      source: "codex-cli",
+      type: "assistant.message.completed",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.750Z",
+      data: {
+        itemType: "reasoning_summary",
+        text: "**Public progress**\n\n- Requirement reviewed",
+      },
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "reasoning-1",
+          type: "reasoning_summary",
+          text: "**Public progress**\n\n- Requirement reviewed",
+        },
+      },
+    },
+    {
+      source: "codex-cli",
+      type: "assistant.message.completed",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.850Z",
+      data: {
+        itemType: "agent_message",
+        text: "**Agent progress**\n\n- Still working",
+      },
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "progress-1",
+          type: "agent_message",
+          text: "**Agent progress**\n\n- Still working",
+        },
+      },
+    },
+    {
+      source: "codex-cli",
+      type: "assistant.message.completed",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "item.completed",
+      occurredAt: "2026-01-01T00:00:03.900Z",
+      data: {
+        itemType: "agent_message",
+        text: answer,
+      },
+      raw: {
+        type: "item.completed",
+        item: {
+          id: "answer-1",
+          type: "agent_message",
+          text: answer,
+        },
+      },
+    },
+    {
+      source: "codex-cli",
+      type: "run.completed",
+      runId,
+      sessionId,
+      runtimeSessionId: "thread-reasoning",
+      rawType: "process.close",
+      occurredAt: "2026-01-01T00:00:04.000Z",
+      data: { status: "completed" },
+      raw: { type: "turn.completed" },
+    },
+  ];
+  const sseBody = events
+    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    .join("");
+
+  const chat = {
+    id: chatId,
+    title: "Reasoning panel test",
+    intent: "conversation",
+    domain: "general",
+    worker: {
+      id: "worker-reasoning-panel",
+      skillId: "general",
+      domain: "general",
+      displayName: "General",
+      agentId,
+      reason: "test",
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    },
+    attachments: [],
+    messages: [
+      {
+        id: "message-user",
+        chatId,
+        role: "user",
+        intent: "conversation",
+        text: "Run a check.",
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-reasoning-panel",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: null,
+        createdAt: now,
+      },
+      {
+        id: "message-rocky",
+        chatId,
+        role: "rocky",
+        intent: "conversation",
+        text: answer,
+        attachmentIds: [],
+        domain: "general",
+        workerId: "worker-reasoning-panel",
+        skillCandidateIds: [],
+        usedSkills: [],
+        dispatchId: "dispatch-reasoning-panel",
+        createdAt: now,
+      },
+    ],
+    skillCandidates: [],
+    dispatches: [
+      {
+        id: "dispatch-reasoning-panel",
+        chatId,
+        messageId: "message-user",
+        skillId: "general",
+        intent: "conversation",
+        domain: "general",
+        workerId: "worker-reasoning-panel",
+        attachmentIds: [],
+        originalRequest: "Run a check.",
+        skillCandidateIds: [],
+        protectionHints: [],
+        orchestration: {
+          id: "orchestration-reasoning-panel",
+          status: "completed",
+          agentId,
+          sessionId,
+          runId,
+          output: answer,
+          error: null,
+          startedAt: now,
+          endedAt: now,
+          updatedAt: now,
+        },
+        executionStarted: true,
+        createdAt: now,
+      },
+    ],
+    orchestration: null,
+    executionStarted: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(chat),
+    });
+  });
+  await page.route(`**/api/sessions/${sessionId}/transcript`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: "transcript-answer",
+          sessionId,
+          runId,
+          role: "assistant",
+          content: answer,
+          source: "codex",
+          createdAt: now,
+          artifacts: [],
+        },
+      ]),
+    });
+  });
+  await page.route(`**/api/runs/${runId}/events`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sseBody,
+    });
+  });
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: agentId,
+        name: "Reasoning Panel Agent",
+        description: "",
+        color: null,
+        workspaceRoot: "/tmp/reasoning-panel-agent",
+        runtimeHome: "/tmp/reasoning-panel-runtime",
+        defaultRuntime: "codex-cli",
+        sandboxPolicy: "workspace-write",
+        approvalPolicy: "on-request",
+        modelProfile: null,
+        status: "idle",
+        lifecycle: "active",
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  });
+  await page.route(`**/api/agents/${agentId}/workspace?**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        agentId,
+        workspaceRoot: "/tmp/reasoning-panel-agent",
+        path: "",
+        parentPath: null,
+        entries: [],
+      }),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  const toggle = page.getByRole("button", { name: /진행 원본/ });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("2");
+  await expect(page.getByText(answer)).toHaveCount(1);
+  const toggleBox = await toggle.boundingBox();
+  const answerBox = await page.getByText(answer).boundingBox();
+  expect(toggleBox).not.toBeNull();
+  expect(answerBox).not.toBeNull();
+  expect(toggleBox!.y).toBeLessThan(answerBox!.y);
+  await expect(page.getByText("세션 연결")).toHaveCount(0);
+  await expect(page.getByText("npm test")).toHaveCount(0);
+
+  await toggle.click();
+
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("세션 연결")).toHaveCount(0);
+  await expect(page.getByText("도구 호출 시작")).toHaveCount(0);
+  await expect(page.getByText("npm test")).toHaveCount(0);
+  await expect(page.getByText("raw completed output only")).toHaveCount(0);
+  await expect(page.getByText("hidden completed command")).toHaveCount(0);
+  await expect(page.getByText("item.completed")).toHaveCount(0);
+  await expect(page.getByText("Public progress")).toBeVisible();
+  await expect(page.getByText("Requirement reviewed")).toBeVisible();
+  await expect(page.getByText("Agent progress")).toBeVisible();
+  await expect(page.getByText("Still working")).toBeVisible();
+  await expect(page.getByText(answer)).toHaveCount(1);
+  await expect(page.getByText("assistant.message.completed")).toHaveCount(0);
+  await expect(page.getByText("item.started")).toHaveCount(0);
+  await expect(page.getByText("stderr output should stay in logs")).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("세션 연결")).toHaveCount(0);
+  await expect(page.getByText("npm test")).toHaveCount(0);
+});
+
 test("right file preview does not reload while Rocky is answering", async ({ page }) => {
   const now = "2026-01-01T00:00:00.000Z";
   const chatId = "preview-refresh-test";

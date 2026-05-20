@@ -12,14 +12,25 @@ import type { ProviderAccountRecord, ProviderKind } from "../types";
 import { cn } from "@/shared/lib/utils";
 
 const GATED_PROVIDERS: ReadonlyArray<ProviderKind> = ["codex"];
+const BOOT_VIDEO_PATH = "/rocky-start-screen.mp4";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const accountsQuery = useProviderAccountsQuery();
 
   if (accountsQuery.isLoading) {
     return (
-      <div className="flex h-svh w-full items-center justify-center bg-background">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      <div className="flex h-svh w-full items-center justify-center bg-background px-6 py-8 sm:px-10">
+        <video
+          className="max-h-[72vh] w-full max-w-3xl object-contain"
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+        >
+          <source src={BOOT_VIDEO_PATH} type="video/mp4" />
+        </video>
       </div>
     );
   }

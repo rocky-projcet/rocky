@@ -294,3 +294,542 @@ test("skill template file reads repair legacy packages with uploaded input artif
     await server.close();
   }
 });
+
+test("external skill preview stores an isolated package and mounts it as a common skill", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "external-skill-api-"));
+  let nextId = 0;
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-19T00:00:00.000Z",
+    idGenerator: () => (nextId++ === 0 ? "preview-001" : "unused-id"),
+  });
+
+  try {
+    const previewResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/preview",
+      payload: {
+        sourceKind: "github",
+        sourceUrl: "https://github.com/example/skills/tree/main/research",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: external-research\n---\n# External Research\nUse when researching explicit inputs.\n",
+          },
+          {
+            path: "scripts/run.mjs",
+            content: "console.log(JSON.stringify({ ok: true }));\n",
+          },
+        ],
+      },
+    });
+    assert.equal(previewResponse.statusCode, 201);
+    const preview = previewResponse.json<{
+      id: string;
+      installable: boolean;
+      skillId: string;
+      packageHash: string;
+      checks: Array<{ id: string; status: string }>;
+    }>();
+    assert.equal(preview.id, "preview-001");
+    assert.equal(preview.installable, true);
+    assert.equal(preview.skillId, "external-research");
+    assert.match(preview.packageHash, /^sha256:/u);
+    assert.ok(
+      preview.checks.some(
+        (check) => check.id === "skill-md" && check.status === "passed",
+      ),
+    );
+    await access(
+      path.join(
+        stateRoot,
+        "external-skill-previews",
+        "preview-001",
+        "package",
+        "SKILL.md",
+      ),
+    );
+
+    const mountResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/previews/preview-001/mount",
+    });
+    assert.equal(mountResponse.statusCode, 201);
+    assert.equal(mountResponse.json().skill.id, "external.external-research");
+
+    const filesResponse = await server.inject({
+      method: "GET",
+      url: "/skills/external.external-research/files",
+    });
+    assert.equal(filesResponse.statusCode, 200);
+    const files = filesResponse.json<Array<{ path: string }>>();
+    assert.ok(files.some((file) => file.path === "SKILL.md"));
+    assert.ok(files.some((file) => file.path === "scripts/run.mjs"));
+  } finally {
+    await server.close();
+  }
+});
+
+test("external skill preview fetches a skills.sh GitHub package URL", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "external-skill-url-api-"));
+  const originalFetch = globalThis.fetch;
+  const fetchedUrls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    fetchedUrls.push(url);
+    if (
+      url ===
+      "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills/social-content?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify([
+          {
+            type: "file",
+            path: "skills/social-content/SKILL.md",
+            download_url:
+              "https://raw.githubusercontent.com/coreyhaines31/marketingskills/main/skills/social-content/SKILL.md",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://raw.githubusercontent.com/coreyhaines31/marketingskills/main/skills/social-content/SKILL.md"
+    ) {
+      return new Response(
+        "---\nname: social-content\ndescription: Social content helper.\n---\n# Social Content\n",
+        { status: 200 },
+      );
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-19T00:00:00.000Z",
+    idGenerator: () => "preview-url",
+  });
+
+  try {
+    const previewResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/preview",
+      payload: {
+        sourceKind: "mcp-market",
+        sourceUrl:
+          "https://www.skills.sh/coreyhaines31/marketingskills/social-content",
+      },
+    });
+    assert.equal(previewResponse.statusCode, 201);
+    const preview = previewResponse.json<{
+      installable: boolean;
+      skillId: string;
+      fileCount: number;
+      checks: Array<{ id: string; status: string; message: string }>;
+    }>();
+    assert.equal(preview.installable, true);
+    assert.equal(preview.skillId, "social-content");
+    assert.equal(preview.fileCount, 1);
+    assert.ok(
+      preview.checks.some(
+        (check) =>
+          check.id === "source" &&
+          check.status === "passed" &&
+          /Remote package source fetched/u.test(check.message),
+      ),
+    );
+    assert.ok(
+      fetchedUrls.includes(
+        "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills/social-content?ref=main",
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await server.close();
+  }
+});
+
+test("external skill preview resolves a skills.sh slug from the SKILL.md title", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "external-skill-slug-api-"));
+  const originalFetch = globalThis.fetch;
+  const fetchedUrls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    fetchedUrls.push(url);
+    if (
+      url ===
+      "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify([
+          { type: "dir", name: "copywriting", path: "skills/copywriting" },
+          { type: "dir", name: "social", path: "skills/social" },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills/social/SKILL.md?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify({
+          type: "file",
+          path: "skills/social/SKILL.md",
+          download_url:
+            "https://raw.githubusercontent.com/coreyhaines31/marketingskills/main/skills/social/SKILL.md",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills/social?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify([
+          {
+            type: "file",
+            path: "skills/social/SKILL.md",
+            download_url:
+              "https://raw.githubusercontent.com/coreyhaines31/marketingskills/main/skills/social/SKILL.md",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://raw.githubusercontent.com/coreyhaines31/marketingskills/main/skills/social/SKILL.md"
+    ) {
+      return new Response(
+        "---\nname: social\ndescription: Social media helper.\n---\n# Social Content\n",
+        { status: 200 },
+      );
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-19T00:00:00.000Z",
+    idGenerator: () => "preview-slug-url",
+  });
+
+  try {
+    const previewResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/preview",
+      payload: {
+        sourceKind: "mcp-market",
+        sourceUrl:
+          "https://www.skills.sh/coreyhaines31/marketingskills/social-content",
+      },
+    });
+    assert.equal(previewResponse.statusCode, 201);
+    const preview = previewResponse.json<{
+      installable: boolean;
+      skillId: string;
+      fileCount: number;
+    }>();
+    assert.equal(preview.installable, true);
+    assert.equal(preview.skillId, "social");
+    assert.equal(preview.fileCount, 1);
+    assert.ok(
+      fetchedUrls.includes(
+        "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills?ref=main",
+      ),
+    );
+    assert.ok(
+      fetchedUrls.includes(
+        "https://api.github.com/repos/coreyhaines31/marketingskills/contents/skills/social?ref=main",
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await server.close();
+  }
+});
+
+test("external skill preview resolves a nested skills.sh package path", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "external-skill-nested-api-"));
+  const originalFetch = globalThis.fetch;
+  const fetchedUrls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    fetchedUrls.push(url);
+    if (
+      url ===
+      "https://api.github.com/repos/postplusai/postplus-skills/contents/skills?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify([
+          { type: "dir", name: "10-content", path: "skills/10-content" },
+          { type: "dir", name: "50-publishing", path: "skills/50-publishing" },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://api.github.com/repos/postplusai/postplus-skills/contents/skills/50-publishing?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify([
+          {
+            type: "dir",
+            name: "social-media-publisher",
+            path: "skills/50-publishing/social-media-publisher",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://api.github.com/repos/postplusai/postplus-skills/contents/skills/50-publishing/social-media-publisher/SKILL.md?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify({
+          type: "file",
+          path: "skills/50-publishing/social-media-publisher/SKILL.md",
+          download_url:
+            "https://raw.githubusercontent.com/postplusai/postplus-skills/main/skills/50-publishing/social-media-publisher/SKILL.md",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://api.github.com/repos/postplusai/postplus-skills/contents/skills/50-publishing/social-media-publisher?ref=main"
+    ) {
+      return new Response(
+        JSON.stringify([
+          {
+            type: "file",
+            path: "skills/50-publishing/social-media-publisher/SKILL.md",
+            download_url:
+              "https://raw.githubusercontent.com/postplusai/postplus-skills/main/skills/50-publishing/social-media-publisher/SKILL.md",
+          },
+          {
+            type: "file",
+            path: "skills/50-publishing/social-media-publisher/scripts/create_post.mjs",
+            download_url:
+              "https://raw.githubusercontent.com/postplusai/postplus-skills/main/skills/50-publishing/social-media-publisher/scripts/create_post.mjs",
+          },
+        ]),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (
+      url ===
+      "https://raw.githubusercontent.com/postplusai/postplus-skills/main/skills/50-publishing/social-media-publisher/SKILL.md"
+    ) {
+      return new Response(
+        "---\nname: social-media-publisher\ndescription: Social publishing helper.\n---\n# Social Media Publisher\n",
+        { status: 200 },
+      );
+    }
+    if (
+      url ===
+      "https://raw.githubusercontent.com/postplusai/postplus-skills/main/skills/50-publishing/social-media-publisher/scripts/create_post.mjs"
+    ) {
+      return new Response("console.log(JSON.stringify({ ok: true }));\n", {
+        status: 200,
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-19T00:00:00.000Z",
+    idGenerator: () => "preview-nested-url",
+  });
+
+  try {
+    const previewResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/preview",
+      payload: {
+        sourceKind: "mcp-market",
+        sourceUrl:
+          "https://www.skills.sh/postplusai/postplus-skills/social-media-publisher",
+      },
+    });
+    assert.equal(previewResponse.statusCode, 201);
+    const preview = previewResponse.json<{
+      installable: boolean;
+      skillId: string;
+      fileCount: number;
+    }>();
+    assert.equal(preview.installable, true);
+    assert.equal(preview.skillId, "social-media-publisher");
+    assert.equal(preview.fileCount, 2);
+    assert.ok(
+      fetchedUrls.includes(
+        "https://api.github.com/repos/postplusai/postplus-skills/contents/skills/50-publishing/social-media-publisher?ref=main",
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await server.close();
+  }
+});
+
+test("external connected execution skills block credential injection without allowed API origins", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "external-skill-gate-api-"));
+  let nextId = 0;
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-19T00:00:00.000Z",
+    idGenerator: () => {
+      nextId += 1;
+      return nextId === 1 ? "preview-unsafe" : "agent-unsafe";
+    },
+  });
+
+  try {
+    const previewResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/preview",
+      payload: {
+        sourceKind: "upload",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: instagram-publisher\n---\n# Instagram Publisher\n",
+          },
+          {
+            path: "connector-capabilities.json",
+            content: JSON.stringify({
+              provider: "instagram",
+              capabilities: [
+                {
+                  id: "instagram.content.publish",
+                  action: "write",
+                  requiresConnectedAccount: true,
+                  requiredEnv: [
+                    "INSTAGRAM_ACCESS_TOKEN",
+                    "INSTAGRAM_ACCOUNT_ID",
+                  ],
+                  allowedEndpointPaths: [
+                    "/{ig-user-id}/media",
+                    "/{ig-user-id}/media_publish",
+                  ],
+                  requiresApproval: true,
+                  scriptPath: "scripts/publish.mjs",
+                },
+              ],
+            }),
+          },
+          {
+            path: "scripts/publish.mjs",
+            content:
+              "await fetch('https://graph.facebook.com/v22.0/me');\n",
+          },
+        ],
+      },
+    });
+    assert.equal(previewResponse.statusCode, 201);
+    const preview = previewResponse.json<{
+      installable: boolean;
+      capabilities: Array<{
+        id: string;
+        credentialGateStatus: string;
+        reasons: string[];
+      }>;
+    }>();
+    assert.equal(preview.installable, true);
+    assert.equal(preview.capabilities[0]?.id, "instagram.content.publish");
+    assert.equal(preview.capabilities[0]?.credentialGateStatus, "blocked");
+    assert.ok(
+      preview.capabilities[0]?.reasons.some((reason) =>
+        /allowedBaseUrls/u.test(reason),
+      ),
+    );
+
+    const mountResponse = await server.inject({
+      method: "POST",
+      url: "/skills/external/previews/preview-unsafe/mount",
+    });
+    assert.equal(mountResponse.statusCode, 201);
+
+    const createAgentResponse = await server.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        id: "agent-unsafe",
+        name: "Unsafe Skill Agent",
+      },
+    });
+    assert.equal(createAgentResponse.statusCode, 201);
+
+    const filesResponse = await server.inject({
+      method: "GET",
+      url: "/skills/external.instagram-publisher/files",
+    });
+    assert.equal(filesResponse.statusCode, 200);
+
+    const installResponse = await server.inject({
+      method: "PUT",
+      url: "/agents/agent-unsafe/skills/instagram-publisher",
+      payload: {
+        replace: true,
+        files: filesResponse.json(),
+      },
+    });
+    assert.equal(installResponse.statusCode, 200);
+
+    const integrationsResponse = await server.inject({
+      method: "GET",
+      url: "/agents/agent-unsafe/integrations",
+    });
+    assert.equal(integrationsResponse.statusCode, 200);
+    const integrations = integrationsResponse.json<
+      Array<{
+        provider: string;
+        capabilities: Array<{
+          id: string;
+          status?: string;
+          credentialGateStatus?: string;
+          credentialGateReasons?: string[];
+        }>;
+      }>
+    >();
+    const capability = integrations[0]?.capabilities.find(
+      (entry) => entry.id === "instagram.content.publish",
+    );
+    assert.equal(capability?.status, "unsupported");
+    assert.equal(capability?.credentialGateStatus, "blocked");
+  } finally {
+    await server.close();
+  }
+});

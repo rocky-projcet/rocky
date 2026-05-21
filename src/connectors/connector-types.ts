@@ -44,6 +44,11 @@ export interface ConnectorCapabilityRecord {
   sourceSkillName?: string | null;
   scriptPath?: string | null;
   usage?: string | null;
+  requiredEnv?: string[];
+  allowedBaseUrls?: string[];
+  allowedEndpointPaths?: string[];
+  credentialGateStatus?: "not-required" | "allowed" | "blocked";
+  credentialGateReasons?: string[];
 }
 
 export type ConnectorBrowserAccessStatus =

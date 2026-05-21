@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Archive, FileBox, Paperclip, Plus } from "lucide-react";
+import { Archive, FileBox, Paperclip, Plus, UploadCloud } from "lucide-react";
 
 import { useMdTemplates } from "@/domains/template/hooks";
 import type { MdTemplateDefinition } from "@/domains/template/types";
@@ -22,6 +22,14 @@ export function SkillsPage() {
               <Archive className="size-4" />
               보관함
             </Button>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link to="/skills/external" />}
+            >
+              <UploadCloud className="size-4" />
+              외부 스킬 추가
+            </Button>
             <Button render={<Link to="/skills/new" />}>
               <Plus className="size-4" />
               새 스킬 만들기
@@ -33,6 +41,9 @@ export function SkillsPage() {
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <li>
           <NewSkillCard />
+        </li>
+        <li>
+          <ExternalSkillCard />
         </li>
         {userTemplates.map((template) => (
           <li key={template.id}>
@@ -56,6 +67,23 @@ function NewSkillCard() {
       <p className="mt-3 text-sm font-semibold text-foreground">새 공용 스킬 만들기</p>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
         4단계 질문에 답하면 새 스킬이 만들어져요.
+      </p>
+    </Link>
+  );
+}
+
+function ExternalSkillCard() {
+  return (
+    <Link
+      to="/skills/external"
+      className="group flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/70 bg-muted/30 p-4 text-center no-underline transition hover:border-primary/50 hover:bg-muted/60"
+    >
+      <div className="flex size-10 items-center justify-center rounded-xl bg-background text-muted-foreground transition group-hover:text-primary">
+        <UploadCloud className="size-5" />
+      </div>
+      <p className="mt-3 text-sm font-semibold text-foreground">외부 스킬 추가</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        public skill package를 미리보고 장착합니다.
       </p>
     </Link>
   );

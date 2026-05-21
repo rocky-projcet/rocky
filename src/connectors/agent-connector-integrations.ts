@@ -12,6 +12,12 @@ import type {
   ConnectorServiceLike,
   ConnectorState,
 } from "./connector-types.js";
+import {
+  CONNECTOR_EXECUTION_GATE_FILE,
+  findGateCapability,
+  parseConnectorExecutionGate,
+  type ConnectorExecutionGateManifest,
+} from "./connector-execution-gate.js";
 
 const CONNECTOR_CAPABILITY_MANIFEST = "connector-capabilities.json";
 
@@ -143,6 +149,7 @@ async function readSkillConnectorManifest(
     };
   }
 
+  const gate = await readSkillConnectorGate(skill);
   const providers: ConnectorProvider[] = [];
   const capabilitiesByProvider = new Map<ConnectorProvider, ConnectorCapabilityRecord[]>();
   for (const entry of normalizeManifestEntries(parsed)) {
@@ -155,6 +162,7 @@ async function readSkillConnectorManifest(
       provider,
       rawCapabilities: (entry as Record<string, unknown>).capabilities,
       skill,
+      gate,
     });
     if (capabilities.length > 0) {
       capabilitiesByProvider.set(
@@ -194,13 +202,16 @@ function readManifestCapabilities(input: {
   provider: ConnectorProvider;
   rawCapabilities: unknown;
   skill: AgentLocalSkillRecord;
+  gate: ConnectorExecutionGateManifest | null;
 }): ConnectorCapabilityRecord[] {
   if (!Array.isArray(input.rawCapabilities)) {
     return [];
   }
 
   return input.rawCapabilities
-    .map((raw) => readManifestCapability(input.provider, raw, input.skill))
+    .map((raw) =>
+      readManifestCapability(input.provider, raw, input.skill, input.gate),
+    )
     .filter(
       (capability): capability is ConnectorCapabilityRecord =>
         capability !== null,
@@ -211,18 +222,24 @@ function readManifestCapability(
   provider: ConnectorProvider,
   raw: unknown,
   skill: AgentLocalSkillRecord,
+  gate: ConnectorExecutionGateManifest | null,
 ): ConnectorCapabilityRecord | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
   const record = raw as Record<string, unknown>;
   const id = readNonEmptyString(record.id);
-  const label = readNonEmptyString(record.label);
-  const description = readNonEmptyString(record.description);
   const action = readCapabilityAction(record.action);
-  if (!id || !label || !description || !action) {
+  if (!id || !action) {
     return null;
   }
+  const label = readNonEmptyString(record.label) ?? id;
+  const description =
+    readNonEmptyString(record.description) ??
+    `External skill capability ${id}.`;
+
+  const gateCapability = findGateCapability(gate, id);
+  const gateBlocked = gateCapability?.credentialGateStatus === "blocked";
 
   return {
     id,
@@ -230,8 +247,10 @@ function readManifestCapability(
     label,
     description,
     action,
-    requiresBrowser: readBoolean(record.requiresBrowser) ?? true,
-    requiresConnectedAccount: readBoolean(record.requiresConnectedAccount) ?? true,
+    requiresBrowser: readBoolean(record.requiresBrowser) ?? false,
+    requiresConnectedAccount:
+      readBoolean(record.requiresConnectedAccount) ??
+      readStringArray(record.requiredEnv).length > 0,
     requiresApproval: readBoolean(record.requiresApproval) ?? action === "write",
     status: readCapabilityStatus(record.status),
     source: "skill",
@@ -239,7 +258,24 @@ function readManifestCapability(
     sourceSkillName: skill.displayName,
     scriptPath: readSafeRelativePath(record.scriptPath),
     usage: readNonEmptyString(record.usage),
+    requiredEnv: readStringArray(record.requiredEnv),
+    allowedBaseUrls: readStringArray(record.allowedBaseUrls),
+    allowedEndpointPaths: readStringArray(record.allowedEndpointPaths),
+    credentialGateStatus: gateCapability?.credentialGateStatus,
+    credentialGateReasons: gateCapability?.reasons,
+    ...(gateBlocked ? { status: "unsupported" as const } : {}),
   };
+}
+
+async function readSkillConnectorGate(
+  skill: AgentLocalSkillRecord,
+): Promise<ConnectorExecutionGateManifest | null> {
+  const gatePath = path.join(path.dirname(skill.skillPath), CONNECTOR_EXECUTION_GATE_FILE);
+  try {
+    return parseConnectorExecutionGate(JSON.parse(await readFile(gatePath, "utf8")));
+  } catch {
+    return null;
+  }
 }
 
 function readProvider(value: unknown): ConnectorProvider | null {
@@ -268,6 +304,15 @@ function readNonEmptyString(value: unknown): string | null {
 
 function readBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
 }
 
 function readSafeRelativePath(value: unknown): string | null {

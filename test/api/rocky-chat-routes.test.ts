@@ -32,6 +32,17 @@ import type {
   ConnectorBrowserProfileReader,
 } from "../../src/connectors/browser-profile-reader.js";
 
+const INSTAGRAM_GRAPH_ENV = {
+  ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_KIND: "professional_creator",
+  ROCKY_CONNECTOR_INSTAGRAM_GRAPH_ACCESS_TOKEN: "instagram-graph-secret",
+  ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID: "17841400000000001",
+  ROCKY_CONNECTOR_INSTAGRAM_FACEBOOK_PAGE_ID: "112233445566",
+  ROCKY_CONNECTOR_INSTAGRAM_META_BUSINESS_ID: "998877665544",
+  ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID: "123456789",
+  ROCKY_CONNECTOR_INSTAGRAM_GRAPH_PERMISSIONS:
+    "instagram_basic pages_show_list instagram_content_publish instagram_manage_insights",
+};
+
 function buildAgent(input: Partial<AgentRecord> = {}): AgentRecord {
   const now = "2026-04-21T00:00:00.000Z";
   return {
@@ -161,6 +172,7 @@ function createRockyChatTestServer(
     connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
     connectorBrowserProfileReader?: ConnectorBrowserProfileReader;
     connectorBrowserFollowerListReader?: ConnectorBrowserFollowerListReader;
+    connectorBaseEnv?: NodeJS.ProcessEnv;
   } = {}
 ) {
   const agents: AgentRecord[] = [];
@@ -190,6 +202,7 @@ function createRockyChatTestServer(
     stateRoot,
     now: () => "2026-04-21T00:00:00.000Z",
     ecountLookupService: options.ecountLookupService,
+    connectorBaseEnv: options.connectorBaseEnv,
     connectorBrowserDetector: options.connectorBrowserDetector,
     connectorBrowserDraftPublisher: options.connectorBrowserDraftPublisher,
     connectorBrowserProfileReader: options.connectorBrowserProfileReader,
@@ -1531,7 +1544,7 @@ test("rocky chat ignores stale Tistory context while keeping connected Threads c
     );
     assert.ok(
       sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
-        instruction.includes("Rocky-managed browser account connectors may be connected")
+        instruction.includes("Rocky-managed account connectors may be connected")
       )
     );
     assert.equal(
@@ -1821,11 +1834,10 @@ test("rocky chat prepares Instagram automation readiness for Instagram requests"
 
   const { agents, completedRunSummaries, sendTurnCalls, server } =
     createRockyChatTestServer(stateRoot, {
-      connectorBrowserDetector: async () => ({
-        available: true,
-        channel: "chromium",
-        message: "Playwright Chromium available",
-      }),
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorBrowserDetector: async () => {
+        throw new Error("Instagram Graph API readiness must not launch a browser");
+      },
     });
   const workspaceRoot = path.join(
     stateRoot,
@@ -1874,6 +1886,7 @@ test("rocky chat prepares Instagram automation readiness for Instagram requests"
     );
     assert.match(agentContext, /Instagram: connected/u);
     assert.match(agentContext, /instagram\.automation\.prepare:read:status=available/u);
+    assert.match(agentContext, /instagram\.media\.publish:write:approval:status=available:setup=graph-api/u);
     assert.doesNotMatch(agentContext, /instagram-session-secret|sessionid|browser-profile/u);
 
     const readinessPath = path.join(
@@ -1887,9 +1900,9 @@ test("rocky chat prepares Instagram automation readiness for Instagram requests"
     const readiness = JSON.parse(await readFile(readinessPath, "utf8"));
     assert.equal(readiness.ok, true);
     assert.equal(readiness.status, "completed");
-    assert.equal(readiness.accountLabel, "Instagram account");
+    assert.equal(readiness.accountLabel, "Instagram Graph account 17841400000000001");
     assert.match(readiness.message, /instagram\.automation\.prepare/u);
-    assert.doesNotMatch(JSON.stringify(readiness), /instagram-session-secret|sessionid/u);
+    assert.doesNotMatch(JSON.stringify(readiness), /instagram-session-secret|sessionid|instagram-graph-secret/u);
     assert.ok(
       sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
         instruction.includes("Prepared integration lookup or readiness results may be listed")

@@ -10,6 +10,10 @@ import {
   listWorkspaceLocalSkills,
   resolveWorkspaceScaffoldPaths,
 } from "./agent-workspace.js";
+import {
+  buildInstagramNativeSkillManifest,
+  buildInstagramNativeSkillScript,
+} from "../connectors/instagram-native-capability.js";
 
 export interface AgentLocalSkillRecord {
   id: string;
@@ -461,6 +465,9 @@ function printUsage() {
 }
 `;
 
+const INSTAGRAM_CONNECTOR_CAPABILITY_MANIFEST = buildInstagramNativeSkillManifest();
+const INSTAGRAM_CONNECTOR_SCRIPT = buildInstagramNativeSkillScript();
+
 const CONNECTOR_SKILL_AUGMENTS = [
   {
     pattern: /threads|스레드|쓰레드/iu,
@@ -473,6 +480,12 @@ const CONNECTOR_SKILL_AUGMENTS = [
     manifestContent: FACEBOOK_CONNECTOR_CAPABILITY_MANIFEST,
     scriptPath: "scripts/facebook-crud.mjs",
     scriptContent: FACEBOOK_CONNECTOR_SCRIPT,
+  },
+  {
+    pattern: /instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu,
+    manifestContent: INSTAGRAM_CONNECTOR_CAPABILITY_MANIFEST,
+    scriptPath: "scripts/instagram-graph.mjs",
+    scriptContent: INSTAGRAM_CONNECTOR_SCRIPT,
   },
 ] as const;
 

@@ -578,6 +578,8 @@ export interface ConnectorCapabilityRecord {
   sourceSkillName?: string | null;
   scriptPath?: string | null;
   usage?: string | null;
+  setupMode?: ConnectorSetupMode | null;
+  setupSteps?: string[];
   requiredEnv?: string[];
   allowedBaseUrls?: string[];
   allowedEndpointPaths?: string[];
@@ -691,6 +693,9 @@ export interface ConnectorExecuteCapabilityResult {
   profile: ConnectorProfileRecord | null;
   followers: ConnectorFollowerListRecord | null;
   draft: ConnectorPublishDraftResult | null;
+  setupMode?: ConnectorSetupMode | null;
+  blockerCodes?: ConnectorBlockerCode[];
+  setupSteps?: string[];
   message: string;
   checkedAt: string;
 }

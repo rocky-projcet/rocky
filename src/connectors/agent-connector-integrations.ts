@@ -108,13 +108,39 @@ function toAgentConnectorIntegration(
   requiredBySkills: Array<{ id: string; displayName: string }>,
   capabilities: ConnectorCapabilityRecord[],
 ): AgentConnectorIntegrationRecord {
+  const stateCapabilities = new Map(
+    state.capabilities.map((capability) => [capability.id, capability]),
+  );
+  const capabilityInputs =
+    capabilities.length > 0
+      ? capabilities
+      : state.capabilities.filter((capability) => capability.source === "backend");
   const normalizedCapabilities =
     state.status === "planned"
-      ? capabilities.map((capability) => ({
+      ? capabilityInputs.map((capability) => ({
           ...capability,
           status: "planned" as const,
         }))
-      : capabilities;
+      : capabilityInputs.map((capability) => {
+          const stateCapability = stateCapabilities.get(capability.id);
+          if (!stateCapability) {
+            return capability;
+          }
+          return {
+            ...capability,
+            status: stateCapability.status ?? capability.status,
+            setupMode: stateCapability.setupMode ?? capability.setupMode,
+            setupSteps: stateCapability.setupSteps ?? capability.setupSteps,
+            blockerCodes: stateCapability.blockerCodes ?? capability.blockerCodes,
+            blockers: stateCapability.blockers ?? capability.blockers,
+            credentialGateStatus:
+              stateCapability.credentialGateStatus ??
+              capability.credentialGateStatus,
+            credentialGateReasons:
+              stateCapability.credentialGateReasons ??
+              capability.credentialGateReasons,
+          };
+        });
 
   return {
     provider: state.provider,
@@ -259,6 +285,8 @@ function readManifestCapability(
     sourceSkillName: skill.displayName,
     scriptPath: readSafeRelativePath(record.scriptPath),
     usage: readNonEmptyString(record.usage),
+    setupMode: readCapabilitySetupMode(record.setupMode),
+    setupSteps: readStringArray(record.setupSteps),
     requiredEnv: readStringArray(record.requiredEnv),
     allowedBaseUrls: readStringArray(record.allowedBaseUrls),
     allowedEndpointPaths: readStringArray(record.allowedEndpointPaths),
@@ -298,6 +326,16 @@ function readCapabilityStatus(
     value === "blocked" ||
     value === "planned" ||
     value === "unsupported"
+    ? value
+    : undefined;
+}
+
+function readCapabilitySetupMode(
+  value: unknown,
+): ConnectorCapabilityRecord["setupMode"] {
+  return value === "oauth" ||
+    value === "custom-browser" ||
+    value === "graph-api"
     ? value
     : undefined;
 }

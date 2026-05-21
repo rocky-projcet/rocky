@@ -646,10 +646,17 @@ export class ConnectorService implements ConnectorServiceLike {
         action: capability.action,
         status: "failed",
         resultType: "none",
-        accountLabel: this.states[provider].accountLabel,
+        accountLabel:
+          readInstagramAccountLabel(this.baseEnv) ??
+          this.states[provider].accountLabel,
         profile: null,
         followers: null,
         draft: null,
+        setupMode: capability.setupMode,
+        blockerCodes: capability.blockerCodes ?? [],
+        setupSteps:
+          capability.setupSteps ??
+          (capability.blockers ?? []).map((blocker) => blocker.nextAction),
         message: formatCapabilityBlockers(capability),
         checkedAt,
       };
@@ -663,16 +670,26 @@ export class ConnectorService implements ConnectorServiceLike {
         action: capability.action,
         status: "unsupported",
         resultType: "none",
-        accountLabel: this.states[provider].accountLabel,
+        accountLabel:
+          readInstagramAccountLabel(this.baseEnv) ??
+          this.states[provider].accountLabel,
         profile: null,
         followers: null,
         draft: null,
+        setupMode: capability.setupMode,
+        blockerCodes: capability.blockerCodes ?? [],
+        setupSteps:
+          capability.setupSteps ??
+          (capability.blockers ?? []).map((blocker) => blocker.nextAction),
         message: formatCapabilityBlockers(capability),
         checkedAt,
       };
     }
 
-    if (capability.id === "instagram.account.read") {
+    if (
+      capability.id === "instagram.account.read" ||
+      capability.id === "instagram.automation.prepare"
+    ) {
       return {
         ok: true,
         provider,
@@ -680,18 +697,26 @@ export class ConnectorService implements ConnectorServiceLike {
         action: capability.action,
         status: "completed",
         resultType: "none",
-        accountLabel: this.states[provider].accountLabel,
+        accountLabel:
+          readInstagramAccountLabel(this.baseEnv) ??
+          this.states[provider].accountLabel,
         profile: null,
         followers: null,
         draft: null,
+        setupMode: readiness.setupMode,
+        blockerCodes: readiness.blockers.map((blocker) => blocker.code),
+        setupSteps: readiness.blockers.map((blocker) => blocker.nextAction),
         message:
-          `Instagram Graph API readiness is available; ` +
+          `${capability.id} Instagram Graph API readiness is available; ` +
           `accountKind=${readiness.accountKind ?? "unknown"}.`,
         checkedAt,
       };
     }
 
     if (capability.requiresApproval || capability.action === "write") {
+      const setupSteps =
+        capability.setupSteps ??
+        (capability.blockers ?? []).map((blocker) => blocker.nextAction);
       return {
         ok: false,
         provider,
@@ -703,7 +728,11 @@ export class ConnectorService implements ConnectorServiceLike {
         profile: null,
         followers: null,
         draft: null,
-        message: `${capability.label} capability는 사용자 승인 후 실행해야 합니다.`,
+        setupMode: capability.setupMode,
+        blockerCodes: capability.blockerCodes ?? [],
+        setupSteps,
+        message:
+          `${capability.label} capability requires preview and explicit user approval before execution.`,
         checkedAt,
       };
     }
@@ -747,10 +776,6 @@ export class ConnectorService implements ConnectorServiceLike {
           : result.message,
         checkedAt: result.checkedAt,
       };
-    }
-
-    if (capability.id === "instagram.automation.prepare") {
-      return this.prepareInstagramAutomation(capabilityId, capability.action);
     }
 
     if (/\.(?:account|profile)\.read$/u.test(capability.id)) {
@@ -1762,14 +1787,30 @@ function decorateConnectorState(
   baseEnv: NodeJS.ProcessEnv,
 ): ConnectorState {
   const readiness = buildConnectorReadiness(provider, state, baseEnv);
+  const graphConnected =
+    provider === "instagram" &&
+    readiness.setupMode === "graph-api" &&
+    readiness.blockers.length === 0 &&
+    state.status !== "connected";
+  const decoratedState = graphConnected
+    ? {
+        ...state,
+        status: "connected" as const,
+        message: "Instagram Graph API account settings are available.",
+        accountLabel: readInstagramAccountLabel(baseEnv),
+        loginMode: "oauth" as const,
+        lastError: null,
+        failureKind: null,
+      }
+    : state;
   return {
-    ...state,
-    message: sanitizeConnectorPublicText(state.message) ?? "",
-    lastError: sanitizeConnectorPublicText(state.lastError),
+    ...decoratedState,
+    message: sanitizeConnectorPublicText(decoratedState.message) ?? "",
+    lastError: sanitizeConnectorPublicText(decoratedState.lastError),
     browserAccess: buildBrowserAccess(
       provider,
-      state.status,
-      state.loginMode,
+      decoratedState.status,
+      decoratedState.loginMode,
       readiness,
     ),
     capabilities: getConnectorExecutionCapabilities(provider, readiness),
@@ -1801,32 +1842,60 @@ function buildInstagramGraphReadiness(
   baseEnv: NodeJS.ProcessEnv,
 ): ConnectorReadinessRecord {
   const accountKind = readInstagramAccountKind(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_ACCOUNT_KIND") ??
-      readEnv(baseEnv, "INSTAGRAM_ACCOUNT_KIND"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_ACCOUNT_KIND",
+      "ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_KIND",
+      "INSTAGRAM_ACCOUNT_KIND",
+    ]),
   );
   const permissions = readPermissionSet(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_PERMISSIONS") ??
-      readEnv(baseEnv, "INSTAGRAM_PERMISSIONS"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_PERMISSIONS",
+      "ROCKY_CONNECTOR_INSTAGRAM_GRAPH_PERMISSIONS",
+      "ROCKY_CONNECTOR_INSTAGRAM_PERMISSIONS",
+      "INSTAGRAM_GRAPH_PERMISSIONS",
+      "INSTAGRAM_PERMISSIONS",
+    ]),
   );
   const hasAccessToken = Boolean(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_ACCESS_TOKEN") ??
-      readEnv(baseEnv, "INSTAGRAM_ACCESS_TOKEN"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_ACCESS_TOKEN",
+      "ROCKY_CONNECTOR_INSTAGRAM_GRAPH_ACCESS_TOKEN",
+      "ROCKY_CONNECTOR_INSTAGRAM_ACCESS_TOKEN",
+      "INSTAGRAM_GRAPH_ACCESS_TOKEN",
+      "INSTAGRAM_ACCESS_TOKEN",
+    ]),
   );
   const hasBusinessAccountId = Boolean(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_BUSINESS_ACCOUNT_ID") ??
-      readEnv(baseEnv, "INSTAGRAM_BUSINESS_ACCOUNT_ID"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_BUSINESS_ACCOUNT_ID",
+      "ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID",
+      "ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_ID",
+      "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+      "INSTAGRAM_ACCOUNT_ID",
+    ]),
   );
   const hasFacebookPage = Boolean(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_FACEBOOK_PAGE_ID") ??
-      readEnv(baseEnv, "INSTAGRAM_FACEBOOK_PAGE_ID"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_FACEBOOK_PAGE_ID",
+      "ROCKY_CONNECTOR_INSTAGRAM_FACEBOOK_PAGE_ID",
+      "INSTAGRAM_FACEBOOK_PAGE_ID",
+    ]),
   );
   const hasMetaBusiness = Boolean(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_META_BUSINESS_ID") ??
-      readEnv(baseEnv, "INSTAGRAM_META_BUSINESS_ID"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_META_BUSINESS_ID",
+      "ROCKY_CONNECTOR_INSTAGRAM_META_BUSINESS_ID",
+      "INSTAGRAM_META_BUSINESS_ID",
+    ]),
   );
   const hasMetaApp = Boolean(
-    readEnv(baseEnv, "ROCKY_INSTAGRAM_META_APP_ID") ??
-      readEnv(baseEnv, "INSTAGRAM_CLIENT_ID"),
+    readEnvAny(baseEnv, [
+      "ROCKY_INSTAGRAM_META_APP_ID",
+      "ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID",
+      "INSTAGRAM_META_APP_ID",
+      "INSTAGRAM_CLIENT_ID",
+    ]),
   );
 
   const blockers: ConnectorReadinessBlockerRecord[] = [];
@@ -1958,7 +2027,7 @@ function getConnectorExecutionCapabilities(
       : getConnectorCapabilities(provider);
   for (const capability of [
     ...baseCapabilities,
-    ...getConnectorSkillBridgeCapabilities(provider),
+    ...getConnectorSkillBridgeCapabilities(provider, resolvedReadiness),
   ]) {
     byId.set(capability.id, capability);
   }
@@ -1970,12 +2039,6 @@ function getInstagramGraphApiCapabilities(
 ): ConnectorCapabilityRecord[] {
   const graphBlockers = readiness.blockers;
   const graphStatus = graphBlockers.length === 0 ? "available" : "blocked";
-  const notImplementedBlocker = readinessBlocker(
-    "rocky_capability_not_implemented",
-    "Rocky has not implemented this Instagram Graph API capability yet.",
-    "Use this row as readiness documentation until the native capability work lands.",
-  );
-
   return [
     instagramCapability({
       id: "instagram.account.read",
@@ -2004,8 +2067,8 @@ function getInstagramGraphApiCapabilities(
         "Publish approved Instagram media through the Graph API after preview and explicit approval.",
       action: "write",
       requiresApproval: true,
-      status: "planned",
-      blockers: [notImplementedBlocker],
+      status: graphStatus,
+      blockers: graphBlockers,
     }),
     instagramCapability({
       id: "instagram.media.status.read",
@@ -2014,8 +2077,8 @@ function getInstagramGraphApiCapabilities(
         "Read Instagram media publishing status through the Graph API.",
       action: "read",
       requiresApproval: false,
-      status: "planned",
-      blockers: [notImplementedBlocker],
+      status: graphStatus,
+      blockers: graphBlockers,
     }),
     instagramCapability({
       id: "instagram.insights.read",
@@ -2024,8 +2087,8 @@ function getInstagramGraphApiCapabilities(
         "Read Instagram account and media insights through approved Graph API permissions.",
       action: "read",
       requiresApproval: false,
-      status: "planned",
-      blockers: [notImplementedBlocker],
+      status: graphStatus,
+      blockers: graphBlockers,
     }),
   ];
 }
@@ -2050,6 +2113,7 @@ function instagramCapability(input: {
     requiresApproval: input.requiresApproval,
     status: input.status,
     source: "backend",
+    setupMode: "graph-api",
     blockerCodes: input.blockers.map((blocker) => blocker.code),
     blockers: input.blockers,
   };
@@ -2062,13 +2126,17 @@ function formatCapabilityBlockers(capability: ConnectorCapabilityRecord): string
       ? `${capability.label} is planned and is not executable yet.`
       : `${capability.label} is not executable in the current connector state.`;
   }
-  return blockers
+  const message = blockers
     .map((blocker) => `${blocker.code}: ${blocker.nextAction}`)
     .join(" ");
+  return capability.provider === "instagram"
+    ? `Instagram Graph API setup blocked. ${message}`
+    : message;
 }
 
 function getConnectorSkillBridgeCapabilities(
   provider: ConnectorProvider,
+  readiness: ConnectorReadinessRecord = emptyConnectorReadiness(),
 ): ConnectorCapabilityRecord[] {
   if (provider === "threads") {
     return [
@@ -2131,20 +2199,19 @@ function getConnectorSkillBridgeCapabilities(
   }
 
   if (provider === "instagram") {
+    const graphBlockers = readiness.blockers;
+    const graphStatus = graphBlockers.length === 0 ? "available" : "blocked";
     return [
-      {
+      instagramCapability({
         id: "instagram.automation.prepare",
-        provider,
-        label: "Browser readiness check",
+        label: "Instagram Graph API readiness",
         description:
-          "Validate the connected Instagram browser session for manual assist and readiness checks only.",
+          "Check whether Instagram native capabilities can run through Graph API credentials.",
         action: "read",
-        requiresBrowser: true,
-        requiresConnectedAccount: true,
         requiresApproval: false,
-        status: "available",
-        source: "backend",
-      },
+        status: graphStatus,
+        blockers: graphBlockers,
+      }),
     ];
   }
 
@@ -2205,6 +2272,16 @@ function buildBrowserAccess(
   }
 
   if (provider === "instagram") {
+    if (readiness.blockers.length === 0) {
+      return {
+        status: "not-applicable",
+        policy: null,
+        readAllowed: true,
+        writeAllowedAfterApproval: true,
+        message: "Instagram Graph API credentials are used for native capabilities.",
+      };
+    }
+
     if (status === "connected" && loginMode === "custom-browser") {
       return {
         status: "granted",
@@ -2406,6 +2483,35 @@ function buildRedirectUri(baseUrl: string, provider: ConnectorProvider): string 
 function readEnv(env: NodeJS.ProcessEnv, key: string): string | null {
   const value = env[key];
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readEnvAny(env: NodeJS.ProcessEnv, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = readEnv(env, key);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readInstagramAccountLabel(env: NodeJS.ProcessEnv): string | null {
+  const explicitLabel = readEnvAny(env, [
+    "ROCKY_INSTAGRAM_ACCOUNT_LABEL",
+    "ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_LABEL",
+    "INSTAGRAM_ACCOUNT_LABEL",
+  ]);
+  if (explicitLabel) {
+    return explicitLabel;
+  }
+  const accountId = readEnvAny(env, [
+    "ROCKY_INSTAGRAM_BUSINESS_ACCOUNT_ID",
+    "ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID",
+    "ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_ID",
+    "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+    "INSTAGRAM_ACCOUNT_ID",
+  ]);
+  return accountId ? `Instagram Graph account ${accountId}` : null;
 }
 
 function randomUrlSafe(bytes: number): string {

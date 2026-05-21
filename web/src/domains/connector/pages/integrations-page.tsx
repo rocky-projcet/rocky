@@ -58,7 +58,9 @@ import { Label } from "@/shared/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { cn } from "@/shared/lib/utils";
 import type {
+  ConnectorCapabilityRecord,
   ConnectorProvider,
+  ConnectorState,
   EcountConnectionSettingsRecord,
   EcountConnectionTestRecord,
 } from "@/shared/lib/agent-engine-client";
@@ -1050,6 +1052,9 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
             <p>아직 연결된 계정이 없습니다.</p>
           )}
         </div>
+        {entry.provider === "instagram" && state ? (
+          <InstagramCardSummary state={state} />
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between gap-2">
@@ -1081,6 +1086,76 @@ function ProviderCard({ entry }: { entry: ProviderEntry }) {
         onOpenChange={setOpen}
       />
     </article>
+  );
+}
+
+function InstagramCardSummary({ state }: { state: ConnectorState }) {
+  const readiness = state.readiness;
+  const blockers = readiness.blockers;
+  const graphReady = blockers.length === 0;
+  const keyCapabilities = state.capabilities.filter((capability) =>
+    [
+      "instagram.account.read",
+      "instagram.media.prepare",
+      "instagram.media.publish",
+      "instagram.insights.read",
+    ].includes(capability.id),
+  );
+
+  return (
+    <div className="grid gap-2 text-[11px] leading-5 text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge
+          variant="outline"
+          className={cn(
+            graphReady
+              ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+          )}
+        >
+          {graphReady ? "Graph API ready" : "Graph API blocked"}
+        </Badge>
+        <Badge variant="outline">
+          {readiness.accountKind?.replace("professional_", "") ?? "unknown"}
+        </Badge>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {keyCapabilities.map((capability) => (
+          <InstagramCapabilityChip
+            key={capability.id}
+            capability={capability}
+          />
+        ))}
+      </div>
+      {!graphReady && blockers[0] ? (
+        <p>
+          {blockers[0].code}: {blockers[0].nextAction}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function InstagramCapabilityChip({
+  capability,
+}: {
+  capability: ConnectorCapabilityRecord;
+}) {
+  const status = capability.status ?? "available";
+  const shortId = capability.id.replace("instagram.", "");
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
+        status === "available" &&
+          "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        status === "blocked" &&
+          "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+        status === "planned" && "border-border bg-muted text-muted-foreground",
+      )}
+    >
+      {shortId} {status}
+    </span>
   );
 }
 

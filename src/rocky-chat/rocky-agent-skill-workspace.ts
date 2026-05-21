@@ -639,7 +639,7 @@ export function buildAgentTurnSystemInstructions(input: {
       ? [
           "Rocky-managed browser account connectors may be connected for this turn. Use the connector summary in the turn context as the source of truth for connected account state.",
           "When a connector capability lists a skill script, read the owning installed skill instructions and use that script for the provider-specific work instead of asking Rocky backend for a new one-off connector endpoint. The script path is relative to `.agents/skills/<skill_id>/`.",
-          "Use only connector capabilities with no status or status=available for execution. Treat status=planned or status=unsupported as documentation, not executable functionality.",
+          "Use only connector capabilities with no status or status=available for execution. Treat status=blocked, status=planned, or status=unsupported as documentation, not executable functionality.",
           "Connector capabilities marked as read can be used without extra approval. Connector capabilities marked as write or approval require explicit user approval before posting, editing, deleting, submitting, or otherwise exposing changes externally.",
           "Do not ask the user for connector passwords, two-factor authentication codes, browser cookies, session storage, OAuth tokens, or API keys in chat.",
           "If a connected browser session is expired, logged out, or asks for two-factor authentication again, tell the user to re-authenticate from Rocky account integrations.",

@@ -28,6 +28,45 @@ export type ConnectorLoginMode =
   | "managed-browser";
 
 export type ConnectorCapabilityAction = "read" | "write";
+export type ConnectorCapabilityStatus =
+  | "available"
+  | "blocked"
+  | "planned"
+  | "unsupported";
+
+export type ConnectorSetupMode = "oauth" | "custom-browser" | "graph-api";
+export type ConnectorAccountKind =
+  | "unknown"
+  | "personal"
+  | "professional_business"
+  | "professional_creator";
+export type ConnectorBrowserSessionPurpose =
+  | "manual_assist"
+  | "readiness_check";
+
+export type ConnectorBlockerCode =
+  | "professional_account_required"
+  | "facebook_page_required"
+  | "meta_business_setup_required"
+  | "meta_app_required"
+  | "permission_missing"
+  | "app_review_required"
+  | "access_token_missing"
+  | "instagram_business_account_id_missing"
+  | "rocky_capability_not_implemented";
+
+export interface ConnectorReadinessBlockerRecord {
+  code: ConnectorBlockerCode;
+  message: string;
+  nextAction: string;
+}
+
+export interface ConnectorReadinessRecord {
+  setupMode: ConnectorSetupMode | null;
+  accountKind: ConnectorAccountKind | null;
+  browserSessionPurpose: ConnectorBrowserSessionPurpose | null;
+  blockers: ConnectorReadinessBlockerRecord[];
+}
 
 export interface ConnectorCapabilityRecord {
   id: string;
@@ -38,7 +77,7 @@ export interface ConnectorCapabilityRecord {
   requiresBrowser: boolean;
   requiresConnectedAccount: boolean;
   requiresApproval: boolean;
-  status?: "available" | "planned" | "unsupported";
+  status?: ConnectorCapabilityStatus;
   source?: "backend" | "skill";
   sourceSkillId?: string | null;
   sourceSkillName?: string | null;
@@ -49,6 +88,8 @@ export interface ConnectorCapabilityRecord {
   allowedEndpointPaths?: string[];
   credentialGateStatus?: "not-required" | "allowed" | "blocked";
   credentialGateReasons?: string[];
+  blockerCodes?: ConnectorBlockerCode[];
+  blockers?: ConnectorReadinessBlockerRecord[];
 }
 
 export type ConnectorBrowserAccessStatus =
@@ -190,6 +231,7 @@ export interface ConnectorState {
   failureKind: ConnectorFailureKind | null;
   browserAccess: ConnectorBrowserAccessRecord;
   capabilities: ConnectorCapabilityRecord[];
+  readiness: ConnectorReadinessRecord;
   updatedAt: string;
 }
 
@@ -202,6 +244,7 @@ export interface AgentConnectorIntegrationRecord {
   connectedAt: string | null;
   browserAccess: ConnectorBrowserAccessRecord;
   capabilities: ConnectorCapabilityRecord[];
+  readiness: ConnectorReadinessRecord;
   requiredBySkills: Array<{
     id: string;
     displayName: string;

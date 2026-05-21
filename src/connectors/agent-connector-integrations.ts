@@ -125,6 +125,7 @@ function toAgentConnectorIntegration(
     connectedAt: state.connectedAt,
     browserAccess: state.browserAccess,
     capabilities: normalizedCapabilities,
+    readiness: state.readiness,
     requiredBySkills,
   };
 }
@@ -293,7 +294,10 @@ function readCapabilityAction(value: unknown): ConnectorCapabilityAction | null 
 function readCapabilityStatus(
   value: unknown,
 ): ConnectorCapabilityRecord["status"] {
-  return value === "available" || value === "planned" || value === "unsupported"
+  return value === "available" ||
+    value === "blocked" ||
+    value === "planned" ||
+    value === "unsupported"
     ? value
     : undefined;
 }
@@ -367,6 +371,12 @@ function buildUnavailableState(provider: ConnectorProvider): ConnectorState {
       message: "연동 서비스가 준비되지 않았습니다.",
     },
     capabilities: [],
+    readiness: {
+      setupMode: null,
+      accountKind: null,
+      browserSessionPurpose: null,
+      blockers: [],
+    },
     updatedAt: new Date(0).toISOString(),
   };
 }

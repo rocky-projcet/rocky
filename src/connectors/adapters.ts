@@ -38,17 +38,22 @@ const threadsOAuth: ConnectorOAuthConfig = {
 const instagramOAuth: ConnectorOAuthConfig = {
   supported: true,
   envPrefix: "INSTAGRAM",
-  authorizationUrl: "https://api.instagram.com/oauth/authorize",
-  tokenUrl: "https://api.instagram.com/oauth/access_token",
-  scopes: ["user_profile", "user_media"],
+  authorizationUrl: "https://www.facebook.com/v22.0/dialog/oauth",
+  tokenUrl: "https://graph.facebook.com/v22.0/oauth/access_token",
+  scopes: [
+    "instagram_basic",
+    "pages_show_list",
+    "pages_read_engagement",
+    "instagram_content_publish",
+  ],
   scopeSeparator: ",",
   userInfo: {
-    url: "https://graph.instagram.com/me",
+    url: "https://graph.facebook.com/v22.0/me",
     request: "query-access-token",
-    query: { fields: "id,username" },
-    labelPath: ["username"],
+    query: { fields: "id,name" },
+    labelPath: ["name"],
   },
-  docsUrl: "https://developers.facebook.com/docs/instagram-basic-display-api",
+  docsUrl: "https://developers.facebook.com/docs/instagram-platform",
 };
 
 const xOAuth: ConnectorOAuthConfig = {

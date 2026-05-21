@@ -29,6 +29,7 @@ import {
 } from "../domains/template/pages/templates-page";
 import { SkillsPage } from "../domains/skill/pages/skills-page";
 import { SkillsArchivedPage } from "../domains/skill/pages/skills-archived-page";
+import { SkillExternalPage } from "../domains/skill/pages/skill-external-page";
 import { SkillNewPage } from "../domains/skill/pages/skill-new-page";
 import { SkillDetailPage } from "../domains/skill/pages/skill-detail-page";
 import { SkillTemplateDetailPage } from "../domains/skill/pages/skill-template-detail-page";
@@ -99,6 +100,10 @@ export const router = createBrowserRouter([
       {
         path: "skills/new",
         element: <SkillNewPage />,
+      },
+      {
+        path: "skills/external",
+        element: <SkillExternalPage />,
       },
       {
         path: "skills/archived",

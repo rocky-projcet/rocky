@@ -102,6 +102,57 @@ export interface SavedSkillTemplateRecord {
   archived?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  externalSkill?: {
+    sourceKind: ExternalSkillSourceKind;
+    sourceUrl: string | null;
+    packageHash: string;
+    previewId?: string;
+    mountedAt: string;
+  };
+}
+
+export type ExternalSkillSourceKind = "mcp-market" | "github" | "upload";
+
+export interface ExternalSkillPackageFileInput {
+  path: string;
+  content: string;
+  encoding?: "utf8" | "base64";
+}
+
+export interface ExternalSkillPreviewCheck {
+  id: string;
+  status: "passed" | "warning" | "failed";
+  message: string;
+}
+
+export interface ExternalSkillPreviewCapability {
+  id: string;
+  provider: string;
+  action: string;
+  scriptPath: string;
+  requiresConnectedAccount: boolean;
+  credentialGateStatus: "not-required" | "allowed" | "blocked";
+  reasons: string[];
+}
+
+export interface ExternalSkillPreviewRecord {
+  id: string;
+  sourceKind: ExternalSkillSourceKind;
+  sourceUrl: string | null;
+  packageHash: string;
+  installable: boolean;
+  skillId: string;
+  title: string;
+  description: string | null;
+  fileCount: number;
+  checks: ExternalSkillPreviewCheck[];
+  capabilities: ExternalSkillPreviewCapability[];
+  createdAt: string;
+}
+
+export interface ExternalSkillMountResult {
+  preview: ExternalSkillPreviewRecord;
+  skill: SavedSkillTemplateRecord;
 }
 
 export interface SkillTemplateRunRecord {
@@ -488,6 +539,11 @@ export interface ConnectorCapabilityRecord {
   sourceSkillName?: string | null;
   scriptPath?: string | null;
   usage?: string | null;
+  requiredEnv?: string[];
+  allowedBaseUrls?: string[];
+  allowedEndpointPaths?: string[];
+  credentialGateStatus?: "not-required" | "allowed" | "blocked";
+  credentialGateReasons?: string[];
 }
 
 export type ConnectorBrowserAccessStatus =
@@ -1824,6 +1880,30 @@ export class AgentEngineClient {
 
   listSkillTemplates(): Promise<SavedSkillTemplateRecord[]> {
     return this.request<SavedSkillTemplateRecord[]>("/skills");
+  }
+
+  previewExternalSkill(input: {
+    sourceKind: ExternalSkillSourceKind;
+    sourceUrl?: string | null;
+    files: ExternalSkillPackageFileInput[];
+  }): Promise<ExternalSkillPreviewRecord> {
+    return this.request<ExternalSkillPreviewRecord>("/skills/external/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        sourceKind: input.sourceKind,
+        sourceUrl: input.sourceUrl ?? null,
+        files: input.files,
+      }),
+    });
+  }
+
+  mountExternalSkill(previewId: string): Promise<ExternalSkillMountResult> {
+    return this.request<ExternalSkillMountResult>(
+      `/skills/external/previews/${encodeURIComponent(previewId)}/mount`,
+      {
+        method: "POST",
+      }
+    );
   }
 
   upsertSkillTemplate(

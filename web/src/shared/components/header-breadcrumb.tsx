@@ -203,6 +203,14 @@ function resolveCrumbs(args: {
     ];
   }
 
+  // /skills/external
+  if (pathname === "/skills/external") {
+    return [
+      { label: "공용 스킬", to: "/skills" },
+      { label: "외부 스킬 추가" },
+    ];
+  }
+
   // /skills/:skillId
   if (params.skillId) {
     const skillLabel = args.skillTitle

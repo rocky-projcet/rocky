@@ -33,6 +33,8 @@ export interface RuntimeSkillTemplateRecord {
   archived?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  packageFiles?: RuntimeSkillTemplatePackageFileRecord[];
+  externalSkill?: RuntimeExternalSkillMetadataRecord;
 }
 
 export interface RuntimeSkillTemplateInputArtifactRecord {
@@ -51,6 +53,14 @@ export interface RuntimeSkillTemplatePackageFileRecord {
   path: string;
   content: string;
   encoding: "base64";
+}
+
+export interface RuntimeExternalSkillMetadataRecord {
+  sourceKind: "mcp-market" | "github" | "upload";
+  sourceUrl: string | null;
+  packageHash: string;
+  previewId?: string;
+  mountedAt: string;
 }
 
 export interface SkillTemplateRunRecord {
@@ -258,6 +268,29 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function parsePackageFiles(value: unknown): RuntimeSkillTemplatePackageFileRecord[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value
+    .filter((entry): entry is RuntimeSkillTemplatePackageFileRecord => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return false;
+      }
+      const record = entry as Partial<RuntimeSkillTemplatePackageFileRecord>;
+      return (
+        typeof record.path === "string" &&
+        typeof record.content === "string" &&
+        record.encoding === "base64"
+      );
+    })
+    .map((entry) => ({
+      path: entry.path,
+      content: entry.content,
+      encoding: "base64",
+    }));
+}
+
 function parseSkillTemplateRecord(value: unknown): RuntimeSkillTemplateRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw badRequest("Skill template must be a JSON object.");
@@ -331,6 +364,13 @@ function parseSkillTemplateRecord(value: unknown): RuntimeSkillTemplateRecord {
       typeof record.sourceRunId === "string" && record.sourceRunId.trim()
         ? record.sourceRunId.trim()
         : null,
+    packageFiles: parsePackageFiles(record.packageFiles),
+    externalSkill:
+      record.externalSkill &&
+      typeof record.externalSkill === "object" &&
+      !Array.isArray(record.externalSkill)
+        ? (record.externalSkill as RuntimeExternalSkillMetadataRecord)
+        : undefined,
   };
 }
 
@@ -446,24 +486,54 @@ export class SkillTemplateStore {
     record: RuntimeSkillTemplateRecord,
     skillRoot: string
   ): Promise<RuntimeSkillTemplateRecord> {
-    await mkdir(path.join(skillRoot, "files", "agents"), { recursive: true });
+    const filesRoot = path.join(skillRoot, "files");
+    if (record.packageFiles && record.packageFiles.length > 0) {
+      await rm(filesRoot, { recursive: true, force: true });
+    }
+    await mkdir(path.join(filesRoot, "agents"), { recursive: true });
     const packagedRecord = withPackagedInputFilesSection(
       await this.packageInputArtifacts(withOutputDirectorySection(record), skillRoot)
     );
 
+    if (packagedRecord.packageFiles && packagedRecord.packageFiles.length > 0) {
+      await this.writeStoredPackageFiles(packagedRecord.packageFiles, filesRoot);
+      await mkdir(path.join(filesRoot, "agents"), { recursive: true });
+    }
+
     await writeFile(path.join(skillRoot, "skill.json"), serializeJson(packagedRecord), "utf8");
     await writeFile(
-      path.join(skillRoot, "files", "SKILL.md"),
+      path.join(filesRoot, "SKILL.md"),
       packagedRecord.skill.skillMarkdown,
       "utf8"
     );
     await writeFile(
-      path.join(skillRoot, "files", "agents", "openai.yaml"),
+      path.join(filesRoot, "agents", "openai.yaml"),
       packagedRecord.skill.openAiYaml,
       "utf8"
     );
 
     return packagedRecord;
+  }
+
+  private async writeStoredPackageFiles(
+    files: RuntimeSkillTemplatePackageFileRecord[],
+    filesRoot: string
+  ): Promise<void> {
+    for (const file of files) {
+      const normalized = file.path.trim().replace(/\\/gu, "/");
+      if (
+        !normalized ||
+        path.isAbsolute(normalized) ||
+        normalized.includes("\0") ||
+        normalized.split("/").some((segment) => segment === "..")
+      ) {
+        throw badRequest("Stored skill package file path must stay inside the package.");
+      }
+      const targetPath = path.join(filesRoot, ...normalized.split("/"));
+      assertInside(filesRoot, targetPath);
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, Buffer.from(file.content, "base64"));
+    }
   }
 
   private async collectPackageFiles(

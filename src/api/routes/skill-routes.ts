@@ -4,6 +4,10 @@ import {
   SkillTemplateStore,
   type SkillTemplateRunUploadInput,
 } from "../../skills/skill-template-store.js";
+import {
+  ExternalSkillService,
+  type ExternalSkillPreviewInput,
+} from "../../skills/external-skill-service.js";
 
 export interface SkillRoutesOptions {
   stateRoot?: string;
@@ -70,6 +74,51 @@ function parseUploadBody(body: unknown): SkillTemplateRunUploadInput {
   };
 }
 
+function parseExternalSkillPreviewBody(body: unknown): ExternalSkillPreviewInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("External skill preview requests require a JSON object body.");
+  }
+  const input = body as Record<string, unknown>;
+  return {
+    sourceKind:
+      input.sourceKind === "mcp-market" ||
+      input.sourceKind === "github" ||
+      input.sourceKind === "upload"
+        ? input.sourceKind
+        : null,
+    sourceUrl:
+      typeof input.sourceUrl === "string" && input.sourceUrl.trim()
+        ? input.sourceUrl.trim()
+        : null,
+    files: Array.isArray(input.files)
+      ? input.files.map((file) => {
+          if (!file || typeof file !== "object" || Array.isArray(file)) {
+            throw badRequest("External skill package files must be JSON objects.");
+          }
+          const record = file as Record<string, unknown>;
+          if (typeof record.path !== "string" || !record.path.trim()) {
+            throw badRequest("External skill package files require a path.");
+          }
+          if (typeof record.content !== "string") {
+            throw badRequest("External skill package files require content.");
+          }
+          if (
+            record.encoding !== undefined &&
+            record.encoding !== "utf8" &&
+            record.encoding !== "base64"
+          ) {
+            throw badRequest("External skill package file encoding must be utf8 or base64.");
+          }
+          return {
+            path: record.path.trim(),
+            content: record.content,
+            encoding: record.encoding as "utf8" | "base64" | undefined,
+          };
+        })
+      : [],
+  };
+}
+
 export const registerSkillRoutes: FastifyPluginAsync<SkillRoutesOptions> = async (
   server,
   options
@@ -81,10 +130,40 @@ export const registerSkillRoutes: FastifyPluginAsync<SkillRoutesOptions> = async
       now: options.now,
       idGenerator: options.idGenerator,
     });
+  const externalSkillService = new ExternalSkillService({
+    stateRoot: options.stateRoot,
+    now: options.now,
+    idGenerator: options.idGenerator,
+    skillTemplateStore: store,
+  });
 
   server.get("/skills", async (_request, reply) => {
     sendJson(reply, 200, await store.listSkills());
   });
+
+  server.post(
+    "/skills/external/preview",
+    {
+      bodyLimit: Number.MAX_SAFE_INTEGER,
+    },
+    async (request, reply) => {
+      sendJson(
+        reply,
+        201,
+        await externalSkillService.previewExternalSkill(
+          parseExternalSkillPreviewBody(request.body),
+        ),
+      );
+    },
+  );
+
+  server.post(
+    "/skills/external/previews/:previewId/mount",
+    async (request, reply) => {
+      const { previewId } = request.params as { previewId: string };
+      sendJson(reply, 201, await externalSkillService.mountExternalSkill(previewId));
+    },
+  );
 
   server.put("/skills/:skillId", async (request, reply) => {
     const { skillId } = request.params as { skillId: string };

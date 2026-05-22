@@ -1,0 +1,9 @@
+# Keep provider app secrets out of installed clients
+
+Rocky is an installed local application, so bundled or local-provider app secrets would be extractable by end users and would stop being secrets. For default Instagram Graph API connections, Rocky will use Rocky-owned Meta app credentials behind a Rocky-managed OAuth broker; the installed app opens the authorization flow and receives only the user authorization result needed to store the user's connector token locally. The broker must not retain user Instagram access tokens long term; its default custody boundary is provider app secret storage plus short-lived authorization-code exchange. After broker-side callback handling, OAuth completion returns to the installed app through a Rocky custom URL scheme rather than a localhost redirect, and that URL carries only a short-lived one-time handoff code rather than an access token. The installed app redeems the handoff code against the broker once, then stores the resulting connector token locally. A user-owned Meta app mode can still exist as an advanced path, but it is not the default product flow.
+
+If Instagram reports that the account is not Professional, Rocky treats the connection as blocked and may open the Instagram account-type settings page, but the account conversion itself remains a user action outside Rocky automation.
+
+For development-mode Meta apps, Rocky initially treats missing tester access as an actionable blocker rather than automatically managing Meta tester invitations. The user or app operator sends the tester invitation outside Rocky, the user accepts it, and Rocky verifies progress by retrying the OAuth flow.
+
+The default product path depends on a Rocky-operated broker. Self-hosted brokers and user-owned Meta app credentials are advanced future scope rather than part of the default installed-app experience.

@@ -9,6 +9,17 @@ import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type { AgentConnectorIntegrationRecord } from "../../src/connectors/connector-types.js";
 
+const INSTAGRAM_GRAPH_ENV = {
+  ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_KIND: "professional_business",
+  ROCKY_CONNECTOR_INSTAGRAM_GRAPH_ACCESS_TOKEN: "instagram-graph-secret",
+  ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID: "17841400000000002",
+  ROCKY_CONNECTOR_INSTAGRAM_FACEBOOK_PAGE_ID: "112233445566",
+  ROCKY_CONNECTOR_INSTAGRAM_META_BUSINESS_ID: "998877665544",
+  ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID: "123456789",
+  ROCKY_CONNECTOR_INSTAGRAM_GRAPH_PERMISSIONS:
+    "instagram_basic pages_show_list instagram_content_publish instagram_manage_insights",
+};
+
 test("agent skill routes list and delete only workspace-local skills", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-skill-api-"));
   const server = createAgentEngineServer({
@@ -368,6 +379,102 @@ test("agent integrations list Facebook connector capabilities for installed skil
           capability.action === "write" &&
           capability.requiresApproval === true &&
           capability.status === "planned",
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("agent integrations attach Instagram native Graph API capabilities for installed SNS skills", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-integrations-api-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-21T10:00:00.000Z",
+    idGenerator: () => "instagram-agent",
+    connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+  });
+
+  try {
+    const createResponse = await server.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        id: "instagram-agent",
+        name: "Instagram Agent",
+      },
+    });
+    assert.equal(createResponse.statusCode, 201);
+    const agent = createResponse.json<AgentRecord>();
+
+    const installResponse = await server.inject({
+      method: "PUT",
+      url: "/agents/instagram-agent/skills/md-sns-instagram",
+      payload: {
+        replace: true,
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: md-sns-instagram\n---\n# SNS · Instagram 콘텐츠\nUse when the user asks for Instagram feed, Reels, publishing, or insights.\n",
+          },
+        ],
+      },
+    });
+    assert.equal(installResponse.statusCode, 200);
+    await access(
+      path.join(
+        agent.workspaceRoot,
+        ".agents",
+        "skills",
+        "md-sns-instagram",
+        "connector-capabilities.json",
+      ),
+    );
+    await access(
+      path.join(
+        agent.workspaceRoot,
+        ".agents",
+        "skills",
+        "md-sns-instagram",
+        "scripts",
+        "instagram-graph.mjs",
+      ),
+    );
+
+    const integrationsResponse = await server.inject({
+      method: "GET",
+      url: "/agents/instagram-agent/integrations",
+    });
+    assert.equal(integrationsResponse.statusCode, 200);
+    const integrations =
+      integrationsResponse.json<AgentConnectorIntegrationRecord[]>();
+    assert.equal(integrations.length, 1);
+    assert.equal(integrations[0]?.provider, "instagram");
+    assert.equal(integrations[0]?.status, "connected");
+    assert.equal(integrations[0]?.browserAccess.status, "not-applicable");
+    assert.equal(
+      integrations[0]?.requiredBySkills[0]?.displayName,
+      "SNS · Instagram 콘텐츠",
+    );
+    assert.ok(
+      integrations[0]?.capabilities.some(
+        (capability) =>
+          capability.id === "instagram.media.publish" &&
+          capability.action === "write" &&
+          capability.requiresApproval === true &&
+          capability.status === "available" &&
+          capability.setupMode === "graph-api" &&
+          capability.scriptPath === "scripts/instagram-graph.mjs",
+      ),
+    );
+    assert.ok(
+      integrations[0]?.capabilities.some(
+        (capability) =>
+          capability.id === "instagram.insights.read" &&
+          capability.action === "read" &&
+          capability.status === "available" &&
+          capability.setupMode === "graph-api",
       ),
     );
   } finally {

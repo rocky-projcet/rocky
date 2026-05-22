@@ -515,7 +515,7 @@ export function getConnectorCapabilities(
   const hasWriteScope = /write|manage|publish|upload|content_publish/iu.test(
     scopeText
   );
-  if (hasWriteScope || adapter.browserLogin?.supported === true) {
+  if (provider !== "instagram" && (hasWriteScope || adapter.browserLogin?.supported === true)) {
     capabilities.push(
       capability({
         id: `${provider}.content.write`,

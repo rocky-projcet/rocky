@@ -263,6 +263,10 @@ function formatConnectorSummaries(summaries: AgentConnectorSummary[]): string {
                 `${capability.id}:${capability.action}${
                   capability.requiresApproval ? ":approval" : ""
                 }${capability.status ? `:status=${capability.status}` : ""}${
+                  capability.setupMode ? `:setup=${capability.setupMode}` : ""
+                }${capability.blockerCodes && capability.blockerCodes.length > 0
+                  ? `:blockers=${capability.blockerCodes.join("+")}`
+                  : ""}${
                   capability.sourceSkillId ? `:skill_id=${capability.sourceSkillId}` : ""}${
                   capability.sourceSkillName ? `:skill=${capability.sourceSkillName}` : ""
                 }${capability.scriptPath ? `:script=${capability.scriptPath}` : ""}${
@@ -583,6 +587,7 @@ export function buildAgentTurnSystemInstructions(input: {
   chatId: string;
   ecountLookup?: AgentEcountLookupInstruction | null;
   hasTistoryDraftPublisher?: boolean;
+  hasConnectorCapabilityContext?: boolean;
   hasConnectedBrowserConnector?: boolean;
   hasConnectorProfileResults?: boolean;
   hasPreparedIntegrationResults?: boolean;
@@ -635,13 +640,18 @@ export function buildAgentTurnSystemInstructions(input: {
           "Never print browser cookies, session storage, OAuth tokens, API keys, or connector secret values.",
         ]
       : []),
-    ...(input.hasConnectedBrowserConnector
+    ...(input.hasConnectorCapabilityContext
       ? [
-          "Rocky-managed browser account connectors may be connected for this turn. Use the connector summary in the turn context as the source of truth for connected account state.",
+          "Rocky-managed account connectors may be connected for this turn. Use the connector summary in the turn context as the source of truth for connected account state and capability availability.",
           "When a connector capability lists a skill script, read the owning installed skill instructions and use that script for the provider-specific work instead of asking Rocky backend for a new one-off connector endpoint. The script path is relative to `.agents/skills/<skill_id>/`.",
           "Use only connector capabilities with no status or status=available for execution. Treat status=blocked, status=planned, or status=unsupported as documentation, not executable functionality.",
           "Connector capabilities marked as read can be used without extra approval. Connector capabilities marked as write or approval require explicit user approval before posting, editing, deleting, submitting, or otherwise exposing changes externally.",
           "Do not ask the user for connector passwords, two-factor authentication codes, browser cookies, session storage, OAuth tokens, or API keys in chat.",
+          "For Instagram, execute only Graph API native capabilities marked status=available; if blockers are listed, create drafts or plans only and explain the blocker codes and setup steps.",
+        ]
+      : []),
+    ...(input.hasConnectedBrowserConnector
+      ? [
           "If a connected browser session is expired, logged out, or asks for two-factor authentication again, tell the user to re-authenticate from Rocky account integrations.",
         ]
       : []),

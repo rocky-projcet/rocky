@@ -13,6 +13,17 @@ import type {
 } from "../../src/connectors/connector-types.js";
 import type { ConnectorRunnerEvent } from "../../src/connectors/connector-runner.js";
 
+const INSTAGRAM_GRAPH_ENV = {
+  ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_KIND: "professional_business",
+  ROCKY_CONNECTOR_INSTAGRAM_GRAPH_ACCESS_TOKEN: "instagram-graph-secret",
+  ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID: "17841400000000000",
+  ROCKY_CONNECTOR_INSTAGRAM_FACEBOOK_PAGE_ID: "112233445566",
+  ROCKY_CONNECTOR_INSTAGRAM_META_BUSINESS_ID: "998877665544",
+  ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID: "123456789",
+  ROCKY_CONNECTOR_INSTAGRAM_GRAPH_PERMISSIONS:
+    "instagram_basic,pages_show_list,instagram_content_publish,instagram_manage_insights",
+};
+
 test("Facebook connector browser login connects without OAuth credentials", async () => {
   let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
   let profileReaderCalls = 0;
@@ -287,9 +298,9 @@ test("Instagram connector exposes Graph API onboarding blockers", async () => {
     const mediaPublish = state.capabilities.find(
       (capability) => capability.id === "instagram.media.publish",
     );
-    assert.equal(mediaPublish?.status, "planned");
+    assert.equal(mediaPublish?.status, "blocked");
     assert.ok(
-      mediaPublish?.blockerCodes?.includes("rocky_capability_not_implemented"),
+      mediaPublish?.blockerCodes?.includes("access_token_missing"),
     );
 
     const blockedExecuteResponse = await server.inject({
@@ -350,7 +361,7 @@ test("Instagram Graph API readiness becomes available from configured environmen
       state.capabilities.find(
         (capability) => capability.id === "instagram.insights.read",
       )?.status,
-      "planned",
+      "available",
     );
 
     const accountReadResponse = await server.inject({
@@ -442,7 +453,9 @@ test("social connector browser login connects without OAuth credentials", async 
         (capability) =>
           capability.id === "instagram.automation.prepare" &&
           capability.action === "read" &&
-          capability.status === "available" &&
+          capability.status === "blocked" &&
+          capability.setupMode === "graph-api" &&
+          capability.blockerCodes?.includes("access_token_missing") &&
           capability.requiresApproval === false,
       ),
     );
@@ -451,15 +464,15 @@ test("social connector browser login connects without OAuth credentials", async 
       method: "POST",
       url: "/connectors/instagram/capabilities/instagram.automation.prepare/execute",
     });
-    assert.equal(readinessResponse.statusCode, 200);
+    assert.equal(readinessResponse.statusCode, 409);
     const readinessBody =
       readinessResponse.json<ConnectorExecuteCapabilityResult>();
-    assert.equal(readinessBody.ok, true);
-    assert.equal(readinessBody.status, "completed");
+    assert.equal(readinessBody.ok, false);
+    assert.equal(readinessBody.status, "failed");
     assert.equal(readinessBody.resultType, "none");
-    assert.equal(readinessBody.accountLabel, "Instagram account");
-    assert.match(readinessBody.message, /automation readiness verified/u);
-    assert.match(readinessBody.message, /instagram\.automation\.prepare/u);
+    assert.equal(readinessBody.setupMode, "graph-api");
+    assert.ok(readinessBody.blockerCodes?.includes("access_token_missing"));
+    assert.match(readinessBody.message, /Graph API setup/u);
     assert.doesNotMatch(readinessBody.message, /instagram-session-secret/u);
 
     const sessionFile = await readFile(
@@ -471,6 +484,64 @@ test("social connector browser login connects without OAuth credentials", async 
       sessionFile,
       /instagram-session-secret|storageStateJson|browser-profile/u,
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram native capabilities become available only with Graph API readiness", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-11T08:20:00.000Z",
+    connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+    connectorBrowserDetector: async () => {
+      throw new Error("Graph API readiness must not launch a browser");
+    },
+  });
+
+  try {
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const state = stateResponse.json<ConnectorState>();
+    assert.equal(state.status, "connected");
+    assert.equal(state.loginMode, "oauth");
+    assert.equal(state.browserAccess.status, "not-applicable");
+    assert.equal(state.accountLabel, "Instagram Graph account 17841400000000000");
+    assert.ok(
+      state.capabilities.some(
+        (capability) =>
+          capability.id === "instagram.media.publish" &&
+          capability.action === "write" &&
+          capability.status === "available" &&
+          capability.setupMode === "graph-api" &&
+          capability.requiresApproval === true,
+      ),
+    );
+
+    const accountResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.account.read/execute",
+    });
+    assert.equal(accountResponse.statusCode, 200);
+    const accountBody = accountResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(accountBody.ok, true);
+    assert.equal(accountBody.status, "completed");
+    assert.equal(accountBody.setupMode, "graph-api");
+    assert.match(accountBody.message, /instagram\.account\.read/u);
+    assert.doesNotMatch(accountBody.message, /instagram-graph-secret/u);
+
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.media.publish/execute",
+    });
+    assert.equal(publishResponse.statusCode, 409);
+    const publishBody = publishResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(publishBody.status, "requires-approval");
+    assert.match(publishBody.message, /preview and explicit user approval/u);
   } finally {
     await server.close();
   }
@@ -515,7 +586,7 @@ test("connector API responses redact browser session secrets and profile paths",
   }
 });
 
-test("Instagram automation readiness fails expired stored sessions without exposing secrets", async () => {
+test("Instagram native readiness ignores expired browser secrets and reports Graph API blockers", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   await mkdir(path.join(stateRoot, "connectors", "instagram"), { recursive: true });
   await writeFile(
@@ -551,8 +622,8 @@ test("Instagram automation readiness fails expired stored sessions without expos
     const body = response.json<ConnectorExecuteCapabilityResult>();
     assert.equal(body.ok, false);
     assert.equal(body.status, "failed");
-    assert.equal(body.accountLabel, "Instagram account");
-    assert.match(body.message, /missing or expired/u);
+    assert.ok(body.blockerCodes?.includes("access_token_missing"));
+    assert.match(body.message, /Graph API setup/u);
     assert.doesNotMatch(body.message, /browser-profile|sessionid/u);
 
     const stateResponse = await server.inject({
@@ -560,9 +631,9 @@ test("Instagram automation readiness fails expired stored sessions without expos
       url: "/connectors/instagram/state",
     });
     const state = stateResponse.json<ConnectorState>();
-    assert.equal(state.status, "failed");
-    assert.equal(state.failureKind, "authentication");
-    assert.equal(state.accountLabel, null);
+    assert.equal(state.status, "connected");
+    assert.equal(state.failureKind, null);
+    assert.equal(state.accountLabel, "Instagram account");
   } finally {
     await server.close();
   }

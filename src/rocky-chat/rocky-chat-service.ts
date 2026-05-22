@@ -1600,6 +1600,9 @@ export class RockyChatService {
     if (/facebook|페이스북/iu.test(signal)) {
       return "facebook-crud.mjs";
     }
+    if (/instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu.test(signal)) {
+      return "instagram-graph.mjs";
+    }
     return null;
   }
 
@@ -1720,7 +1723,18 @@ export class RockyChatService {
     }
 
     try {
-      const skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+      let skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+      let repairedConnectorFiles = false;
+      for (const skill of skills) {
+        repairedConnectorFiles =
+          (await this.agentLocalSkillService.ensureAgentLocalSkillConnectorFiles(
+            agent,
+            skill.id,
+          )) || repairedConnectorFiles;
+      }
+      if (repairedConnectorFiles) {
+        skills = await this.agentLocalSkillService.listAgentLocalSkills(agent);
+      }
       const integrations = await listAgentConnectorIntegrations({
         skills,
         connectorService: this.connectorService,
@@ -2481,6 +2495,9 @@ export class RockyChatService {
         summary.status === "connected" &&
         summary.loginMode === "custom-browser"
     );
+    const hasConnectorCapabilityContext = connectorSummaries.some(
+      (summary) => summary.capabilities.length > 0
+    );
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
       chatId: input.chatId,
@@ -2522,6 +2539,7 @@ export class RockyChatService {
         chatId: input.chatId,
         ecountLookup,
         hasTistoryDraftPublisher,
+        hasConnectorCapabilityContext,
         hasConnectedBrowserConnector,
         hasConnectorProfileResults: connectorProfileResults.length > 0,
         hasPreparedIntegrationResults: preparedIntegrations.length > 0,

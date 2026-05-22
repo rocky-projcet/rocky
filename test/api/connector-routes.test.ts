@@ -248,6 +248,135 @@ test("planned connectors stay in preparation state instead of starting OAuth", a
   }
 });
 
+test("Instagram connector exposes Graph API onboarding blockers", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {},
+  });
+
+  try {
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const state = stateResponse.json<ConnectorState>();
+    assert.equal(state.readiness.setupMode, "graph-api");
+    assert.equal(state.readiness.accountKind, "unknown");
+    assert.equal(state.readiness.browserSessionPurpose, "readiness_check");
+    assert.ok(
+      state.readiness.blockers.some(
+        (blocker) => blocker.code === "professional_account_required",
+      ),
+    );
+    assert.ok(
+      state.readiness.blockers.some(
+        (blocker) => blocker.code === "access_token_missing",
+      ),
+    );
+
+    const accountRead = state.capabilities.find(
+      (capability) => capability.id === "instagram.account.read",
+    );
+    assert.equal(accountRead?.status, "blocked");
+    assert.ok(
+      accountRead?.blockerCodes?.includes("professional_account_required"),
+    );
+
+    const mediaPublish = state.capabilities.find(
+      (capability) => capability.id === "instagram.media.publish",
+    );
+    assert.equal(mediaPublish?.status, "planned");
+    assert.ok(
+      mediaPublish?.blockerCodes?.includes("rocky_capability_not_implemented"),
+    );
+
+    const blockedExecuteResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.account.read/execute",
+    });
+    assert.equal(blockedExecuteResponse.statusCode, 409);
+    const blockedExecuteBody =
+      blockedExecuteResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(blockedExecuteBody.ok, false);
+    assert.equal(blockedExecuteBody.status, "failed");
+    assert.match(
+      blockedExecuteBody.message,
+      /professional_account_required/u,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram Graph API readiness becomes available from configured environment", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_INSTAGRAM_ACCOUNT_KIND: "professional_business",
+      ROCKY_INSTAGRAM_FACEBOOK_PAGE_ID: "page-123",
+      ROCKY_INSTAGRAM_META_BUSINESS_ID: "business-123",
+      ROCKY_INSTAGRAM_META_APP_ID: "app-123",
+      ROCKY_INSTAGRAM_ACCESS_TOKEN: "secret-token",
+      ROCKY_INSTAGRAM_BUSINESS_ACCOUNT_ID: "ig-123",
+      ROCKY_INSTAGRAM_PERMISSIONS: "instagram_basic,pages_show_list",
+    },
+  });
+
+  try {
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const state = stateResponse.json<ConnectorState>();
+    assert.deepEqual(state.readiness.blockers, []);
+    assert.equal(state.readiness.accountKind, "professional_business");
+    assert.equal(
+      state.capabilities.find(
+        (capability) => capability.id === "instagram.account.read",
+      )?.status,
+      "available",
+    );
+    assert.equal(
+      state.capabilities.find(
+        (capability) => capability.id === "instagram.media.prepare",
+      )?.status,
+      "available",
+    );
+    assert.equal(
+      state.capabilities.find(
+        (capability) => capability.id === "instagram.insights.read",
+      )?.status,
+      "planned",
+    );
+
+    const accountReadResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.account.read/execute",
+    });
+    assert.equal(accountReadResponse.statusCode, 200);
+    const accountReadBody =
+      accountReadResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(accountReadBody.ok, true);
+    assert.equal(accountReadBody.status, "completed");
+    assert.match(accountReadBody.message, /professional_business/u);
+
+    const prepareResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.media.prepare/execute",
+    });
+    assert.equal(prepareResponse.statusCode, 409);
+    const prepareBody =
+      prepareResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(prepareBody.status, "requires-approval");
+  } finally {
+    await server.close();
+  }
+});
+
 test("social connector browser login connects without OAuth credentials", async () => {
   let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
@@ -306,6 +435,8 @@ test("social connector browser login connects without OAuth credentials", async 
     assert.equal(connected.accountLabel, "Instagram account");
     assert.equal(connected.connectedAt, "2026-05-11T08:15:00.000Z");
     assert.equal(connected.loginMode, "custom-browser");
+    assert.equal(connected.browserAccess.status, "granted");
+    assert.equal(connected.browserAccess.writeAllowedAfterApproval, false);
     assert.ok(
       connected.capabilities.some(
         (capability) =>

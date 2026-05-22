@@ -33,6 +33,8 @@ import {
 } from "./connector-runner.js";
 import {
   type ChromiumChannel,
+  type ConnectorAccountKind,
+  type ConnectorBlockerCode,
   type ConnectorDiagnosticsRecord,
   type ConnectorExecuteCapabilityInput,
   type ConnectorExecuteCapabilityResult,
@@ -51,6 +53,8 @@ import {
   type ConnectorStatus,
   type ConnectorBrowserAccessRecord,
   type ConnectorCapabilityRecord,
+  type ConnectorReadinessBlockerRecord,
+  type ConnectorReadinessRecord,
 } from "./connector-types.js";
 
 export interface ConnectorServiceOptions {
@@ -153,10 +157,14 @@ export class ConnectorService implements ConnectorServiceLike {
     this.hydratePromise = this.hydrateFromDisk();
   }
 
+  private decorateState(provider: ConnectorProvider): ConnectorState {
+    return decorateConnectorState(provider, this.states[provider], this.baseEnv);
+  }
+
   async getState(provider: ConnectorProvider): Promise<ConnectorState> {
     await this.ensureHydrated();
     this.assertSupported(provider);
-    return decorateConnectorState(provider, this.states[provider]);
+    return this.decorateState(provider);
   }
 
   async startLogin(
@@ -167,7 +175,7 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     if (!isConnectorProviderAvailable(provider)) {
       this.transition(provider, buildPlannedStatePatch(provider));
-      return decorateConnectorState(provider, this.states[provider]);
+      return this.decorateState(provider);
     }
     const adapter = getConnectorAdapter(provider);
     const oauth = adapter.oauth;
@@ -200,7 +208,7 @@ export class ConnectorService implements ConnectorServiceLike {
         lastError: credentials.message,
         failureKind: "authentication",
       });
-      return decorateConnectorState(provider, this.states[provider]);
+      return this.decorateState(provider);
     }
 
     const state = randomUrlSafe(32);
@@ -244,7 +252,7 @@ export class ConnectorService implements ConnectorServiceLike {
       lastError: openError,
     });
 
-    return decorateConnectorState(provider, this.states[provider]);
+    return this.decorateState(provider);
   }
 
   private async startCustomBrowserLogin(
@@ -264,7 +272,7 @@ export class ConnectorService implements ConnectorServiceLike {
           adapter.browserLogin?.unavailableReason ??
           unavailableReason,
       });
-      return decorateConnectorState(provider, this.states[provider]);
+      return this.decorateState(provider);
     }
 
     await this.cancelActiveBrowserSession(provider);
@@ -279,7 +287,7 @@ export class ConnectorService implements ConnectorServiceLike {
         loginMode: null,
         lastError: diagnostics.message,
       });
-      return decorateConnectorState(provider, this.states[provider]);
+      return this.decorateState(provider);
     }
 
     this.transition(provider, {
@@ -323,7 +331,7 @@ export class ConnectorService implements ConnectorServiceLike {
       });
     }
 
-    return decorateConnectorState(provider, this.states[provider]);
+    return this.decorateState(provider);
   }
 
   async handleOAuthCallback(
@@ -340,7 +348,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "연동 준비 중",
         message: `${adapter.label} 연동은 준비 중입니다.`,
-        state: decorateConnectorState(provider, this.states[provider]),
+        state: this.decorateState(provider),
       };
     }
 
@@ -361,7 +369,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth 승인 실패",
         message,
-        state: decorateConnectorState(provider, this.states[provider]),
+        state: this.decorateState(provider),
       };
     }
 
@@ -380,7 +388,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth callback 오류",
         message,
-        state: decorateConnectorState(provider, this.states[provider]),
+        state: this.decorateState(provider),
       };
     }
 
@@ -400,7 +408,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth state 오류",
         message,
-        state: decorateConnectorState(provider, this.states[provider]),
+        state: this.decorateState(provider),
       };
     }
 
@@ -433,7 +441,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth 연동 완료",
         message: `${accountLabel} 연결을 확인했습니다. 이 창은 닫아도 됩니다.`,
-        state: decorateConnectorState(provider, this.states[provider]),
+        state: this.decorateState(provider),
       };
     } catch (error) {
       const message =
@@ -453,7 +461,7 @@ export class ConnectorService implements ConnectorServiceLike {
         provider,
         title: "OAuth 토큰 교환 실패",
         message,
-        state: decorateConnectorState(provider, this.states[provider]),
+        state: this.decorateState(provider),
       };
     }
   }
@@ -603,7 +611,12 @@ export class ConnectorService implements ConnectorServiceLike {
         checkedAt: this.now(),
       };
     }
-    const capability = getConnectorExecutionCapabilities(provider).find(
+    const readiness = buildConnectorReadiness(
+      provider,
+      this.states[provider],
+      this.baseEnv,
+    );
+    const capability = getConnectorExecutionCapabilities(provider, readiness).find(
       (record) => record.id === capabilityId,
     );
     const checkedAt = this.now();
@@ -621,6 +634,59 @@ export class ConnectorService implements ConnectorServiceLike {
         followers: null,
         draft: null,
         message: `${adapter.label}에서 지원하지 않는 capability입니다: ${capabilityId}`,
+        checkedAt,
+      };
+    }
+
+    if (capability.status === "blocked") {
+      return {
+        ok: false,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: "failed",
+        resultType: "none",
+        accountLabel: this.states[provider].accountLabel,
+        profile: null,
+        followers: null,
+        draft: null,
+        message: formatCapabilityBlockers(capability),
+        checkedAt,
+      };
+    }
+
+    if (capability.status === "planned") {
+      return {
+        ok: false,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: "unsupported",
+        resultType: "none",
+        accountLabel: this.states[provider].accountLabel,
+        profile: null,
+        followers: null,
+        draft: null,
+        message: formatCapabilityBlockers(capability),
+        checkedAt,
+      };
+    }
+
+    if (capability.id === "instagram.account.read") {
+      return {
+        ok: true,
+        provider,
+        capabilityId,
+        action: capability.action,
+        status: "completed",
+        resultType: "none",
+        accountLabel: this.states[provider].accountLabel,
+        profile: null,
+        followers: null,
+        draft: null,
+        message:
+          `Instagram Graph API readiness is available; ` +
+          `accountKind=${readiness.accountKind ?? "unknown"}.`,
         checkedAt,
       };
     }
@@ -643,7 +709,7 @@ export class ConnectorService implements ConnectorServiceLike {
     }
 
     if (/\.account\.read$/u.test(capability.id)) {
-      const state = decorateConnectorState(provider, this.states[provider]);
+      const state = this.decorateState(provider);
       const ok = state.status === "connected";
       return {
         ok,
@@ -811,7 +877,11 @@ export class ConnectorService implements ConnectorServiceLike {
       };
     }
 
-    const availableCapabilities = getConnectorCapabilities(provider)
+    const readiness = buildConnectorReadiness(provider, state, this.baseEnv);
+    const availableCapabilities = getConnectorExecutionCapabilities(
+      provider,
+      readiness,
+    )
       .filter((record) => record.status === undefined || record.status === "available")
       .map((record) => record.id)
       .sort();
@@ -1055,7 +1125,7 @@ export class ConnectorService implements ConnectorServiceLike {
         lastError: null,
       });
     }
-    return decorateConnectorState(provider, this.states[provider]);
+    return this.decorateState(provider);
   }
 
   async disconnect(provider: ConnectorProvider): Promise<ConnectorState> {
@@ -1065,7 +1135,7 @@ export class ConnectorService implements ConnectorServiceLike {
     await this.removeStorage(provider);
     if (!isConnectorProviderAvailable(provider)) {
       this.transition(provider, buildPlannedStatePatch(provider));
-      return decorateConnectorState(provider, this.states[provider]);
+      return this.decorateState(provider);
     }
     this.transition(provider, {
       status: "idle",
@@ -1076,7 +1146,7 @@ export class ConnectorService implements ConnectorServiceLike {
       loginMode: null,
       lastError: null,
     });
-    return decorateConnectorState(provider, this.states[provider]);
+    return this.decorateState(provider);
   }
 
   async getDiagnostics(): Promise<ConnectorDiagnosticsRecord> {
@@ -1645,6 +1715,7 @@ function buildIdleState(provider: ConnectorProvider, now: string): ConnectorStat
       ...buildPlannedStatePatch(provider),
       browserAccess: buildBrowserAccess(provider, "planned", null),
       capabilities: [],
+      readiness: emptyConnectorReadiness(),
       updatedAt: now,
     };
   }
@@ -1661,13 +1732,17 @@ function buildIdleState(provider: ConnectorProvider, now: string): ConnectorStat
     failureKind: null,
     browserAccess: buildBrowserAccess(provider, "idle", null),
     capabilities: [],
+    readiness: emptyConnectorReadiness(),
     updatedAt: now,
   };
 }
 
 function buildPlannedStatePatch(
   provider: ConnectorProvider,
-): Omit<ConnectorState, "provider" | "updatedAt" | "browserAccess" | "capabilities"> {
+): Omit<
+  ConnectorState,
+  "provider" | "updatedAt" | "browserAccess" | "capabilities" | "readiness"
+> {
   const adapter = getConnectorAdapter(provider);
   return {
     status: "planned",
@@ -1683,28 +1758,313 @@ function buildPlannedStatePatch(
 
 function decorateConnectorState(
   provider: ConnectorProvider,
-  state: ConnectorState
+  state: ConnectorState,
+  baseEnv: NodeJS.ProcessEnv,
 ): ConnectorState {
+  const readiness = buildConnectorReadiness(provider, state, baseEnv);
   return {
     ...state,
     message: sanitizeConnectorPublicText(state.message) ?? "",
     lastError: sanitizeConnectorPublicText(state.lastError),
-    browserAccess: buildBrowserAccess(provider, state.status, state.loginMode),
-    capabilities: getConnectorExecutionCapabilities(provider),
+    browserAccess: buildBrowserAccess(
+      provider,
+      state.status,
+      state.loginMode,
+      readiness,
+    ),
+    capabilities: getConnectorExecutionCapabilities(provider, readiness),
+    readiness,
   };
+}
+
+function emptyConnectorReadiness(): ConnectorReadinessRecord {
+  return {
+    setupMode: null,
+    accountKind: null,
+    browserSessionPurpose: null,
+    blockers: [],
+  };
+}
+
+function buildConnectorReadiness(
+  provider: ConnectorProvider,
+  _state: ConnectorState,
+  baseEnv: NodeJS.ProcessEnv,
+): ConnectorReadinessRecord {
+  if (provider !== "instagram") {
+    return emptyConnectorReadiness();
+  }
+  return buildInstagramGraphReadiness(baseEnv);
+}
+
+function buildInstagramGraphReadiness(
+  baseEnv: NodeJS.ProcessEnv,
+): ConnectorReadinessRecord {
+  const accountKind = readInstagramAccountKind(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_ACCOUNT_KIND") ??
+      readEnv(baseEnv, "INSTAGRAM_ACCOUNT_KIND"),
+  );
+  const permissions = readPermissionSet(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_PERMISSIONS") ??
+      readEnv(baseEnv, "INSTAGRAM_PERMISSIONS"),
+  );
+  const hasAccessToken = Boolean(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_ACCESS_TOKEN") ??
+      readEnv(baseEnv, "INSTAGRAM_ACCESS_TOKEN"),
+  );
+  const hasBusinessAccountId = Boolean(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_BUSINESS_ACCOUNT_ID") ??
+      readEnv(baseEnv, "INSTAGRAM_BUSINESS_ACCOUNT_ID"),
+  );
+  const hasFacebookPage = Boolean(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_FACEBOOK_PAGE_ID") ??
+      readEnv(baseEnv, "INSTAGRAM_FACEBOOK_PAGE_ID"),
+  );
+  const hasMetaBusiness = Boolean(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_META_BUSINESS_ID") ??
+      readEnv(baseEnv, "INSTAGRAM_META_BUSINESS_ID"),
+  );
+  const hasMetaApp = Boolean(
+    readEnv(baseEnv, "ROCKY_INSTAGRAM_META_APP_ID") ??
+      readEnv(baseEnv, "INSTAGRAM_CLIENT_ID"),
+  );
+
+  const blockers: ConnectorReadinessBlockerRecord[] = [];
+  if (
+    accountKind === "unknown" ||
+    accountKind === "personal"
+  ) {
+    blockers.push(
+      readinessBlocker(
+        "professional_account_required",
+        "Instagram Graph API execution requires a Professional Business or Creator account.",
+        "Switch the Instagram account to Business or Creator before enabling execution capabilities.",
+      ),
+    );
+  }
+  if (!hasFacebookPage) {
+    blockers.push(
+      readinessBlocker(
+        "facebook_page_required",
+        "A connected Facebook Page is required for Instagram Graph API access.",
+        "Connect the Instagram Professional account to a Facebook Page in Meta settings.",
+      ),
+    );
+  }
+  if (!hasMetaBusiness) {
+    blockers.push(
+      readinessBlocker(
+        "meta_business_setup_required",
+        "Meta Business setup has not been confirmed.",
+        "Add the Instagram account and Page to Meta Business, then expose the business id to Rocky.",
+      ),
+    );
+  }
+  if (!hasMetaApp) {
+    blockers.push(
+      readinessBlocker(
+        "meta_app_required",
+        "A Meta app id is required before Rocky can verify Graph API readiness.",
+        "Create or connect a Meta app and provide its app id through the Rocky Instagram connector environment.",
+      ),
+    );
+  }
+  if (!hasAccessToken) {
+    blockers.push(
+      readinessBlocker(
+        "access_token_missing",
+        "No Instagram Graph API access token is configured.",
+        "Generate a Graph API token with the required Instagram permissions and connect it to Rocky.",
+      ),
+    );
+  }
+  if (!hasBusinessAccountId) {
+    blockers.push(
+      readinessBlocker(
+        "instagram_business_account_id_missing",
+        "No Instagram Business Account ID is configured.",
+        "Resolve the Instagram Business Account ID from the connected Page and provide it to Rocky.",
+      ),
+    );
+  }
+  const missingPermissions = hasAccessToken
+    ? missingInstagramBasePermissions(permissions)
+    : [];
+  if (missingPermissions.length > 0) {
+    blockers.push(
+      readinessBlocker(
+        "permission_missing",
+        `Missing required Instagram Graph API permissions: ${missingPermissions.join(", ")}.`,
+        "Grant the missing permissions to the token, then refresh the Rocky connector environment.",
+      ),
+    );
+  }
+
+  return {
+    setupMode: "graph-api",
+    accountKind,
+    browserSessionPurpose: "readiness_check",
+    blockers,
+  };
+}
+
+function readinessBlocker(
+  code: ConnectorBlockerCode,
+  message: string,
+  nextAction: string,
+): ConnectorReadinessBlockerRecord {
+  return { code, message, nextAction };
+}
+
+function readInstagramAccountKind(value: string | null): ConnectorAccountKind {
+  if (
+    value === "personal" ||
+    value === "professional_business" ||
+    value === "professional_creator"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+function readPermissionSet(raw: string | null): Set<string> {
+  return new Set(
+    (raw ?? "")
+      .split(/[,\s]+/u)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  );
+}
+
+function missingInstagramBasePermissions(permissions: Set<string>): string[] {
+  return ["instagram_basic", "pages_show_list"].filter(
+    (permission) => !permissions.has(permission),
+  );
 }
 
 function getConnectorExecutionCapabilities(
   provider: ConnectorProvider,
+  readiness?: ConnectorReadinessRecord,
 ): ConnectorCapabilityRecord[] {
+  const resolvedReadiness =
+    readiness ??
+    (provider === "instagram"
+      ? buildInstagramGraphReadiness({})
+      : emptyConnectorReadiness());
   const byId = new Map<string, ConnectorCapabilityRecord>();
+  const baseCapabilities =
+    provider === "instagram"
+      ? getInstagramGraphApiCapabilities(resolvedReadiness)
+      : getConnectorCapabilities(provider);
   for (const capability of [
-    ...getConnectorCapabilities(provider),
+    ...baseCapabilities,
     ...getConnectorSkillBridgeCapabilities(provider),
   ]) {
     byId.set(capability.id, capability);
   }
   return [...byId.values()];
+}
+
+function getInstagramGraphApiCapabilities(
+  readiness: ConnectorReadinessRecord,
+): ConnectorCapabilityRecord[] {
+  const graphBlockers = readiness.blockers;
+  const graphStatus = graphBlockers.length === 0 ? "available" : "blocked";
+  const notImplementedBlocker = readinessBlocker(
+    "rocky_capability_not_implemented",
+    "Rocky has not implemented this Instagram Graph API capability yet.",
+    "Use this row as readiness documentation until the native capability work lands.",
+  );
+
+  return [
+    instagramCapability({
+      id: "instagram.account.read",
+      label: "Account read",
+      description:
+        "Verify the configured Instagram Business Account ID and Graph API account readiness.",
+      action: "read",
+      requiresApproval: false,
+      status: graphStatus,
+      blockers: graphBlockers,
+    }),
+    instagramCapability({
+      id: "instagram.media.prepare",
+      label: "Media preparation",
+      description:
+        "Prepare Instagram media work only after Graph API account and token readiness are confirmed.",
+      action: "write",
+      requiresApproval: true,
+      status: graphStatus,
+      blockers: graphBlockers,
+    }),
+    instagramCapability({
+      id: "instagram.media.publish",
+      label: "Media publish",
+      description:
+        "Publish approved Instagram media through the Graph API after preview and explicit approval.",
+      action: "write",
+      requiresApproval: true,
+      status: "planned",
+      blockers: [notImplementedBlocker],
+    }),
+    instagramCapability({
+      id: "instagram.media.status.read",
+      label: "Media status read",
+      description:
+        "Read Instagram media publishing status through the Graph API.",
+      action: "read",
+      requiresApproval: false,
+      status: "planned",
+      blockers: [notImplementedBlocker],
+    }),
+    instagramCapability({
+      id: "instagram.insights.read",
+      label: "Insights read",
+      description:
+        "Read Instagram account and media insights through approved Graph API permissions.",
+      action: "read",
+      requiresApproval: false,
+      status: "planned",
+      blockers: [notImplementedBlocker],
+    }),
+  ];
+}
+
+function instagramCapability(input: {
+  id: string;
+  label: string;
+  description: string;
+  action: ConnectorCapabilityRecord["action"];
+  requiresApproval: boolean;
+  status: NonNullable<ConnectorCapabilityRecord["status"]>;
+  blockers: ConnectorReadinessBlockerRecord[];
+}): ConnectorCapabilityRecord {
+  return {
+    id: input.id,
+    provider: "instagram",
+    label: input.label,
+    description: input.description,
+    action: input.action,
+    requiresBrowser: false,
+    requiresConnectedAccount: true,
+    requiresApproval: input.requiresApproval,
+    status: input.status,
+    source: "backend",
+    blockerCodes: input.blockers.map((blocker) => blocker.code),
+    blockers: input.blockers,
+  };
+}
+
+function formatCapabilityBlockers(capability: ConnectorCapabilityRecord): string {
+  const blockers = capability.blockers ?? [];
+  if (blockers.length === 0) {
+    return capability.status === "planned"
+      ? `${capability.label} is planned and is not executable yet.`
+      : `${capability.label} is not executable in the current connector state.`;
+  }
+  return blockers
+    .map((blocker) => `${blocker.code}: ${blocker.nextAction}`)
+    .join(" ");
 }
 
 function getConnectorSkillBridgeCapabilities(
@@ -1770,6 +2130,24 @@ function getConnectorSkillBridgeCapabilities(
     ];
   }
 
+  if (provider === "instagram") {
+    return [
+      {
+        id: "instagram.automation.prepare",
+        provider,
+        label: "Browser readiness check",
+        description:
+          "Validate the connected Instagram browser session for manual assist and readiness checks only.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: true,
+        requiresApproval: false,
+        status: "available",
+        source: "backend",
+      },
+    ];
+  }
+
   return [];
 }
 
@@ -1812,7 +2190,8 @@ function hasInstagramSessionCookie(storageStateJson: string): boolean {
 function buildBrowserAccess(
   provider: ConnectorProvider,
   status: ConnectorStatus,
-  loginMode: ConnectorLoginMode | null
+  loginMode: ConnectorLoginMode | null,
+  readiness: ConnectorReadinessRecord = emptyConnectorReadiness(),
 ): ConnectorBrowserAccessRecord {
   const adapter = getConnectorAdapter(provider);
   if (!isConnectorProviderAvailable(provider)) {
@@ -1822,6 +2201,41 @@ function buildBrowserAccess(
       readAllowed: false,
       writeAllowedAfterApproval: false,
       message: `${adapter.label} 연동은 준비 중입니다.`,
+    };
+  }
+
+  if (provider === "instagram") {
+    if (status === "connected" && loginMode === "custom-browser") {
+      return {
+        status: "granted",
+        policy: "persistent",
+        readAllowed: true,
+        writeAllowedAfterApproval: false,
+        message:
+          "Instagram browser login is available only for manual assist and readiness checks; Graph API credentials are required for execution.",
+      };
+    }
+
+    if (status === "failed") {
+      return {
+        status: "unavailable",
+        policy: "persistent",
+        readAllowed: false,
+        writeAllowedAfterApproval: false,
+        message:
+          "Reconnect the Instagram browser check if manual assist is needed; it is not used as a Graph API execution credential.",
+      };
+    }
+
+    return {
+      status: "needs-login",
+      policy: "persistent",
+      readAllowed: false,
+      writeAllowedAfterApproval: false,
+      message:
+        readiness.blockers.length > 0
+          ? "Graph API setup is blocked; browser login can only assist manual readiness checks."
+          : "Graph API setup is ready; browser login remains limited to manual assist and readiness checks.",
     };
   }
 

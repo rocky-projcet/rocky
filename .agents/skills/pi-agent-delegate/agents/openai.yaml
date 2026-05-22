@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pi Agent Delegate"
+  short_description: "Route work to Pi agent, then verify results."
+  default_prompt: "Delegate this request to Pi agent and verify only the completed result."

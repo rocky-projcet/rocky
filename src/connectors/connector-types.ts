@@ -68,6 +68,33 @@ export interface ConnectorReadinessRecord {
   blockers: ConnectorReadinessBlockerRecord[];
 }
 
+export type ConnectorGraphDiscoveryStatus =
+  | "not-started"
+  | "blocked"
+  | "candidate";
+
+export interface ConnectorGraphDiscoveryCandidateRecord {
+  facebookPageId: string | null;
+  facebookPageName: string | null;
+  instagramBusinessAccountId: string;
+  instagramUsername: string | null;
+  instagramAccountLabel: string;
+  accountKind: Extract<
+    ConnectorAccountKind,
+    "professional_business" | "professional_creator"
+  >;
+  grantedScopes: string[];
+  discoveredAt: string;
+}
+
+export interface ConnectorGraphDiscoveryRecord {
+  status: ConnectorGraphDiscoveryStatus;
+  accountCount: number;
+  candidate: ConnectorGraphDiscoveryCandidateRecord | null;
+  blockers: ConnectorReadinessBlockerRecord[];
+  checkedAt: string | null;
+}
+
 export interface ConnectorCapabilityRecord {
   id: string;
   provider: ConnectorProvider;
@@ -237,6 +264,7 @@ export interface ConnectorState {
   browserAccess: ConnectorBrowserAccessRecord;
   capabilities: ConnectorCapabilityRecord[];
   readiness: ConnectorReadinessRecord;
+  graphDiscovery?: ConnectorGraphDiscoveryRecord | null;
   updatedAt: string;
 }
 
@@ -271,7 +299,15 @@ export interface ConnectorServiceLike {
     provider: ConnectorProvider,
     input?: ConnectorStartLoginInput,
   ): Promise<ConnectorState>;
+  startGraphDiscovery(
+    provider: ConnectorProvider,
+    input?: ConnectorStartLoginInput,
+  ): Promise<ConnectorState>;
   handleOAuthCallback(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthCallbackInput,
+  ): Promise<ConnectorOAuthCallbackResult>;
+  handleGraphDiscoveryCallback(
     provider: ConnectorProvider,
     input: ConnectorOAuthCallbackInput,
   ): Promise<ConnectorOAuthCallbackResult>;

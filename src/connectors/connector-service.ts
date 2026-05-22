@@ -55,6 +55,8 @@ import {
   type ConnectorCapabilityRecord,
   type ConnectorReadinessBlockerRecord,
   type ConnectorReadinessRecord,
+  type ConnectorGraphDiscoveryCandidateRecord,
+  type ConnectorGraphDiscoveryRecord,
 } from "./connector-types.js";
 
 export interface ConnectorServiceOptions {
@@ -84,6 +86,8 @@ interface OAuthCredentials {
   redirectUri: string;
 }
 
+type PendingOAuthPurpose = "oauth-login" | "instagram-graph-discovery";
+
 interface PendingOAuthSession {
   provider: ConnectorProvider;
   config: Extract<ConnectorOAuthConfig, { supported: true }>;
@@ -91,6 +95,7 @@ interface PendingOAuthSession {
   state: string;
   codeVerifier: string | null;
   createdAt: string;
+  purpose: PendingOAuthPurpose;
 }
 
 const DIAGNOSTICS_TTL_MS = 60_000;
@@ -227,6 +232,7 @@ export class ConnectorService implements ConnectorServiceLike {
       state,
       codeVerifier,
       createdAt: this.now(),
+      purpose: "oauth-login",
     });
 
     let openError: string | null = this.openExternalUrl
@@ -250,6 +256,131 @@ export class ConnectorService implements ConnectorServiceLike {
       loginUrl,
       loginMode: "oauth",
       lastError: openError,
+    });
+
+    return this.decorateState(provider);
+  }
+
+  async startGraphDiscovery(
+    provider: ConnectorProvider,
+    input: ConnectorStartLoginInput = {},
+  ): Promise<ConnectorState> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    if (provider !== "instagram") {
+      throw Object.assign(
+        new Error("Graph discovery is only supported for Instagram."),
+        { statusCode: 400 },
+      );
+    }
+    if (!isConnectorProviderAvailable(provider)) {
+      this.transition(provider, buildPlannedStatePatch(provider));
+      return this.decorateState(provider);
+    }
+
+    const adapter = getConnectorAdapter(provider);
+    const oauth = adapter.oauth;
+    if (oauth.supported === false) {
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram Graph discovery requires Meta OAuth support.",
+        accountLabel: null,
+        connectedAt: null,
+        loginUrl: null,
+        loginMode: null,
+        lastError: oauth.unavailableReason,
+        failureKind: "authentication",
+        graphDiscovery: buildBlockedGraphDiscovery(
+          this.now(),
+          instagramDiscoverySetupBlockers(),
+        ),
+      });
+      return this.decorateState(provider);
+    }
+    const discoveryOAuth: Extract<ConnectorOAuthConfig, { supported: true }> = {
+      ...oauth,
+      authorizationUrl: "https://www.instagram.com/oauth/authorize",
+      tokenUrl: "https://api.instagram.com/oauth/access_token",
+      scopes: ["instagram_business_basic"],
+      scopeSeparator: ",",
+      extraAuthParams: {
+        enable_fb_login: "0",
+        force_authentication: "1",
+      },
+    };
+
+    const credentials = this.resolveOAuthCredentials(
+      provider,
+      discoveryOAuth,
+      input.redirectBaseUrl ?? null,
+      {
+        callbackPath: "graph/oauth/callback",
+        redirectEnvKeys: [
+          "ROCKY_CONNECTOR_INSTAGRAM_GRAPH_REDIRECT_URI",
+          "ROCKY_CONNECTOR_INSTAGRAM_META_REDIRECT_URI",
+          "ROCKY_INSTAGRAM_GRAPH_REDIRECT_URI",
+        ],
+        useGenericRedirectEnv: false,
+      },
+    );
+    if (credentials.ok === false) {
+      const blockers = instagramDiscoverySetupBlockers();
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram Graph discovery needs user-owned Meta app credentials.",
+        accountLabel: null,
+        connectedAt: null,
+        loginUrl: null,
+        loginMode: null,
+        lastError: credentials.message,
+        failureKind: "authentication",
+        graphDiscovery: buildBlockedGraphDiscovery(this.now(), blockers),
+      });
+      return this.decorateState(provider);
+    }
+
+    await this.cancelActiveBrowserSession(provider);
+    const state = randomUrlSafe(32);
+    const codeVerifier = discoveryOAuth.pkce ? randomUrlSafe(64) : null;
+    const loginUrl = buildAuthorizationUrl({
+      config: discoveryOAuth,
+      credentials: credentials.value,
+      state,
+      codeChallenge: codeVerifier ? pkceChallenge(codeVerifier) : null,
+    });
+
+    this.pendingOAuth.set(state, {
+      provider,
+      config: discoveryOAuth,
+      credentials: credentials.value,
+      state,
+      codeVerifier,
+      createdAt: this.now(),
+      purpose: "instagram-graph-discovery",
+    });
+
+    let openError: string | null = this.openExternalUrl
+      ? null
+      : "Default browser opening is unavailable in this environment.";
+    if (this.openExternalUrl) {
+      try {
+        await this.openExternalUrl(loginUrl);
+      } catch (error) {
+        openError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    this.transition(provider, {
+      status: "connecting",
+      message: openError
+        ? "Open the Instagram Graph discovery URL to authorize your Meta app."
+        : "Instagram Graph discovery opened in the default browser.",
+      accountLabel: null,
+      connectedAt: null,
+      loginUrl,
+      loginMode: "oauth",
+      lastError: openError,
+      graphDiscovery: emptyGraphDiscovery(),
     });
 
     return this.decorateState(provider);
@@ -412,6 +543,27 @@ export class ConnectorService implements ConnectorServiceLike {
       };
     }
 
+    if (pending.purpose !== "oauth-login") {
+      this.pendingOAuth.delete(input.state);
+      const message =
+        "OAuth state belongs to a dedicated connector flow. Start the correct flow again.";
+      this.transition(provider, {
+        status: "failed",
+        message: "OAuth callback route did not match the pending connector flow.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: message,
+        failureKind: "authentication",
+      });
+      return {
+        ok: false,
+        provider,
+        title: "OAuth callback route mismatch",
+        message,
+        state: this.decorateState(provider),
+      };
+    }
+
     this.pendingOAuth.delete(input.state);
 
     try {
@@ -460,6 +612,196 @@ export class ConnectorService implements ConnectorServiceLike {
         ok: false,
         provider,
         title: "OAuth 토큰 교환 실패",
+        message,
+        state: this.decorateState(provider),
+      };
+    }
+  }
+
+  async handleGraphDiscoveryCallback(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthCallbackInput,
+  ): Promise<ConnectorOAuthCallbackResult> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    if (provider !== "instagram") {
+      throw Object.assign(
+        new Error("Graph discovery is only supported for Instagram."),
+        { statusCode: 400 },
+      );
+    }
+
+    if (input.error) {
+      const message =
+        sanitizeConnectorPublicText(input.errorDescription ?? input.error) ??
+        "Instagram Graph authorization failed.";
+      const blockers = instagramDiscoverySetupBlockers();
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram Graph authorization was cancelled or failed.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: message,
+        failureKind: "authentication",
+        graphDiscovery: buildBlockedGraphDiscovery(this.now(), blockers),
+      });
+      return {
+        ok: false,
+        provider,
+        title: "Instagram Graph authorization failed",
+        message,
+        state: this.decorateState(provider),
+      };
+    }
+
+    if (!input.state || !input.code) {
+      const message = "Instagram Graph callback is missing code or state.";
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram Graph callback could not be processed.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: message,
+        failureKind: "authentication",
+        graphDiscovery: buildBlockedGraphDiscovery(
+          this.now(),
+          instagramDiscoverySetupBlockers(),
+        ),
+      });
+      return {
+        ok: false,
+        provider,
+        title: "Instagram Graph callback error",
+        message,
+        state: this.decorateState(provider),
+      };
+    }
+
+    const pending = this.pendingOAuth.get(input.state);
+    if (
+      !pending ||
+      pending.provider !== provider ||
+      pending.purpose !== "instagram-graph-discovery"
+    ) {
+      const message =
+        "Instagram Graph discovery state is missing, expired, or belongs to another flow.";
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram Graph discovery state verification failed.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: message,
+        failureKind: "authentication",
+        graphDiscovery: buildBlockedGraphDiscovery(
+          this.now(),
+          instagramDiscoverySetupBlockers(),
+        ),
+      });
+      return {
+        ok: false,
+        provider,
+        title: "Instagram Graph state error",
+        message,
+        state: this.decorateState(provider),
+      };
+    }
+
+    this.pendingOAuth.delete(input.state);
+
+    try {
+      const tokenPayload = await this.exchangeOAuthCode(pending, input.code);
+      const accessToken = readAccessToken(tokenPayload);
+      if (!accessToken) {
+        throw new Error("Instagram Graph token response did not include an access token.");
+      }
+      const candidates = await this.discoverInstagramGraphAccounts(accessToken);
+      const checkedAt = this.now();
+      if (candidates.length === 0) {
+        const blockers = instagramDiscoveryNoAccountBlockers();
+        this.transition(provider, {
+          status: "failed",
+          message:
+            "Instagram Graph discovery did not find a connected Professional Instagram account.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: blockers.map((blocker) => blocker.nextAction).join(" "),
+          failureKind: "authentication",
+          graphDiscovery: buildBlockedGraphDiscovery(checkedAt, blockers),
+        });
+        return {
+          ok: false,
+          provider,
+          title: "Instagram Graph setup blocked",
+          message:
+            "No Instagram Business or Creator account was found for this login.",
+          state: this.decorateState(provider),
+        };
+      }
+
+      const scopedCandidates = candidates.map((record) => ({
+        ...record,
+        grantedScopes: pending.config.scopes,
+      }));
+      const candidate = scopedCandidates[0];
+      const graphDiscovery = buildCandidateGraphDiscovery(
+        checkedAt,
+        scopedCandidates.length,
+        candidate,
+      );
+      await this.persistOAuthToken(provider, {
+        provider,
+        accountLabel: candidate.instagramAccountLabel,
+        connectedAt: checkedAt,
+        tokenPayload,
+        scopes: pending.config.scopes,
+        graphDiscovery,
+      });
+      this.transition(provider, {
+        status: "connected",
+        message:
+          candidates.length === 1
+            ? "Instagram Graph discovery found one connection candidate."
+            : "Instagram Graph discovery found multiple connection candidates.",
+        accountLabel: candidate.instagramAccountLabel,
+        connectedAt: checkedAt,
+        loginUrl: null,
+        loginMode: "oauth",
+        lastError: null,
+        graphDiscovery,
+      });
+      return {
+        ok: true,
+        provider,
+        title: "Instagram Graph discovery complete",
+        message:
+          candidates.length === 1
+            ? `${candidate.instagramAccountLabel} can be used as a Graph API connection candidate.`
+            : `${candidates.length} Instagram Graph connection candidates were discovered.`,
+        state: this.decorateState(provider),
+      };
+    } catch (error) {
+      const message =
+        sanitizeConnectorPublicText(
+          error instanceof Error ? error.message : String(error),
+        ) ?? "Instagram Graph discovery failed.";
+      this.transition(provider, {
+        status: "failed",
+        message: "Instagram Graph discovery failed.",
+        loginUrl: null,
+        loginMode: null,
+        lastError: message,
+        failureKind: "authentication",
+        graphDiscovery: buildBlockedGraphDiscovery(
+          this.now(),
+          instagramDiscoverySetupBlockers(),
+        ),
+      });
+      return {
+        ok: false,
+        provider,
+        title: "Instagram Graph discovery failed",
         message,
         state: this.decorateState(provider),
       };
@@ -1170,6 +1512,7 @@ export class ConnectorService implements ConnectorServiceLike {
       loginUrl: null,
       loginMode: null,
       lastError: null,
+      graphDiscovery: provider === "instagram" ? null : undefined,
     });
     return this.decorateState(provider);
   }
@@ -1329,6 +1672,7 @@ export class ConnectorService implements ConnectorServiceLike {
             loginUrl: null,
             loginMode: "oauth",
             lastError: null,
+            graphDiscovery: stored.graphDiscovery ?? null,
           });
           continue;
         }
@@ -1393,6 +1737,11 @@ export class ConnectorService implements ConnectorServiceLike {
     provider: ConnectorProvider,
     config: Extract<ConnectorOAuthConfig, { supported: true }>,
     redirectBaseUrl: string | null,
+    options: {
+      redirectEnvKeys?: string[];
+      callbackPath?: string;
+      useGenericRedirectEnv?: boolean;
+    } = {},
   ):
     | { ok: true; value: OAuthCredentials }
     | { ok: false; message: string } {
@@ -1402,12 +1751,16 @@ export class ConnectorService implements ConnectorServiceLike {
       readEnv(this.baseEnv, `${prefix}_CLIENT_KEY`);
     const clientSecret = readEnv(this.baseEnv, `${prefix}_CLIENT_SECRET`);
     const redirectUri =
-      readEnv(this.baseEnv, `${prefix}_REDIRECT_URI`) ??
+      readEnvAny(this.baseEnv, options.redirectEnvKeys ?? []) ??
+      (options.useGenericRedirectEnv === false
+        ? null
+        : readEnv(this.baseEnv, `${prefix}_REDIRECT_URI`)) ??
       buildRedirectUri(
         readEnv(this.baseEnv, "ROCKY_CONNECTOR_OAUTH_BASE_URL") ??
           redirectBaseUrl ??
           "http://127.0.0.1:3000",
         provider,
+        options.callbackPath,
       );
 
     const missing: string[] = [];
@@ -1523,6 +1876,25 @@ export class ConnectorService implements ConnectorServiceLike {
     }
   }
 
+  private async discoverInstagramGraphAccounts(
+    accessToken: string,
+  ): Promise<ConnectorGraphDiscoveryCandidateRecord[]> {
+    const url = new URL("https://graph.instagram.com/v22.0/me");
+    url.searchParams.set("fields", "id,user_id,username,name,account_type");
+
+    const response = await this.fetchImpl(url, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw new Error(formatOAuthError(payload, response.status));
+    }
+    return parseInstagramLoginAccountCandidate(payload, this.now());
+  }
+
   private async persistOAuthToken(
     provider: ConnectorProvider,
     payload: {
@@ -1531,6 +1903,7 @@ export class ConnectorService implements ConnectorServiceLike {
       connectedAt: string;
       tokenPayload: Record<string, unknown>;
       scopes: string[];
+      graphDiscovery?: ConnectorGraphDiscoveryRecord | null;
     },
   ): Promise<void> {
     const dir = this.providerDir(provider);
@@ -1541,6 +1914,7 @@ export class ConnectorService implements ConnectorServiceLike {
       accountLabel: payload.accountLabel,
       connectedAt: payload.connectedAt,
       scopes: payload.scopes,
+      graphDiscovery: payload.graphDiscovery ?? null,
       secret: await this.encryptConnectorSecret<StoredOAuthTokenSecret>({
         tokenPayload: payload.tokenPayload,
       }),
@@ -1827,13 +2201,66 @@ function emptyConnectorReadiness(): ConnectorReadinessRecord {
   };
 }
 
+function emptyGraphDiscovery(): ConnectorGraphDiscoveryRecord {
+  return {
+    status: "not-started",
+    accountCount: 0,
+    candidate: null,
+    blockers: [],
+    checkedAt: null,
+  };
+}
+
+function buildBlockedGraphDiscovery(
+  checkedAt: string,
+  blockers: ConnectorReadinessBlockerRecord[],
+): ConnectorGraphDiscoveryRecord {
+  return {
+    status: "blocked",
+    accountCount: 0,
+    candidate: null,
+    blockers,
+    checkedAt,
+  };
+}
+
+function buildCandidateGraphDiscovery(
+  checkedAt: string,
+  accountCount: number,
+  candidate: ConnectorGraphDiscoveryCandidateRecord,
+): ConnectorGraphDiscoveryRecord {
+  return {
+    status: "candidate",
+    accountCount,
+    candidate,
+    blockers: [],
+    checkedAt,
+  };
+}
+
 function buildConnectorReadiness(
   provider: ConnectorProvider,
-  _state: ConnectorState,
+  state: ConnectorState,
   baseEnv: NodeJS.ProcessEnv,
 ): ConnectorReadinessRecord {
   if (provider !== "instagram") {
     return emptyConnectorReadiness();
+  }
+  if (state.graphDiscovery?.status === "candidate" && state.graphDiscovery.candidate) {
+    return {
+      setupMode: "graph-api",
+      accountKind: state.graphDiscovery.candidate.accountKind,
+      browserSessionPurpose: "readiness_check",
+      blockers: [],
+    };
+  }
+  if (state.graphDiscovery?.status === "blocked") {
+    return {
+      setupMode: "graph-api",
+      accountKind: "unknown",
+      browserSessionPurpose: "readiness_check",
+      blockers: state.graphDiscovery.blockers,
+    };
   }
   return buildInstagramGraphReadiness(baseEnv);
 }
@@ -1983,6 +2410,26 @@ function readinessBlocker(
   nextAction: string,
 ): ConnectorReadinessBlockerRecord {
   return { code, message, nextAction };
+}
+
+function instagramDiscoverySetupBlockers(): ConnectorReadinessBlockerRecord[] {
+  return [
+    readinessBlocker(
+      "meta_app_required",
+      "Instagram Graph discovery requires a user-owned Meta app.",
+      "Add the Meta app client id and client secret for the Instagram connector, then start Graph API discovery again.",
+    ),
+  ];
+}
+
+function instagramDiscoveryNoAccountBlockers(): ConnectorReadinessBlockerRecord[] {
+  return [
+    readinessBlocker(
+      "professional_account_required",
+      "No Instagram Business or Creator account was discovered.",
+      "Switch the Instagram account to Business or Creator, then grant instagram_business_basic.",
+    ),
+  ];
 }
 
 function readInstagramAccountKind(value: string | null): ConnectorAccountKind {
@@ -2475,9 +2922,13 @@ function buildAuthorizationUrl(input: {
   return url.toString();
 }
 
-function buildRedirectUri(baseUrl: string, provider: ConnectorProvider): string {
+function buildRedirectUri(
+  baseUrl: string,
+  provider: ConnectorProvider,
+  callbackPath = "oauth/callback",
+): string {
   const base = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  return `${base}/connectors/${encodeURIComponent(provider)}/oauth/callback`;
+  return `${base}/connectors/${encodeURIComponent(provider)}/${callbackPath}`;
 }
 
 function readEnv(env: NodeJS.ProcessEnv, key: string): string | null {
@@ -2530,6 +2981,50 @@ async function readJsonResponse(response: Response): Promise<Record<string, unkn
   } catch {
     return { raw: text };
   }
+}
+
+function parseInstagramLoginAccountCandidate(
+  payload: Record<string, unknown>,
+  discoveredAt: string,
+): ConnectorGraphDiscoveryCandidateRecord[] {
+  const instagramBusinessAccountId = readString(payload.user_id) ?? readString(payload.id);
+  const accountKind = readInstagramLoginAccountKind(payload.account_type);
+  if (!instagramBusinessAccountId || !accountKind) {
+    return [];
+  }
+  const instagramUsername = readString(payload.username);
+  const instagramName = readString(payload.name);
+  return [
+    {
+      facebookPageId: null,
+      facebookPageName: null,
+      instagramBusinessAccountId,
+      instagramUsername,
+      instagramAccountLabel:
+        instagramUsername ??
+        instagramName ??
+        `Instagram Graph account ${instagramBusinessAccountId}`,
+      accountKind,
+      grantedScopes: [],
+      discoveredAt,
+    },
+  ];
+}
+
+function readInstagramLoginAccountKind(
+  value: unknown,
+): Extract<ConnectorAccountKind, "professional_business" | "professional_creator"> | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "BUSINESS") {
+    return "professional_business";
+  }
+  if (normalized === "CREATOR") {
+    return "professional_creator";
+  }
+  return null;
 }
 
 function formatOAuthError(payload: Record<string, unknown>, status: number): string {
@@ -2684,7 +3179,11 @@ function parseLegacyStoredOAuthToken(
 function parseStoredOAuthConnection(
   raw: string,
   provider: ConnectorProvider,
-): { accountLabel: string; connectedAt: string } | null {
+): {
+  accountLabel: string;
+  connectedAt: string;
+  graphDiscovery: ConnectorGraphDiscoveryRecord | null;
+} | null {
   const parsed = parseStoredJson(raw);
   if (
     !parsed ||
@@ -2697,7 +3196,73 @@ function parseStoredOAuthConnection(
   return {
     accountLabel: parsed.accountLabel,
     connectedAt: parsed.connectedAt,
+    graphDiscovery: isConnectorGraphDiscoveryRecord(parsed.graphDiscovery)
+      ? parsed.graphDiscovery
+      : null,
   };
+}
+
+function isConnectorGraphDiscoveryRecord(
+  value: unknown,
+): value is ConnectorGraphDiscoveryRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.status !== "not-started" &&
+    record.status !== "blocked" &&
+    record.status !== "candidate"
+  ) {
+    return false;
+  }
+  if (
+    typeof record.accountCount !== "number" ||
+    !Number.isInteger(record.accountCount) ||
+    record.accountCount < 0
+  ) {
+    return false;
+  }
+  if (
+    record.checkedAt !== null &&
+    typeof record.checkedAt !== "string"
+  ) {
+    return false;
+  }
+  if (!Array.isArray(record.blockers)) {
+    return false;
+  }
+  if (
+    record.candidate !== null &&
+    !isConnectorGraphDiscoveryCandidateRecord(record.candidate)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isConnectorGraphDiscoveryCandidateRecord(
+  value: unknown,
+): value is ConnectorGraphDiscoveryCandidateRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    (record.facebookPageId === null ||
+      typeof record.facebookPageId === "string") &&
+    (record.facebookPageName === null ||
+      typeof record.facebookPageName === "string") &&
+    typeof record.instagramBusinessAccountId === "string" &&
+    (record.instagramUsername === null ||
+      typeof record.instagramUsername === "string") &&
+    typeof record.instagramAccountLabel === "string" &&
+    (record.accountKind === "professional_business" ||
+      record.accountKind === "professional_creator") &&
+    Array.isArray(record.grantedScopes) &&
+    record.grantedScopes.every((scope) => typeof scope === "string") &&
+    typeof record.discoveredAt === "string"
+  );
 }
 
 function parseStoredBrowserConnectionMetadata(

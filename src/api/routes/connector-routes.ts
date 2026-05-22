@@ -110,6 +110,18 @@ export const registerConnectorRoutes: FastifyPluginAsync<
     );
   });
 
+  server.post("/connectors/:provider/graph-discovery", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    sendJson(
+      reply,
+      202,
+      await options.connectorService.startGraphDiscovery(parsed, {
+        redirectBaseUrl: resolveRequestBaseUrl(request),
+      }),
+    );
+  });
+
   server.get("/connectors/:provider/oauth/callback", async (request, reply) => {
     const { provider } = request.params as { provider: string };
     const parsed = parseProvider(provider);
@@ -130,6 +142,33 @@ export const registerConnectorRoutes: FastifyPluginAsync<
       .type("text/html; charset=utf-8")
       .send(renderOAuthCallbackHtml(result.title, result.message));
   });
+
+  server.get(
+    "/connectors/:provider/graph/oauth/callback",
+    async (request, reply) => {
+      const { provider } = request.params as { provider: string };
+      const parsed = parseProvider(provider);
+      const query = request.query as {
+        code?: string;
+        state?: string;
+        error?: string;
+        error_description?: string;
+      };
+      const result = await options.connectorService.handleGraphDiscoveryCallback(
+        parsed,
+        {
+          code: query.code ?? null,
+          state: query.state ?? null,
+          error: query.error ?? null,
+          errorDescription: query.error_description ?? null,
+        },
+      );
+      reply
+        .code(result.ok ? 200 : 400)
+        .type("text/html; charset=utf-8")
+        .send(renderOAuthCallbackHtml(result.title, result.message));
+    },
+  );
 
   server.post("/connectors/:provider/cancel", async (request, reply) => {
     const { provider } = request.params as { provider: string };

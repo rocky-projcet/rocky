@@ -43,6 +43,16 @@ export function useConnectorLoginMutation(provider: ConnectorProvider) {
   });
 }
 
+export function useConnectorGraphDiscoveryMutation(provider: ConnectorProvider) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => agentEngineClient.startConnectorGraphDiscovery(provider),
+    onSuccess: (state) => {
+      queryClient.setQueryData(STATE_KEY(provider), state);
+    },
+  });
+}
+
 export function useConnectorCancelMutation(provider: ConnectorProvider) {
   const queryClient = useQueryClient();
   return useMutation({

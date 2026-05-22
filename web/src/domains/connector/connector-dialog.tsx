@@ -33,6 +33,7 @@ import type {
 import {
   useConnectorCancelMutation,
   useConnectorDisconnectMutation,
+  useConnectorGraphDiscoveryMutation,
   useConnectorLoginMutation,
   useConnectorStateQuery,
 } from "./hooks";
@@ -54,6 +55,7 @@ export function ConnectorDialog({
 }: ConnectorDialogProps) {
   const stateQuery = useConnectorStateQuery(provider);
   const loginMutation = useConnectorLoginMutation(provider);
+  const graphDiscoveryMutation = useConnectorGraphDiscoveryMutation(provider);
   const cancelMutation = useConnectorCancelMutation(provider);
   const disconnectMutation = useConnectorDisconnectMutation(provider);
 
@@ -74,6 +76,7 @@ export function ConnectorDialog({
   useEffect(() => {
     if (!open) {
       loginMutation.reset();
+      graphDiscoveryMutation.reset();
       cancelMutation.reset();
       disconnectMutation.reset();
     }
@@ -82,6 +85,10 @@ export function ConnectorDialog({
 
   const startLogin = () => {
     loginMutation.mutate();
+  };
+
+  const startGraphDiscovery = () => {
+    graphDiscoveryMutation.mutate();
   };
 
   const openLoginUrl = () => {
@@ -97,8 +104,11 @@ export function ConnectorDialog({
           <InstagramGraphApiView
             state={state}
             providerLabel={providerLabel}
-            onLogin={startLogin}
-            starting={loginMutation.isPending}
+            onGraphDiscovery={startGraphDiscovery}
+            graphStarting={graphDiscoveryMutation.isPending}
+            onBrowserLogin={startLogin}
+            browserStarting={loginMutation.isPending}
+            onOpenLoginUrl={openLoginUrl}
             onCancel={() => cancelMutation.mutate()}
             cancelling={cancelMutation.isPending}
             onDisconnect={() => disconnectMutation.mutate()}
@@ -163,8 +173,11 @@ export function ConnectorDialog({
 function InstagramGraphApiView({
   state,
   providerLabel,
-  onLogin,
-  starting,
+  onGraphDiscovery,
+  graphStarting,
+  onBrowserLogin,
+  browserStarting,
+  onOpenLoginUrl,
   onCancel,
   cancelling,
   onDisconnect,
@@ -173,8 +186,11 @@ function InstagramGraphApiView({
 }: {
   state: ConnectorState | undefined;
   providerLabel: string;
-  onLogin: () => void;
-  starting: boolean;
+  onGraphDiscovery: () => void;
+  graphStarting: boolean;
+  onBrowserLogin: () => void;
+  browserStarting: boolean;
+  onOpenLoginUrl: () => void;
   onCancel: () => void;
   cancelling: boolean;
   onDisconnect: () => void;
@@ -189,15 +205,19 @@ function InstagramGraphApiView({
   const browserConnected =
     state?.status === "connected" && state.loginMode === "custom-browser";
   const connecting = state?.status === "connecting";
-  const graphReady = blockers.length === 0;
+  const loginUrl = state?.loginUrl ?? null;
+  const graphReady = Boolean(state) && blockers.length === 0;
+  const graphConnected =
+    state?.status === "connected" && state.loginMode === "oauth" && graphReady;
+  const busy = graphStarting || browserStarting || cancelling || disconnecting;
 
   return (
     <>
       <DialogHeader className="gap-2">
-        <DialogTitle className="text-lg">{providerLabel} Graph API setup</DialogTitle>
+        <DialogTitle className="text-lg">{providerLabel} Graph API 설정</DialogTitle>
         <DialogDescription className="text-sm leading-6">
-          Instagram execution uses a Professional Business or Creator account, a Meta app,
-          approved permissions, an access token, and an Instagram Business Account ID.
+          Instagram 실행에는 Business 또는 Creator 프로페셔널 계정, Meta 앱,
+          승인된 권한, 액세스 토큰, Instagram Business Account ID가 필요합니다.
         </DialogDescription>
       </DialogHeader>
 
@@ -206,23 +226,23 @@ function InstagramGraphApiView({
           <div className="flex items-center justify-between gap-2">
             <p className="flex items-center gap-2 text-sm font-medium text-foreground">
               <ShieldCheck className="size-4" />
-              Graph API contract
+              Graph API 조건
             </p>
-            <Badge variant="outline">{readiness.setupMode ?? "graph-api"}</Badge>
+            <Badge variant="outline">{formatSetupMode(readiness.setupMode)}</Badge>
           </div>
           <dl className="mt-3 grid gap-2 text-xs leading-5 text-muted-foreground">
             <div className="flex items-center justify-between gap-3">
-              <dt>Account kind</dt>
+              <dt>계정 종류</dt>
               <dd className="font-medium text-foreground">
                 {formatAccountKind(readiness.accountKind)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <dt>Browser session</dt>
+              <dt>브라우저 세션</dt>
               <dd className="font-medium text-foreground">
                 {readiness.browserSessionPurpose === "readiness_check"
-                  ? "readiness check"
-                  : "manual assist"}
+                  ? "준비 확인"
+                  : "수동 보조"}
               </dd>
             </div>
           </dl>
@@ -242,18 +262,19 @@ function InstagramGraphApiView({
             ) : (
               <AlertCircle className="size-4" />
             )}
-            {graphReady ? "Graph API ready" : "Setup blocked"}
+            {graphReady ? "Graph API 준비 완료" : "설정 확인 필요"}
           </p>
           {graphReady ? (
             <p className="mt-2">
-              Required account, app, token, permission, and Business Account ID
-              signals are present.
+              필요한 계정, 앱, 토큰, 권한, Business Account ID 신호를
+              확인했습니다.
             </p>
           ) : (
             <ul className="mt-2 grid gap-1.5">
               {blockers.map((blocker) => (
                 <li key={blocker.code}>
-                  <span className="font-medium">{blocker.code}</span>: {blocker.nextAction}
+                  <span className="font-medium">{formatBlockerCode(blocker.code)}</span>
+                  : {formatBlockerAction(blocker.code, blocker.nextAction)}
                 </li>
               ))}
             </ul>
@@ -262,7 +283,7 @@ function InstagramGraphApiView({
       </div>
 
       <div className="rounded-xl border border-border/70 p-3">
-        <p className="mb-2 text-sm font-medium text-foreground">Capability status</p>
+        <p className="mb-2 text-sm font-medium text-foreground">기능 상태</p>
         <div className="grid gap-2">
           {capabilities.map((capability) => (
             <CapabilityRow key={capability.id} capability={capability} />
@@ -274,9 +295,9 @@ function InstagramGraphApiView({
         <p className="flex items-start gap-2">
           <Lock className="mt-0.5 size-3.5 shrink-0 text-foreground" />
           <span>
-            Browser login is limited to manual assist and readiness checks. Cookies,
-            session storage, and browser profile paths are never used as execution
-            credentials for Instagram capabilities.
+            브라우저 로그인은 수동 보조와 준비 확인에만 사용합니다. 쿠키,
+            세션 저장소, 브라우저 프로필 경로는 Instagram 기능 실행 자격
+            증명으로 사용하지 않습니다.
           </span>
         </p>
       </div>
@@ -288,9 +309,9 @@ function InstagramGraphApiView({
       ) : null}
 
       <DialogFooter className="flex-col-reverse items-stretch sm:flex-row sm:items-center sm:justify-between">
-        <Button type="button" variant="ghost" onClick={onClose} disabled={starting || cancelling || disconnecting}>
+        <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
           <X className="size-4" />
-          Close
+          닫기
         </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {browserConnected ? (
@@ -298,22 +319,63 @@ function InstagramGraphApiView({
               type="button"
               variant="outline"
               onClick={onDisconnect}
-              disabled={starting || disconnecting}
+              disabled={graphStarting || browserStarting || disconnecting}
             >
               {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unplug className="size-4" />}
-              Disconnect browser check
+              브라우저 확인 해제
             </Button>
           ) : null}
           {connecting ? (
-            <Button type="button" variant="outline" onClick={onCancel} disabled={cancelling}>
-              {cancelling ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
-              Cancel check
-            </Button>
+            <>
+              {loginUrl ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onOpenLoginUrl}
+                  disabled={cancelling}
+                >
+                  <ExternalLink className="size-4" />
+                  승인 화면 열기
+                </Button>
+              ) : null}
+              <Button type="button" variant="outline" onClick={onCancel} disabled={cancelling}>
+                {cancelling ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
+                확인 취소
+              </Button>
+            </>
           ) : (
-            <Button type="button" onClick={onLogin} disabled={starting || disconnecting}>
-              {starting ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
-              {browserConnected ? "Run browser check again" : "Open browser check"}
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onBrowserLogin}
+                disabled={graphStarting || browserStarting || disconnecting}
+              >
+                {browserStarting ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
+                {browserConnected ? "브라우저 확인 다시 실행" : "브라우저 보조 로그인"}
+              </Button>
+              {graphConnected ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onDisconnect}
+                  disabled={graphStarting || browserStarting || disconnecting}
+                  className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                >
+                  {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unplug className="size-4" />}
+                  Graph API 연결 해제
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={onGraphDiscovery}
+                  disabled={graphStarting || browserStarting || disconnecting}
+                >
+                  {graphStarting ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+                  Graph API 연결
+                </Button>
+              )}
+            </>
           )}
         </div>
       </DialogFooter>
@@ -323,12 +385,15 @@ function InstagramGraphApiView({
 
 function CapabilityRow({ capability }: { capability: ConnectorCapabilityRecord }) {
   const status = capability.status ?? "available";
+  const copy = formatInstagramCapability(capability);
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
       <div className="min-w-0">
-        <p className="truncate text-xs font-medium text-foreground">{capability.id}</p>
+        <p className="truncate text-xs font-medium text-foreground">
+          {copy.label}
+        </p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {capability.description}
+          {copy.description}
         </p>
       </div>
       <Badge
@@ -341,7 +406,7 @@ function CapabilityRow({ capability }: { capability: ConnectorCapabilityRecord }
         )}
       >
         {status === "available" ? <CheckCircle2 className="size-3" /> : <CircleDashed className="size-3" />}
-        {status}
+        {formatCapabilityStatus(status)}
       </Badge>
     </div>
   );
@@ -356,11 +421,125 @@ function emptyReadiness(): ConnectorReadinessRecord {
   };
 }
 
+function formatSetupMode(mode: ConnectorReadinessRecord["setupMode"]) {
+  if (mode === "graph-api") return "Graph API";
+  if (mode === "oauth") return "OAuth";
+  if (mode === "custom-browser") return "브라우저 확인";
+  return "미정";
+}
+
 function formatAccountKind(kind: ConnectorReadinessRecord["accountKind"]) {
-  if (kind === "professional_business") return "Business";
-  if (kind === "professional_creator") return "Creator";
-  if (kind === "personal") return "Personal";
-  return "Unknown";
+  if (kind === "professional_business") return "비즈니스";
+  if (kind === "professional_creator") return "크리에이터";
+  if (kind === "personal") return "개인";
+  return "알 수 없음";
+}
+
+function formatCapabilityStatus(status: ConnectorCapabilityRecord["status"]) {
+  if (status === "available") return "사용 가능";
+  if (status === "blocked") return "차단됨";
+  if (status === "planned") return "준비 중";
+  if (status === "unsupported") return "미지원";
+  return "사용 가능";
+}
+
+function formatBlockerCode(
+  code: ConnectorReadinessRecord["blockers"][number]["code"],
+) {
+  if (code === "professional_account_required") return "프로페셔널 계정 필요";
+  if (code === "facebook_page_required") return "Facebook 페이지 필요";
+  if (code === "meta_business_setup_required") return "Meta Business 설정 필요";
+  if (code === "meta_app_required") return "Meta 앱 필요";
+  if (code === "permission_missing") return "권한 필요";
+  if (code === "app_review_required") return "앱 검수 필요";
+  if (code === "access_token_missing") return "액세스 토큰 필요";
+  if (code === "instagram_business_account_id_missing") {
+    return "Instagram Business Account ID 필요";
+  }
+  if (code === "rocky_capability_not_implemented") return "기능 구현 대기";
+  return code;
+}
+
+function formatBlockerAction(
+  code: ConnectorReadinessRecord["blockers"][number]["code"],
+  fallback: string,
+) {
+  if (code === "professional_account_required") {
+    return "Instagram 계정을 Business 또는 Creator로 전환한 뒤 다시 연결하세요.";
+  }
+  if (code === "facebook_page_required") {
+    return "Instagram 계정과 연결된 Facebook 페이지를 준비하세요.";
+  }
+  if (code === "meta_business_setup_required") {
+    return "Meta Business 설정에서 Instagram 계정과 앱 권한을 확인하세요.";
+  }
+  if (code === "meta_app_required") {
+    return "Meta 앱 Client ID와 Secret을 설정한 뒤 Graph API 연결을 다시 시작하세요.";
+  }
+  if (code === "permission_missing") {
+    return "필요한 Instagram Graph API 권한을 승인하세요.";
+  }
+  if (code === "app_review_required") {
+    return "개발 모드 테스트 사용자가 아니면 Meta 앱 검수를 완료하세요.";
+  }
+  if (code === "access_token_missing") {
+    return "OAuth를 다시 진행해 액세스 토큰을 발급하세요.";
+  }
+  if (code === "instagram_business_account_id_missing") {
+    return "Instagram Business Account ID를 확인하거나 Graph API 연결을 다시 진행하세요.";
+  }
+  if (code === "rocky_capability_not_implemented") {
+    return "Rocky에서 해당 실행 기능이 제공될 때까지 기다려야 합니다.";
+  }
+  return fallback;
+}
+
+function formatInstagramCapability(capability: ConnectorCapabilityRecord) {
+  if (capability.id === "instagram.account.read") {
+    return {
+      label: "계정 확인",
+      description:
+        "설정된 Instagram Business Account ID와 Graph API 준비 상태를 확인합니다.",
+    };
+  }
+  if (capability.id === "instagram.media.prepare") {
+    return {
+      label: "미디어 준비",
+      description:
+        "Graph API 계정과 토큰 준비가 확인된 뒤 Instagram 게시 작업을 준비합니다.",
+    };
+  }
+  if (capability.id === "instagram.media.publish") {
+    return {
+      label: "미디어 게시",
+      description:
+        "미리보기와 명시적 승인 뒤 Graph API로 Instagram 미디어를 게시합니다.",
+    };
+  }
+  if (capability.id === "instagram.media.status.read") {
+    return {
+      label: "게시 상태 확인",
+      description: "Graph API로 Instagram 미디어 게시 상태를 확인합니다.",
+    };
+  }
+  if (capability.id === "instagram.insights.read") {
+    return {
+      label: "인사이트 조회",
+      description:
+        "승인된 Graph API 권한으로 Instagram 계정과 미디어 인사이트를 읽습니다.",
+    };
+  }
+  if (capability.id === "instagram.automation.prepare") {
+    return {
+      label: "자동화 준비 확인",
+      description:
+        "Instagram 네이티브 기능을 Graph API 자격 증명으로 실행할 수 있는지 확인합니다.",
+    };
+  }
+  return {
+    label: capability.label || capability.id,
+    description: capability.description,
+  };
 }
 
 function PlannedView({

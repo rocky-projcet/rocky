@@ -1113,10 +1113,10 @@ function InstagramCardSummary({ state }: { state: ConnectorState }) {
               : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
           )}
         >
-          {graphReady ? "Graph API ready" : "Graph API blocked"}
+          {graphReady ? "Graph API 준비 완료" : "Graph API 설정 필요"}
         </Badge>
         <Badge variant="outline">
-          {readiness.accountKind?.replace("professional_", "") ?? "unknown"}
+          {formatInstagramAccountKind(readiness.accountKind)}
         </Badge>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -1129,7 +1129,8 @@ function InstagramCardSummary({ state }: { state: ConnectorState }) {
       </div>
       {!graphReady && blockers[0] ? (
         <p>
-          {blockers[0].code}: {blockers[0].nextAction}
+          {formatInstagramBlockerCode(blockers[0].code)}:{" "}
+          {formatInstagramBlockerAction(blockers[0].code, blockers[0].nextAction)}
         </p>
       ) : null}
     </div>
@@ -1142,7 +1143,7 @@ function InstagramCapabilityChip({
   capability: ConnectorCapabilityRecord;
 }) {
   const status = capability.status ?? "available";
-  const shortId = capability.id.replace("instagram.", "");
+  const shortId = formatInstagramCapabilityName(capability.id);
   return (
     <span
       className={cn(
@@ -1154,9 +1155,70 @@ function InstagramCapabilityChip({
         status === "planned" && "border-border bg-muted text-muted-foreground",
       )}
     >
-      {shortId} {status}
+      {shortId} {formatInstagramCapabilityStatus(status)}
     </span>
   );
+}
+
+function formatInstagramAccountKind(kind: ConnectorState["readiness"]["accountKind"]) {
+  if (kind === "professional_business") return "비즈니스";
+  if (kind === "professional_creator") return "크리에이터";
+  if (kind === "personal") return "개인";
+  return "알 수 없음";
+}
+
+function formatInstagramCapabilityName(id: string) {
+  if (id === "instagram.account.read") return "계정 확인";
+  if (id === "instagram.media.prepare") return "미디어 준비";
+  if (id === "instagram.media.publish") return "미디어 게시";
+  if (id === "instagram.insights.read") return "인사이트";
+  return id.replace("instagram.", "");
+}
+
+function formatInstagramCapabilityStatus(
+  status: ConnectorCapabilityRecord["status"],
+) {
+  if (status === "available") return "사용 가능";
+  if (status === "blocked") return "차단됨";
+  if (status === "planned") return "준비 중";
+  if (status === "unsupported") return "미지원";
+  return "사용 가능";
+}
+
+function formatInstagramBlockerCode(
+  code: ConnectorState["readiness"]["blockers"][number]["code"],
+) {
+  if (code === "professional_account_required") return "프로페셔널 계정 필요";
+  if (code === "facebook_page_required") return "Facebook 페이지 필요";
+  if (code === "meta_business_setup_required") return "Meta Business 설정 필요";
+  if (code === "meta_app_required") return "Meta 앱 필요";
+  if (code === "permission_missing") return "권한 필요";
+  if (code === "app_review_required") return "앱 검수 필요";
+  if (code === "access_token_missing") return "액세스 토큰 필요";
+  if (code === "instagram_business_account_id_missing") {
+    return "Instagram Business Account ID 필요";
+  }
+  if (code === "rocky_capability_not_implemented") return "기능 구현 대기";
+  return code;
+}
+
+function formatInstagramBlockerAction(
+  code: ConnectorState["readiness"]["blockers"][number]["code"],
+  fallback: string,
+) {
+  if (code === "professional_account_required") {
+    return "Instagram 계정을 Business 또는 Creator로 전환한 뒤 다시 연결하세요.";
+  }
+  if (code === "meta_app_required") {
+    return "Meta 앱 Client ID와 Secret을 설정한 뒤 Graph API 연결을 다시 시작하세요.";
+  }
+  if (code === "access_token_missing") {
+    return "OAuth를 다시 진행해 액세스 토큰을 발급하세요.";
+  }
+  if (code === "instagram_business_account_id_missing") {
+    return "Instagram Business Account ID를 확인하거나 Graph API 연결을 다시 진행하세요.";
+  }
+  return fallback;
 }
 
 function ProviderIcon({ entry }: { entry: ProviderEntry }) {

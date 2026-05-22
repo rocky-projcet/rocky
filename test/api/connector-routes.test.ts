@@ -388,6 +388,241 @@ test("Instagram Graph API readiness becomes available from configured environmen
   }
 });
 
+test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () => {
+  let openedUrl: string | null = null;
+  let browserStarted = false;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => {
+      openedUrl = url;
+      return {
+        status: "opened",
+        application: "default browser",
+        url,
+        platform: "test",
+        kind: "url",
+      };
+    },
+    connectorBrowserLoginStarter: async () => {
+      browserStarted = true;
+      throw new Error("Graph discovery must not launch browser assist");
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    assert.equal(response.statusCode, 202);
+    const state = response.json<ConnectorState>();
+    assert.equal(state.status, "connecting");
+    assert.equal(state.loginMode, "oauth");
+    assert.equal(state.graphDiscovery?.status, "not-started");
+    assert.equal(browserStarted, false);
+    assert.equal(openedUrl, state.loginUrl);
+    assert.ok(state.loginUrl);
+    const loginUrl = new URL(state.loginUrl ?? "");
+    assert.equal(loginUrl.hostname, "www.instagram.com");
+    assert.equal(loginUrl.searchParams.get("client_id"), "meta-client-id");
+    assert.match(
+      loginUrl.searchParams.get("redirect_uri") ?? "",
+      /\/connectors\/instagram\/graph\/oauth\/callback$/u,
+    );
+    assert.equal(
+      loginUrl.searchParams.get("scope"),
+      "instagram_business_basic",
+    );
+    assert.equal(loginUrl.searchParams.get("enable_fb_login"), "0");
+    assert.doesNotMatch(state.loginUrl ?? "", /meta-client-secret/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram Graph discovery reports actionable blockers when no account is discovered", async () => {
+  const fetchCalls: string[] = [];
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => ({
+      status: "opened",
+      application: "default browser",
+      url,
+      platform: "test",
+      kind: "url",
+    }),
+    connectorFetch: async (input, init) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      fetchCalls.push(url);
+      if (url.includes("/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-user-token",
+          token_type: "bearer",
+        });
+      }
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.Authorization,
+        "Bearer instagram-user-token",
+      );
+      assert.match(url, /graph\.instagram\.com\/v22\.0\/me/u);
+      assert.match(url, /fields=id%2Cuser_id%2Cusername%2Cname%2Caccount_type/u);
+      assert.doesNotMatch(url, /instagram-user-token/u);
+      return jsonResponse({
+        id: "ig-personal",
+        user_id: "ig-personal",
+        username: "personal_ig",
+        account_type: "PERSONAL",
+      });
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    assert.equal(startResponse.statusCode, 202);
+    const started = startResponse.json<ConnectorState>();
+    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 400);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const body = stateResponse.json<ConnectorState>();
+    assert.equal(body.status, "failed");
+    assert.equal(body.graphDiscovery?.status, "blocked");
+    assert.ok(
+      body.readiness.blockers.some(
+        (blocker) => blocker.code === "professional_account_required",
+      ),
+    );
+    assert.equal(
+      body.capabilities.find(
+        (capability) => capability.id === "instagram.account.read",
+      )?.status,
+      "blocked",
+    );
+    assert.doesNotMatch(JSON.stringify(body), /instagram-user-token|meta-client-secret/u);
+    assert.equal(fetchCalls.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram Graph discovery stores a single discovered account as a safe candidate", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-22T10:30:00.000Z",
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => ({
+      status: "opened",
+      application: "default browser",
+      url,
+      platform: "test",
+      kind: "url",
+    }),
+    connectorFetch: async (input, init) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.includes("/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-user-token",
+          token_type: "bearer",
+        });
+      }
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.Authorization,
+        "Bearer instagram-user-token",
+      );
+      return jsonResponse({
+        id: "app-scoped-123",
+        user_id: "ig-123",
+        username: "rocky_ig",
+        name: "Rocky Instagram",
+        account_type: "BUSINESS",
+      });
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    assert.equal(startResponse.statusCode, 202);
+    const started = startResponse.json<ConnectorState>();
+    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 200);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const body = stateResponse.json<ConnectorState>();
+    assert.equal(body.status, "connected");
+    assert.equal(body.loginMode, "oauth");
+    assert.equal(body.accountLabel, "rocky_ig");
+    assert.equal(body.readiness.setupMode, "graph-api");
+    assert.deepEqual(body.readiness.blockers, []);
+    assert.equal(body.graphDiscovery?.status, "candidate");
+    assert.equal(body.graphDiscovery?.accountCount, 1);
+    assert.equal(
+      body.graphDiscovery?.candidate?.instagramBusinessAccountId,
+      "ig-123",
+    );
+    assert.equal(body.graphDiscovery?.candidate?.facebookPageId, null);
+    assert.equal(
+      body.capabilities.find(
+        (capability) => capability.id === "instagram.automation.prepare",
+      )?.status,
+      "available",
+    );
+    assert.doesNotMatch(JSON.stringify(body), /instagram-user-token|meta-client-secret/u);
+
+    const tokenFile = await readFile(
+      path.join(stateRoot, "connectors", "instagram", "oauth-token.json"),
+      "utf8",
+    );
+    assert.match(tokenFile, /"algorithm": "aes-256-gcm"/);
+    assert.match(tokenFile, /"instagramBusinessAccountId": "ig-123"/);
+    assert.doesNotMatch(tokenFile, /instagram-user-token|meta-client-secret/u);
+  } finally {
+    await server.close();
+  }
+});
+
 test("social connector browser login connects without OAuth credentials", async () => {
   let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
@@ -968,6 +1203,15 @@ test("planned connectors ignore stale browser sessions and disconnect back to pr
     await server.close();
   }
 });
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
 
 async function waitForConnectorState(
   server: ReturnType<typeof createAgentEngineServer>,

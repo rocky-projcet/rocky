@@ -13,6 +13,7 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 - `rocky-runtime-probe` -> `.agents/skills/rocky-runtime-probe/SKILL.md`
 - `ecount-oapi` -> `.agents/skills/ecount-oapi/SKILL.md`
 - `mcp-on-demand` -> `.agents/skills/mcp-on-demand/SKILL.md`
+- `pi-agent-delegate` -> `.agents/skills/pi-agent-delegate/SKILL.md`
 - `git-safe-operations` -> `.agents/skills/git-safe-operations/SKILL.md`
 - `grill-me` -> `.agents/skills/grill-me/SKILL.md`
 - `grill-with-docs` -> `.agents/skills/grill-with-docs/SKILL.md`
@@ -41,6 +42,7 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 | `linear` | Keep | Legacy guardrail for explicit Linear-only requests. |
 | `mcp-on-demand` | Keep | Provider toggle workflow for explicitly requested integrations. |
 | `notion-api-publisher` | Remove | Direct Notion document publishing is no longer part of the repo-local skill set. |
+| `pi-agent-delegate` | Add | Delegates primary user work to Pi agent and keeps Codex focused on result verification. |
 | `requirement-understanding` | Keep | Requirement interpretation workflow. |
 | `roc-finish-current-work` | Keep | End-to-end issue/PR completion workflow. |
 | `roc-publish` | Keep | GitHub Issue and PR publication workflow. |
@@ -62,3 +64,4 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 ## Coding Defaults
 
 - Apply `karpathy-guidelines` for implementation, review, and refactor work: state assumptions when needed, keep scope minimal, touch only requested code, and verify with relevant checks.
+- For Pi-first delegation requests, use `pi-agent-delegate`: ask Pi agent to do the primary work, then verify the completed result before reporting.

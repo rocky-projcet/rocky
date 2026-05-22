@@ -134,8 +134,8 @@ function urlOpenCommand(
 
   if (platform === "win32") {
     return {
-      file: "cmd.exe",
-      args: ["/c", "start", "", url],
+      file: "rundll32.exe",
+      args: ["url.dll,FileProtocolHandler", url],
       application: "default browser",
     };
   }

@@ -142,6 +142,33 @@ test("openUrl launches the platform default browser", async () => {
   });
 });
 
+test("openUrl launches Windows URLs without shell-parsing query params", async () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  const oauthUrl =
+    "https://www.instagram.com/oauth/authorize?response_type=code&client_id=123&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=instagram_business_basic";
+
+  const result = await openUrl(oauthUrl, {
+    platform: "win32",
+    execFile: async (file, args) => {
+      calls.push({ file, args });
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      file: "rundll32.exe",
+      args: ["url.dll,FileProtocolHandler", oauthUrl],
+    },
+  ]);
+  assert.deepEqual(result, {
+    status: "opened",
+    application: "default browser",
+    url: oauthUrl,
+    platform: "win32",
+    kind: "url",
+  });
+});
+
 test("openUrl rejects non-http URLs", async () => {
   await assert.rejects(
     () =>

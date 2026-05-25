@@ -1885,8 +1885,8 @@ test("rocky chat prepares Instagram automation readiness for Instagram requests"
       /file=inputs\/rocky-chat-.*\/integrations\/instagram\/automation-readiness\.json/u,
     );
     assert.match(agentContext, /Instagram: connected/u);
-    assert.match(agentContext, /instagram\.automation\.prepare:read:status=available/u);
-    assert.match(agentContext, /instagram\.media\.publish:write:approval:status=available:setup=graph-api/u);
+    assert.match(agentContext, /instagram\.automation\.prepare:read:status=available:setup=graph-api:execution=rocky-server/u);
+    assert.match(agentContext, /instagram\.media\.publish:write:approval:status=available:setup=graph-api:execution=rocky-server/u);
     assert.doesNotMatch(agentContext, /instagram-session-secret|sessionid|browser-profile/u);
 
     const readinessPath = path.join(
@@ -1908,6 +1908,292 @@ test("rocky chat prepares Instagram automation readiness for Instagram requests"
         instruction.includes("Prepared integration lookup or readiness results may be listed")
       )
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat prepares Instagram readiness for selected retry prompts without local script execution", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorBrowserDetector: async () => {
+        throw new Error("Instagram Graph API checks must not launch a browser");
+      },
+    });
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram Agent",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const skillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-sns-instagram"
+  );
+  await mkdir(path.join(skillRoot, "scripts"), { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    "---\nname: md-sns-instagram\n---\n# SNS · Instagram 콘텐츠\n",
+  );
+  await writeFile(
+    path.join(skillRoot, "connector-capabilities.json"),
+    `${JSON.stringify(
+      {
+        provider: "instagram",
+        capabilities: [
+          {
+            id: "instagram.automation.prepare",
+            label: "Instagram Graph API readiness",
+            action: "read",
+            requiresApproval: false,
+            status: "available",
+            scriptPath: "scripts/instagram-graph.mjs",
+          },
+          {
+            id: "instagram.media.prepare",
+            label: "Instagram media prepare",
+            action: "read",
+            requiresApproval: false,
+            status: "available",
+            scriptPath: "scripts/instagram-graph.mjs",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
+    path.join(skillRoot, "scripts", "instagram-graph.mjs"),
+    "#!/usr/bin/env node\n",
+  );
+  completedRunSummaries.push("Instagram readiness checked.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "다시 시도해줄래?",
+        agentId: "instagram-agent",
+        skillId: "md-sns-instagram",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /Instagram automation readiness: ready/u);
+    assert.match(
+      agentContext,
+      /file=inputs\/rocky-chat-.*\/integrations\/instagram\/automation-readiness\.json/u,
+    );
+    assert.match(
+      agentContext,
+      /instagram\.media\.prepare:write:approval:status=available:setup=graph-api:execution=rocky-server/u,
+    );
+    assert.doesNotMatch(agentContext, /script=scripts\/instagram-graph\.mjs/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("execution=rocky-server")
+      )
+    );
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("Server-managed connector execution")
+      )
+    );
+
+    const readinessPath = path.join(
+      workspaceRoot,
+      "inputs",
+      created.id,
+      "integrations",
+      "instagram",
+      "automation-readiness.json"
+    );
+    const readiness = JSON.parse(await readFile(readinessPath, "utf8"));
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.capabilityId, "instagram.automation.prepare");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat reports unsupported Instagram following lists through prepared official results", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorBrowserDetector: async () => {
+        throw new Error("Instagram Graph API checks must not launch a browser");
+      },
+    });
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home"
+  );
+  agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram Agent",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  const skillRoot = path.join(
+    workspaceRoot,
+    ".agents",
+    "skills",
+    "md-sns-instagram"
+  );
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "SKILL.md"),
+    "---\nname: md-sns-instagram\n---\n# SNS · Instagram 콘텐츠\n",
+  );
+  await mkdir(path.join(skillRoot, "scripts"), { recursive: true });
+  await writeFile(
+    path.join(skillRoot, "connector-capabilities.json"),
+    `${JSON.stringify(
+      {
+        provider: "instagram",
+        capabilities: [
+          {
+            id: "instagram.account.read",
+            label: "Instagram account read",
+            action: "read",
+            requiresApproval: false,
+            status: "available",
+            scriptPath: "scripts/instagram-graph.mjs",
+          },
+          {
+            id: "instagram.media.prepare",
+            label: "Instagram media prepare",
+            action: "read",
+            requiresApproval: false,
+            status: "available",
+            scriptPath: "scripts/instagram-graph.mjs",
+          },
+          {
+            id: "instagram.media.publish",
+            label: "Instagram media publish",
+            action: "write",
+            requiresApproval: true,
+            status: "available",
+            scriptPath: "scripts/instagram-graph.mjs",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
+    path.join(skillRoot, "scripts", "instagram-graph.mjs"),
+    "#!/usr/bin/env node\n",
+  );
+  completedRunSummaries.push("Instagram 공식 지원 범위를 확인했습니다.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "현재 계정이 팔로잉 하는 계정은 뭔지 알려줘",
+        agentId: "instagram-agent",
+        skillId: "md-sns-instagram",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    assert.equal(sendTurnCalls.length, 1);
+    const contextPath =
+      sendTurnCalls[0]?.extraSystemInstructions
+        .find((instruction) => instruction.includes(ROCKY_AGENT_REQUEST_CONTEXT_DIR))
+        ?.match(/`([^`]+)`/)?.[1] ??
+      `${ROCKY_AGENT_REQUEST_CONTEXT_DIR}/missing.md`;
+    const agentContext = await readFile(path.join(workspaceRoot, contextPath), "utf8");
+    assert.match(agentContext, /Instagram 팔로잉 목록: unsupported/u);
+    assert.match(agentContext, /Instagram account readiness: ready/u);
+    assert.match(
+      agentContext,
+      /instagram\.media\.prepare:write:approval:status=available:setup=graph-api:execution=rocky-server/u,
+    );
+    assert.doesNotMatch(agentContext, /instagram\.media\.prepare:read/u);
+    assert.doesNotMatch(agentContext, /scripts\/instagram-graph\.mjs/u);
+    assert.match(
+      agentContext,
+      /file=inputs\/rocky-chat-.*\/integrations\/instagram\/following\.json/u,
+    );
+    assert.match(
+      agentContext,
+      /file=inputs\/rocky-chat-.*\/integrations\/instagram\/account-readiness\.json/u,
+    );
+    assert.doesNotMatch(agentContext, /automation-readiness\.json/u);
+    assert.ok(
+      sendTurnCalls[0]?.extraSystemInstructions.some((instruction) =>
+        instruction.includes("marked unsupported")
+      )
+    );
+
+    const followingPath = path.join(
+      workspaceRoot,
+      "inputs",
+      created.id,
+      "integrations",
+      "instagram",
+      "following.json"
+    );
+    const following = JSON.parse(await readFile(followingPath, "utf8"));
+    assert.equal(following.status, "unsupported");
+    assert.equal(following.officialSupport, false);
+    assert.equal(following.capabilityId, "instagram.following.read");
+    assert.match(following.message, /does not officially provide/u);
+
+    const accountPath = path.join(
+      workspaceRoot,
+      "inputs",
+      created.id,
+      "integrations",
+      "instagram",
+      "account-readiness.json"
+    );
+    const account = JSON.parse(await readFile(accountPath, "utf8"));
+    assert.equal(account.ok, true);
+    assert.equal(account.capabilityId, "instagram.account.read");
+    assert.equal(account.accountLabel, "Instagram Graph account 17841400000000001");
   } finally {
     await server.close();
   }

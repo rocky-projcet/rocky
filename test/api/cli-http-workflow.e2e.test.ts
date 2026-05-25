@@ -6,6 +6,8 @@ import { execFile, spawn } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import type { ConnectorState } from "../../src/connectors/connector-types.js";
+
 const execFileAsync = promisify(execFile);
 
 function cliPath(): string {
@@ -142,7 +144,7 @@ async function runCliCommand(
 ): Promise<{ stdout: string; stderr: string }> {
   const result = await execFileAsync(process.execPath, [cliPath(), ...args], {
     cwd: process.cwd(),
-    env,
+    env: cliTestEnv(env),
   });
 
   return {
@@ -174,15 +176,16 @@ function parseSseResponse(payload: string): Array<{ event: string; data: any }> 
 
 async function startCliServer(
   args: string[],
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  options: { cwd?: string } = {}
 ): Promise<{
   child: ReturnType<typeof spawn>;
   info: { host: string; port: number; stateRoot: string | null };
   stderr: () => string;
 }> {
   const child = spawn(process.execPath, [cliPath(), ...args], {
-    cwd: process.cwd(),
-    env,
+    cwd: options.cwd ?? process.cwd(),
+    env: cliTestEnv(env),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -221,6 +224,13 @@ async function startCliServer(
   };
 }
 
+function cliTestEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ROCKY_DISABLE_DOTENV: "1",
+    ...env,
+  };
+}
+
 async function stopProcess(child: ReturnType<typeof spawn>): Promise<void> {
   if (child.exitCode !== null) {
     return;
@@ -231,6 +241,64 @@ async function stopProcess(child: ReturnType<typeof spawn>): Promise<void> {
     child.kill("SIGTERM");
   });
 }
+
+test("serve loads connector environment from cwd .env", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "ia15-dotenv-e2e-"));
+  const stateRoot = path.join(tempRoot, "state");
+  await writeFile(
+    path.join(tempRoot, ".env"),
+    [
+      "ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_KIND=professional_business",
+      "ROCKY_CONNECTOR_INSTAGRAM_GRAPH_ACCESS_TOKEN=instagram-graph-secret",
+      "ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID=17841400000000000",
+      "ROCKY_CONNECTOR_INSTAGRAM_FACEBOOK_PAGE_ID=112233445566",
+      "ROCKY_CONNECTOR_INSTAGRAM_META_BUSINESS_ID=998877665544",
+      "ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID=meta-client-id",
+      "ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET=meta-client-secret",
+      "ROCKY_CONNECTOR_INSTAGRAM_GRAPH_PERMISSIONS=instagram_basic,pages_show_list,instagram_content_publish,instagram_manage_insights",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("ROCKY_CONNECTOR_INSTAGRAM_") ||
+      key.startsWith("ROCKY_INSTAGRAM_") ||
+      key.startsWith("INSTAGRAM_")
+    ) {
+      delete env[key];
+    }
+  }
+  env.ROCKY_DISABLE_DOTENV = "0";
+  delete env.ROCKY_DOTENV_PATH;
+
+  const { child, info, stderr } = await startCliServer(
+    [
+      "serve",
+      "--state-root",
+      stateRoot,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "0",
+    ],
+    env,
+    { cwd: tempRoot },
+  );
+
+  try {
+    const response = await fetch(`http://${info.host}:${info.port}/connectors/instagram/state`);
+    assert.equal(response.status, 200);
+    const state = (await response.json()) as ConnectorState;
+    assert.deepEqual(state.readiness.blockers, []);
+  } finally {
+    await stopProcess(child);
+  }
+
+  assert.equal(stderr(), "");
+});
 
 test("CLI e2e workflow covers agent/session creation, send, stream, transcript, and run replay", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "ia15-cli-e2e-"));

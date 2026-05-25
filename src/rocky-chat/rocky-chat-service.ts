@@ -388,6 +388,24 @@ function instagramAutomationReadinessWorkspacePath(chatId: string): string {
   );
 }
 
+function instagramAccountReadinessWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "instagram",
+    "account-readiness.json"
+  );
+}
+
+function instagramFollowingUnsupportedWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "instagram",
+    "following.json"
+  );
+}
+
 function legacyEcountProductLookupWorkspacePath(chatId: string): string {
   return path.posix.join(
     rockyTaskInputDirectory(chatId),
@@ -652,6 +670,62 @@ function shouldPrepareFacebookProfileLookup(message: string): boolean {
 function shouldPrepareInstagramAutomation(message: string): boolean {
   const compact = compactText(message).toLowerCase();
   return /instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu.test(compact);
+}
+
+function shouldPrepareSelectedConnectorFollowup(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /다시\s*시도|재시도|계속|진행|준비|게시|발행|업로드|포스팅|승인|retry|again|continue|prepare|post|publish|upload|approve/iu.test(
+    compact,
+  );
+}
+
+function shouldPrepareInstagramFollowingUnsupported(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /팔로잉|following\s+(?:list|accounts?|names?)|followings|내가\s*팔로우/u.test(
+    compact,
+  );
+}
+
+function shouldPrepareInstagramAccountRead(message: string): boolean {
+  const compact = compactText(message).toLowerCase();
+  return /profile|account|status|connected|login|check|read|조회|확인|계정|상태|연동|로그인|프로필|팔로잉|following|follows?/iu.test(
+    compact,
+  );
+}
+
+function hasSelectedInstagramSkill(
+  summary: AgentConnectorSummary,
+  selectedSkillId: string | null,
+): boolean {
+  if (!selectedSkillId) {
+    return false;
+  }
+  if (
+    summary.requiredBySkills?.some((skill) => skill.id === selectedSkillId)
+  ) {
+    return true;
+  }
+  return summary.capabilities.some(
+    (capability) => capability.sourceSkillId === selectedSkillId,
+  );
+}
+
+function shouldPrepareInstagramConnectorLookup(input: {
+  message: string;
+  selectedSkillId: string | null;
+  summary: AgentConnectorSummary;
+}): boolean {
+  if (shouldPrepareInstagramAutomation(input.message)) {
+    return true;
+  }
+  if (!hasSelectedInstagramSkill(input.summary, input.selectedSkillId)) {
+    return false;
+  }
+  return (
+    shouldPrepareInstagramAccountRead(input.message) ||
+    shouldPrepareInstagramFollowingUnsupported(input.message) ||
+    shouldPrepareSelectedConnectorFollowup(input.message)
+  );
 }
 
 function hasAvailableConnectorCapability(
@@ -1584,9 +1658,9 @@ export class RockyChatService {
     return template.skill.displayName.trim() || template.title;
   }
 
-  private connectorTemplateSkillScript(
+  private connectorTemplateSkillFiles(
     template: RuntimeSkillTemplateRecord
-  ): string | null {
+  ): { manifest: boolean; scriptName: string | null } {
     const signal = [
       template.skill.id,
       template.skill.displayName,
@@ -1595,15 +1669,15 @@ export class RockyChatService {
       template.skill.skillMarkdown,
     ].join("\n");
     if (/threads|쓰레드|스레드/iu.test(signal)) {
-      return "threads-crud.mjs";
+      return { manifest: true, scriptName: "threads-crud.mjs" };
     }
     if (/facebook|페이스북/iu.test(signal)) {
-      return "facebook-crud.mjs";
+      return { manifest: true, scriptName: "facebook-crud.mjs" };
     }
     if (/instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu.test(signal)) {
-      return "instagram-graph.mjs";
+      return { manifest: true, scriptName: null };
     }
-    return null;
+    return { manifest: false, scriptName: null };
   }
 
   private async savedSkillTemplateBySkillId(): Promise<
@@ -1625,13 +1699,16 @@ export class RockyChatService {
       return true;
     }
 
-    const connectorScript = this.connectorTemplateSkillScript(template);
-    if (connectorScript) {
+    const connectorFiles = this.connectorTemplateSkillFiles(template);
+    if (connectorFiles.manifest) {
       const skillDir = path.dirname(installed.skillPath);
       if (!(await this.fileExists(path.join(skillDir, "connector-capabilities.json")))) {
         return true;
       }
-      if (!(await this.fileExists(path.join(skillDir, "scripts", connectorScript)))) {
+      if (
+        connectorFiles.scriptName &&
+        !(await this.fileExists(path.join(skillDir, "scripts", connectorFiles.scriptName)))
+      ) {
         return true;
       }
     }
@@ -2192,6 +2269,7 @@ export class RockyChatService {
     agent: AgentRecord;
     chatId: string;
     message: string;
+    selectedSkillId: string | null;
     connectorSummaries: AgentConnectorSummary[];
   }): Promise<AgentPreparedIntegrationSummary[]> {
     if (!this.connectorService) {
@@ -2202,80 +2280,148 @@ export class RockyChatService {
 
     if (shouldPrepareThreadsFollowerLookup(input.message)) {
       const threads = input.connectorSummaries.find(
-      (summary) =>
-        summary.provider === "threads" &&
-        summary.status === "connected" &&
-        hasAvailableConnectorCapability(summary, "threads.followers.read")
-    );
+        (summary) =>
+          summary.provider === "threads" &&
+          summary.status === "connected" &&
+          hasAvailableConnectorCapability(summary, "threads.followers.read"),
+      );
       if (threads) {
+        const result = await this.connectorService.executeCapability("threads", {
+          capabilityId: "threads.followers.read",
+          args: { limit: 200 },
+        });
+        const workspacePath = threadsFollowerLookupWorkspacePath(input.chatId);
+        const absolutePath = path.join(
+          input.agent.workspaceRoot,
+          ...workspacePath.split("/"),
+        );
+        const count = result.followers?.items.length ?? null;
+        await mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeFile(
+          absolutePath,
+          `${JSON.stringify(
+            {
+              provider: "threads",
+              dataset: "followers",
+              title: "Threads 팔로워 목록",
+              ok: result.ok,
+              status: result.status,
+              capabilityId: result.capabilityId,
+              accountLabel: result.accountLabel,
+              checkedAt: result.checkedAt,
+              count,
+              followers: result.followers?.items ?? [],
+              url: result.followers?.url ?? null,
+              rawText: result.followers?.rawText ?? null,
+              message: result.message,
+            },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
 
-    const result = await this.connectorService.executeCapability("threads", {
-      capabilityId: "threads.followers.read",
-      args: { limit: 200 },
-    });
-    const workspacePath = threadsFollowerLookupWorkspacePath(input.chatId);
-    const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
-    const count = result.followers?.items.length ?? null;
-    await mkdir(path.dirname(absolutePath), { recursive: true });
-    await writeFile(
-      absolutePath,
-      `${JSON.stringify(
-        {
+        summaries.push({
           provider: "threads",
           dataset: "followers",
           title: "Threads 팔로워 목록",
-          ok: result.ok,
-          status: result.status,
-          capabilityId: result.capabilityId,
-          accountLabel: result.accountLabel,
-          checkedAt: result.checkedAt,
+          status: result.ok
+            ? "ready"
+            : result.status === "unsupported"
+              ? "unsupported"
+              : "failed",
+          api: null,
           count,
-          followers: result.followers?.items ?? [],
-          url: result.followers?.url ?? null,
-          rawText: result.followers?.rawText ?? null,
+          returnedCount: count,
+          checkedAt: result.checkedAt,
+          workspacePath,
           message: result.message,
-        },
-        null,
-        2
-      )}\n`,
-      "utf8"
-    );
-
-    summaries.push(
-      {
-        provider: "threads",
-        dataset: "followers",
-        title: "Threads 팔로워 목록",
-        status: result.ok
-          ? "ready"
-          : result.status === "unsupported"
-            ? "unsupported"
-            : "failed",
-        api: null,
-        count,
-        returnedCount: count,
-        checkedAt: result.checkedAt,
-        workspacePath,
-        message: result.message,
-        diagnostic: result.ok ? null : result.message,
-        source: "fresh",
-      },
-    );
+          diagnostic: result.ok ? null : result.message,
+          source: "fresh",
+        });
       }
     }
 
-    if (shouldPrepareInstagramAutomation(input.message)) {
-      const instagram = input.connectorSummaries.find(
-        (summary) => summary.provider === "instagram"
-      );
-      const hasCapability =
-        !instagram ||
-        hasAvailableConnectorCapability(instagram, "instagram.automation.prepare");
-      if (hasCapability) {
-        const result = await this.connectorService.executeCapability("instagram", {
-          capabilityId: "instagram.automation.prepare",
+    const instagram = input.connectorSummaries.find(
+      (summary) => summary.provider === "instagram"
+    );
+    if (
+      instagram &&
+      shouldPrepareInstagramConnectorLookup({
+        message: input.message,
+        selectedSkillId: input.selectedSkillId,
+        summary: instagram,
+      })
+    ) {
+      if (shouldPrepareInstagramFollowingUnsupported(input.message)) {
+        const workspacePath = instagramFollowingUnsupportedWorkspacePath(
+          input.chatId,
+        );
+        const absolutePath = path.join(
+          input.agent.workspaceRoot,
+          ...workspacePath.split("/"),
+        );
+        const message =
+          "Instagram Graph API does not officially provide a following account list endpoint. Use officially supported Instagram Graph API capabilities only.";
+        const checkedAt = this.now();
+        await mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeFile(
+          absolutePath,
+          `${JSON.stringify(
+            {
+              provider: "instagram",
+              dataset: "following",
+              title: "Instagram 팔로잉 목록",
+              ok: false,
+              status: "unsupported",
+              capabilityId: "instagram.following.read",
+              accountLabel: instagram.accountLabel,
+              checkedAt,
+              message,
+              officialSupport: false,
+              supportedOfficialCapabilities: instagram.capabilities
+                .filter(
+                  (capability) =>
+                    capability.status === undefined ||
+                    capability.status === "available",
+                )
+                .map((capability) => capability.id)
+                .sort(),
+            },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+        summaries.push({
+          provider: "instagram",
+          dataset: "following",
+          title: "Instagram 팔로잉 목록",
+          status: "unsupported",
+          api: null,
+          count: null,
+          returnedCount: null,
+          checkedAt,
+          workspacePath,
+          message,
+          diagnostic: null,
+          source: "fresh",
         });
-        const workspacePath = instagramAutomationReadinessWorkspacePath(input.chatId);
+      }
+
+      const capabilityId =
+        shouldPrepareInstagramAutomation(input.message) ||
+        shouldPrepareSelectedConnectorFollowup(input.message)
+          ? "instagram.automation.prepare"
+          : "instagram.account.read";
+      const workspacePath =
+        capabilityId === "instagram.automation.prepare"
+          ? instagramAutomationReadinessWorkspacePath(input.chatId)
+          : instagramAccountReadinessWorkspacePath(input.chatId);
+      if (hasAvailableConnectorCapability(instagram, capabilityId)) {
+        const result = await this.connectorService.executeCapability("instagram", {
+          capabilityId,
+        });
         const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
         await mkdir(path.dirname(absolutePath), { recursive: true });
         await writeFile(
@@ -2283,8 +2429,14 @@ export class RockyChatService {
           `${JSON.stringify(
             {
               provider: "instagram",
-              dataset: "automation-readiness",
-              title: "Instagram automation readiness",
+              dataset:
+                capabilityId === "instagram.automation.prepare"
+                  ? "automation-readiness"
+                  : "account-readiness",
+              title:
+                capabilityId === "instagram.automation.prepare"
+                  ? "Instagram automation readiness"
+                  : "Instagram account readiness",
               ok: result.ok,
               status: result.status,
               capabilityId: result.capabilityId,
@@ -2300,8 +2452,14 @@ export class RockyChatService {
 
         summaries.push({
           provider: "instagram",
-          dataset: "automation-readiness",
-          title: "Instagram automation readiness",
+          dataset:
+            capabilityId === "instagram.automation.prepare"
+              ? "automation-readiness"
+              : "account-readiness",
+          title:
+            capabilityId === "instagram.automation.prepare"
+              ? "Instagram automation readiness"
+              : "Instagram account readiness",
           status: result.ok
             ? "ready"
             : result.status === "unsupported"
@@ -2478,6 +2636,7 @@ export class RockyChatService {
       agent: input.agent,
       chatId: input.chatId,
       message: input.message,
+      selectedSkillId: input.selectedSkillId,
       connectorSummaries,
     });
     const preparedIntegrations = [
@@ -2497,6 +2656,12 @@ export class RockyChatService {
     );
     const hasConnectorCapabilityContext = connectorSummaries.some(
       (summary) => summary.capabilities.length > 0
+    );
+    const hasServerManagedConnectorContext = connectorSummaries.some(
+      (summary) =>
+        summary.capabilities.some(
+          (capability) => capability.executionOwner === "rocky-server",
+        ),
     );
     const skillCandidates: RockySkillCandidateRecord[] = [];
     const dispatch = this.buildDispatch({
@@ -2540,6 +2705,7 @@ export class RockyChatService {
         ecountLookup,
         hasTistoryDraftPublisher,
         hasConnectorCapabilityContext,
+        hasServerManagedConnectorContext,
         hasConnectedBrowserConnector,
         hasConnectorProfileResults: connectorProfileResults.length > 0,
         hasPreparedIntegrationResults: preparedIntegrations.length > 0,

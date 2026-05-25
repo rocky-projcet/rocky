@@ -12,6 +12,7 @@ import { printUsage, isCliResource } from "./cli/cli-helpers.js";
 import { handleRunCommand } from "./cli/run-commands.js";
 import { handleServeCommand } from "./cli/serve-command.js";
 import { handleSessionCommand } from "./cli/session-commands.js";
+import { loadDotenvFile } from "./cli/dotenv.js";
 
 import type { AgentRegistryServiceOptions } from "./agents/agent-types.js";
 import type { CliDependencies, CliOptionValues } from "./cli/cli-types.js";
@@ -105,6 +106,7 @@ export async function main(
   argv: string[] = process.argv.slice(2),
   dependencies: CliDependencies = {}
 ): Promise<void> {
+  loadDotenvFile();
   const exitCode = await runAgentCli(argv, dependencies);
   process.exitCode = exitCode;
 }

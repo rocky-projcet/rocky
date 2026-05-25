@@ -264,8 +264,17 @@ function formatConnectorSummaries(summaries: AgentConnectorSummary[]): string {
                   capability.requiresApproval ? ":approval" : ""
                 }${capability.status ? `:status=${capability.status}` : ""}${
                   capability.setupMode ? `:setup=${capability.setupMode}` : ""
+                }${
+                  capability.executionOwner
+                    ? `:execution=${capability.executionOwner}`
+                    : ""
                 }${capability.blockerCodes && capability.blockerCodes.length > 0
                   ? `:blockers=${capability.blockerCodes.join("+")}`
+                  : ""}${
+                  capability.setupSteps && capability.setupSteps.length > 0
+                    ? `:setup_steps=${capability.setupSteps
+                        .map(compactConnectorSummaryValue)
+                        .join("+")}`
                   : ""}${
                   capability.sourceSkillId ? `:skill_id=${capability.sourceSkillId}` : ""}${
                   capability.sourceSkillName ? `:skill=${capability.sourceSkillName}` : ""
@@ -286,6 +295,10 @@ function formatConnectorSummaries(summaries: AgentConnectorSummary[]): string {
       }`;
     })
     .join("\n");
+}
+
+function compactConnectorSummaryValue(value: string): string {
+  return value.replace(/[|:+\r\n]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 function executionModeLabel(intent: RockyRoutingIntent): string {
@@ -588,6 +601,7 @@ export function buildAgentTurnSystemInstructions(input: {
   ecountLookup?: AgentEcountLookupInstruction | null;
   hasTistoryDraftPublisher?: boolean;
   hasConnectorCapabilityContext?: boolean;
+  hasServerManagedConnectorContext?: boolean;
   hasConnectedBrowserConnector?: boolean;
   hasConnectorProfileResults?: boolean;
   hasPreparedIntegrationResults?: boolean;
@@ -628,6 +642,7 @@ export function buildAgentTurnSystemInstructions(input: {
       ? [
           "Prepared integration lookup or readiness results may be listed in the turn context. Use those results and files as the source of truth before attempting any connector capability script for the same read.",
           "If a prepared connector lookup or readiness file is listed, read that file once and reuse it for summaries and follow-up analysis instead of calling localhost, 127.0.0.1, or Rocky HTTP connector endpoints.",
+          "If a prepared connector result is marked unsupported, treat that as the current official capability boundary and do not retry it through connector scripts, browser automation, private APIs, or scraping.",
         ]
       : []),
     ...(input.hasTistoryDraftPublisher
@@ -643,11 +658,19 @@ export function buildAgentTurnSystemInstructions(input: {
     ...(input.hasConnectorCapabilityContext
       ? [
           "Rocky-managed account connectors may be connected for this turn. Use the connector summary in the turn context as the source of truth for connected account state and capability availability.",
-          "When a connector capability lists a skill script, read the owning installed skill instructions and use that script for the provider-specific work instead of asking Rocky backend for a new one-off connector endpoint. The script path is relative to `.agents/skills/<skill_id>/`.",
+          "When a connector capability lists execution=rocky-server, the Rocky backend owns execution for that capability; do not run skill scripts, do not call localhost, 127.0.0.1, ROCKY_CONNECTOR_BASE_URL, or Rocky HTTP connector endpoints yourself, and use prepared results from the turn context.",
+          "When a connector capability lists execution=agent-script or has no execution owner and lists a skill script, read the owning installed skill instructions and use that script for the provider-specific work instead of asking Rocky backend for a new one-off connector endpoint. The script path is relative to `.agents/skills/<skill_id>/`.",
           "Use only connector capabilities with no status or status=available for execution. Treat status=blocked, status=planned, or status=unsupported as documentation, not executable functionality.",
           "Connector capabilities marked as read can be used without extra approval. Connector capabilities marked as write or approval require explicit user approval before posting, editing, deleting, submitting, or otherwise exposing changes externally.",
           "Do not ask the user for connector passwords, two-factor authentication codes, browser cookies, session storage, OAuth tokens, or API keys in chat.",
           "For Instagram, execute only Graph API native capabilities marked status=available; if blockers are listed, create drafts or plans only and explain the blocker codes and setup steps.",
+          "For Instagram, do not invent or attempt follower/following account-list reads when no such available Graph API capability is listed; report the official support limitation and use only prepared official results.",
+        ]
+      : []),
+    ...(input.hasServerManagedConnectorContext
+      ? [
+          "Server-managed connector execution overrides generic connector script guidance for the same provider and capability.",
+          "If a server-managed readiness or lookup file is listed, read and use that file. If it is missing, report that Rocky did not prepare a server-side result and ask the user to retry after refresh or approval instead of running a local script.",
         ]
       : []),
     ...(input.hasConnectedBrowserConnector

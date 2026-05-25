@@ -12,7 +12,6 @@ import {
 } from "./agent-workspace.js";
 import {
   buildInstagramNativeSkillManifest,
-  buildInstagramNativeSkillScript,
 } from "../connectors/instagram-native-capability.js";
 
 export interface AgentLocalSkillRecord {
@@ -466,7 +465,6 @@ function printUsage() {
 `;
 
 const INSTAGRAM_CONNECTOR_CAPABILITY_MANIFEST = buildInstagramNativeSkillManifest();
-const INSTAGRAM_CONNECTOR_SCRIPT = buildInstagramNativeSkillScript();
 
 const CONNECTOR_SKILL_AUGMENTS = [
   {
@@ -484,8 +482,9 @@ const CONNECTOR_SKILL_AUGMENTS = [
   {
     pattern: /instagram|insta|reels?|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4/iu,
     manifestContent: INSTAGRAM_CONNECTOR_CAPABILITY_MANIFEST,
-    scriptPath: "scripts/instagram-graph.mjs",
-    scriptContent: INSTAGRAM_CONNECTOR_SCRIPT,
+    scriptPath: null,
+    scriptContent: null,
+    deprecatedScriptPaths: ["scripts/instagram-graph.mjs"],
   },
 ] as const;
 
@@ -512,7 +511,7 @@ function augmentConnectorSkillFiles(
       content: augment.manifestContent,
     });
   }
-  if (!paths.has(augment.scriptPath)) {
+  if (augment.scriptPath && augment.scriptContent && !paths.has(augment.scriptPath)) {
     next.push({
       path: augment.scriptPath,
       content: augment.scriptContent,
@@ -551,6 +550,29 @@ function readSkillInputText(file: AgentLocalSkillFileInput): string {
     }
   }
   return file.content;
+}
+
+async function anyExistingSkillFile(
+  skillDir: string,
+  relativeFilePaths: string[],
+): Promise<boolean> {
+  for (const relativeFilePath of relativeFilePaths) {
+    if (await exists(resolveSkillFilePath(skillDir, relativeFilePath))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function removeSkillFiles(
+  skillDir: string,
+  relativeFilePaths: string[],
+): Promise<void> {
+  for (const relativeFilePath of relativeFilePaths) {
+    await rm(resolveSkillFilePath(skillDir, relativeFilePath), {
+      force: true,
+    });
+  }
 }
 
 function resolveNativeCodexSkillDir(agent: AgentRecord, skillId: string): string {
@@ -653,13 +675,22 @@ export class AgentLocalSkillService {
     }
 
     const skillDir = path.dirname(skill.skillPath);
+    const deprecatedScriptPaths = "deprecatedScriptPaths" in augment
+      ? [...augment.deprecatedScriptPaths]
+      : [];
+    const hasDeprecatedScript = await anyExistingSkillFile(
+      skillDir,
+      deprecatedScriptPaths,
+    );
     if (
       (await exists(path.join(skillDir, "connector-capabilities.json"))) &&
-      (await exists(path.join(skillDir, augment.scriptPath)))
+      (!augment.scriptPath || (await exists(path.join(skillDir, augment.scriptPath)))) &&
+      !hasDeprecatedScript
     ) {
       return false;
     }
 
+    await removeSkillFiles(skillDir, deprecatedScriptPaths);
     await this.upsertAgentLocalSkill(agent, id, skillInput, {
       replace: false,
     });

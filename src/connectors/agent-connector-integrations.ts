@@ -126,8 +126,13 @@ function toAgentConnectorIntegration(
           if (!stateCapability) {
             return capability;
           }
+          const baseCapability =
+            stateCapability.source === "backend" &&
+            stateCapability.executionOwner === "rocky-server"
+              ? canonicalServerManagedSkillCapability(capability, stateCapability)
+              : capability;
           return {
-            ...capability,
+            ...baseCapability,
             status: stateCapability.status ?? capability.status,
             setupMode: stateCapability.setupMode ?? capability.setupMode,
             setupSteps: stateCapability.setupSteps ?? capability.setupSteps,
@@ -153,6 +158,17 @@ function toAgentConnectorIntegration(
     capabilities: normalizedCapabilities,
     readiness: state.readiness,
     requiredBySkills,
+  };
+}
+
+function canonicalServerManagedSkillCapability(
+  capability: ConnectorCapabilityRecord,
+  stateCapability: ConnectorCapabilityRecord,
+): ConnectorCapabilityRecord {
+  return {
+    ...stateCapability,
+    sourceSkillId: capability.sourceSkillId ?? stateCapability.sourceSkillId,
+    sourceSkillName: capability.sourceSkillName ?? stateCapability.sourceSkillName,
   };
 }
 
@@ -281,6 +297,7 @@ function readManifestCapability(
     requiresApproval: readBoolean(record.requiresApproval) ?? action === "write",
     status: readCapabilityStatus(record.status),
     source: "skill",
+    executionOwner: readCapabilityExecutionOwner(record.executionOwner),
     sourceSkillId: skill.id,
     sourceSkillName: skill.displayName,
     scriptPath: readSafeRelativePath(record.scriptPath),
@@ -336,6 +353,14 @@ function readCapabilitySetupMode(
   return value === "oauth" ||
     value === "custom-browser" ||
     value === "graph-api"
+    ? value
+    : undefined;
+}
+
+function readCapabilityExecutionOwner(
+  value: unknown,
+): ConnectorCapabilityRecord["executionOwner"] {
+  return value === "agent-script" || value === "rocky-server"
     ? value
     : undefined;
 }

@@ -28,6 +28,9 @@ export type ConnectorLoginMode =
   | "managed-browser";
 
 export type ConnectorCapabilityAction = "read" | "write";
+export type ConnectorCapabilityExecutionOwner =
+  | "agent-script"
+  | "rocky-server";
 export type ConnectorCapabilityStatus =
   | "available"
   | "blocked"
@@ -49,11 +52,15 @@ export type ConnectorBlockerCode =
   | "facebook_page_required"
   | "meta_business_setup_required"
   | "meta_app_required"
+  | "app_access_required"
   | "permission_missing"
   | "app_review_required"
   | "access_token_missing"
+  | "token_expired"
   | "instagram_business_account_id_missing"
   | "rocky_capability_not_implemented";
+
+export type ConnectorTokenStatus = "active" | "expired" | "unknown";
 
 export interface ConnectorReadinessBlockerRecord {
   code: ConnectorBlockerCode;
@@ -64,6 +71,11 @@ export interface ConnectorReadinessBlockerRecord {
 export interface ConnectorReadinessRecord {
   setupMode: ConnectorSetupMode | null;
   accountKind: ConnectorAccountKind | null;
+  accountLabel?: string | null;
+  instagramUserId?: string | null;
+  grantedScopes?: string[];
+  tokenStatus?: ConnectorTokenStatus | null;
+  checkedAt?: string | null;
   browserSessionPurpose: ConnectorBrowserSessionPurpose | null;
   blockers: ConnectorReadinessBlockerRecord[];
 }
@@ -95,6 +107,29 @@ export interface ConnectorGraphDiscoveryRecord {
   checkedAt: string | null;
 }
 
+export interface ConnectorTokenMetadataRecord {
+  accessTokenPresent: boolean;
+  tokenType: string | null;
+  expiresAt: string | null;
+  dataAccessExpiresAt: string | null;
+  checkedAt: string;
+  status: ConnectorTokenStatus;
+}
+
+export interface ConnectorGraphConnectionRecord {
+  source: "instagram-login-oauth";
+  instagramUserId: string;
+  username: string | null;
+  accountLabel: string;
+  accountKind: Extract<
+    ConnectorAccountKind,
+    "professional_business" | "professional_creator"
+  >;
+  grantedScopes: string[];
+  token: ConnectorTokenMetadataRecord;
+  checkedAt: string;
+}
+
 export interface ConnectorCapabilityRecord {
   id: string;
   provider: ConnectorProvider;
@@ -106,6 +141,7 @@ export interface ConnectorCapabilityRecord {
   requiresApproval: boolean;
   status?: ConnectorCapabilityStatus;
   source?: "backend" | "skill";
+  executionOwner?: ConnectorCapabilityExecutionOwner;
   sourceSkillId?: string | null;
   sourceSkillName?: string | null;
   scriptPath?: string | null;
@@ -231,6 +267,9 @@ export type ConnectorExecuteCapabilityResultType =
   | "profile"
   | "followers"
   | "draft"
+  | "media-container"
+  | "media-publish"
+  | "media-status"
   | "none";
 
 export interface ConnectorExecuteCapabilityResult {
@@ -244,6 +283,7 @@ export interface ConnectorExecuteCapabilityResult {
   profile: ConnectorProfileRecord | null;
   followers: ConnectorFollowerListRecord | null;
   draft: ConnectorPublishDraftResult | null;
+  data?: Record<string, unknown> | null;
   setupMode?: ConnectorSetupMode | null;
   blockerCodes?: ConnectorBlockerCode[];
   setupSteps?: string[];
@@ -265,6 +305,7 @@ export interface ConnectorState {
   capabilities: ConnectorCapabilityRecord[];
   readiness: ConnectorReadinessRecord;
   graphDiscovery?: ConnectorGraphDiscoveryRecord | null;
+  graphConnection?: ConnectorGraphConnectionRecord | null;
   updatedAt: string;
 }
 

@@ -431,16 +431,38 @@ test("agent integrations attach Instagram native Graph API capabilities for inst
         "connector-capabilities.json",
       ),
     );
-    await access(
-      path.join(
-        agent.workspaceRoot,
-        ".agents",
-        "skills",
-        "md-sns-instagram",
-        "scripts",
-        "instagram-graph.mjs",
+    await assert.rejects(
+      access(
+        path.join(
+          agent.workspaceRoot,
+          ".agents",
+          "skills",
+          "md-sns-instagram",
+          "scripts",
+          "instagram-graph.mjs",
+        ),
       ),
     );
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(
+          agent.workspaceRoot,
+          ".agents",
+          "skills",
+          "md-sns-instagram",
+          "connector-capabilities.json",
+        ),
+        "utf8",
+      ),
+    );
+    const generatedMediaPrepare = manifest.capabilities.find(
+      (capability: { id?: string }) =>
+        capability.id === "instagram.media.prepare",
+    );
+    assert.equal(generatedMediaPrepare?.action, "write");
+    assert.equal(generatedMediaPrepare?.requiresApproval, true);
+    assert.equal(generatedMediaPrepare?.executionOwner, "rocky-server");
+    assert.equal(generatedMediaPrepare?.scriptPath, undefined);
 
     const integrationsResponse = await server.inject({
       method: "GET",
@@ -465,7 +487,20 @@ test("agent integrations attach Instagram native Graph API capabilities for inst
           capability.requiresApproval === true &&
           capability.status === "available" &&
           capability.setupMode === "graph-api" &&
-          capability.scriptPath === "scripts/instagram-graph.mjs",
+          capability.executionOwner === "rocky-server" &&
+          capability.scriptPath === undefined,
+      ),
+    );
+    assert.ok(
+      integrations[0]?.capabilities.some(
+        (capability) =>
+          capability.id === "instagram.media.prepare" &&
+          capability.action === "write" &&
+          capability.requiresApproval === true &&
+          capability.status === "available" &&
+          capability.setupMode === "graph-api" &&
+          capability.executionOwner === "rocky-server" &&
+          capability.scriptPath === undefined,
       ),
     );
     assert.ok(

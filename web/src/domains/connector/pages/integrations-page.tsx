@@ -1192,9 +1192,11 @@ function formatInstagramBlockerCode(
   if (code === "facebook_page_required") return "Facebook 페이지 필요";
   if (code === "meta_business_setup_required") return "Meta Business 설정 필요";
   if (code === "meta_app_required") return "Meta 앱 필요";
+  if (code === "app_access_required") return "앱 접근 승인 필요";
   if (code === "permission_missing") return "권한 필요";
   if (code === "app_review_required") return "앱 검수 필요";
   if (code === "access_token_missing") return "액세스 토큰 필요";
+  if (code === "token_expired") return "토큰 갱신 필요";
   if (code === "instagram_business_account_id_missing") {
     return "Instagram Business Account ID 필요";
   }
@@ -1212,8 +1214,14 @@ function formatInstagramBlockerAction(
   if (code === "meta_app_required") {
     return "Meta 앱 Client ID와 Secret을 설정한 뒤 Graph API 연결을 다시 시작하세요.";
   }
+  if (code === "app_access_required") {
+    return "Meta/Instagram에서 Rocky 앱 테스트 사용자 또는 앱 역할 초대를 수락한 뒤 다시 연결하세요.";
+  }
   if (code === "access_token_missing") {
     return "OAuth를 다시 진행해 액세스 토큰을 발급하세요.";
+  }
+  if (code === "token_expired") {
+    return "Rocky가 토큰 갱신을 시도했지만 실패했습니다. Instagram을 다시 연결하세요.";
   }
   if (code === "instagram_business_account_id_missing") {
     return "Instagram Business Account ID를 확인하거나 Graph API 연결을 다시 진행하세요.";

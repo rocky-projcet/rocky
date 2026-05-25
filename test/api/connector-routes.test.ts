@@ -332,7 +332,8 @@ test("Instagram Graph API readiness becomes available from configured environmen
       ROCKY_INSTAGRAM_META_APP_ID: "app-123",
       ROCKY_INSTAGRAM_ACCESS_TOKEN: "secret-token",
       ROCKY_INSTAGRAM_BUSINESS_ACCOUNT_ID: "ig-123",
-      ROCKY_INSTAGRAM_PERMISSIONS: "instagram_basic,pages_show_list",
+      ROCKY_INSTAGRAM_PERMISSIONS:
+        "instagram_basic,pages_show_list,instagram_content_publish,instagram_manage_insights",
     },
   });
 
@@ -388,6 +389,39 @@ test("Instagram Graph API readiness becomes available from configured environmen
   }
 });
 
+test("Instagram connector accepts OAuth client id as Meta app readiness", async () => {
+  const {
+    ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID: _metaAppId,
+    ...graphEnvWithoutMetaAppId
+  } = INSTAGRAM_GRAPH_ENV;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ...graphEnvWithoutMetaAppId,
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+    },
+  });
+
+  try {
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const state = stateResponse.json<ConnectorState>();
+    assert.equal(
+      state.readiness.blockers.some(
+        (blocker) => blocker.code === "meta_app_required",
+      ),
+      false,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () => {
   let openedUrl: string | null = null;
   let browserStarted = false;
@@ -437,7 +471,7 @@ test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () =>
     );
     assert.equal(
       loginUrl.searchParams.get("scope"),
-      "instagram_business_basic",
+      "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
     );
     assert.equal(loginUrl.searchParams.get("enable_fb_login"), "0");
     assert.doesNotMatch(state.loginUrl ?? "", /meta-client-secret/u);
@@ -472,9 +506,18 @@ test("Instagram Graph discovery reports actionable blockers when no account is d
           token_type: "bearer",
         });
       }
+      if (url.includes("/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-long-lived-token",
+          token_type: "bearer",
+          expires_in: 5_184_000,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
       assert.equal(
         (init?.headers as Record<string, string> | undefined)?.Authorization,
-        "Bearer instagram-user-token",
+        "Bearer instagram-long-lived-token",
       );
       assert.match(url, /graph\.instagram\.com\/v22\.0\/me/u);
       assert.match(url, /fields=id%2Cuser_id%2Cusername%2Cname%2Caccount_type/u);
@@ -524,7 +567,93 @@ test("Instagram Graph discovery reports actionable blockers when no account is d
       "blocked",
     );
     assert.doesNotMatch(JSON.stringify(body), /instagram-user-token|meta-client-secret/u);
-    assert.equal(fetchCalls.length, 2);
+    assert.equal(fetchCalls.length, 3);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram Graph discovery records app-access blockers and can retry", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => ({
+      status: "opened",
+      application: "default browser",
+      url,
+      platform: "test",
+      kind: "url",
+    }),
+    connectorFetch: async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.includes("/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-user-token",
+          token_type: "bearer",
+        });
+      }
+      if (url.includes("/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-long-lived-token",
+          token_type: "bearer",
+          expires_in: 5_184_000,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
+      return jsonResponse(
+        {
+          error: {
+            message:
+              "(#10) Application does not have permission for this action. The user must be an app tester.",
+          },
+        },
+        403,
+      );
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    assert.equal(startResponse.statusCode, 202);
+    const started = startResponse.json<ConnectorState>();
+    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 400);
+
+    const blockedResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    const blocked = blockedResponse.json<ConnectorState>();
+    assert.equal(blocked.graphDiscovery?.status, "blocked");
+    assert.ok(
+      blocked.readiness.blockers.some(
+        (blocker) => blocker.code === "app_access_required",
+      ),
+    );
+
+    const retryResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    assert.equal(retryResponse.statusCode, 202);
+    const retry = retryResponse.json<ConnectorState>();
+    assert.equal(retry.status, "connecting");
+    assert.equal(retry.graphDiscovery?.status, "not-started");
   } finally {
     await server.close();
   }
@@ -539,6 +668,10 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
       ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
       ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
       ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+      ROCKY_CONNECTOR_INSTAGRAM_BUSINESS_ACCOUNT_ID: "env-should-not-win",
+      ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_LABEL: "Env account should not win",
+      ROCKY_CONNECTOR_INSTAGRAM_GRAPH_PERMISSIONS:
+        "instagram_basic,instagram_content_publish,instagram_manage_insights",
     },
     nativeUrlOpener: async (url) => ({
       status: "opened",
@@ -555,9 +688,18 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
           token_type: "bearer",
         });
       }
+      if (url.includes("/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-long-lived-token",
+          token_type: "bearer",
+          expires_in: 5_184_000,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
       assert.equal(
         (init?.headers as Record<string, string> | undefined)?.Authorization,
-        "Bearer instagram-user-token",
+        "Bearer instagram-long-lived-token",
       );
       return jsonResponse({
         id: "app-scoped-123",
@@ -594,8 +736,21 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
     assert.equal(body.status, "connected");
     assert.equal(body.loginMode, "oauth");
     assert.equal(body.accountLabel, "rocky_ig");
+    assert.equal(body.readiness.accountLabel, "rocky_ig");
+    assert.equal(body.readiness.instagramUserId, "ig-123");
+    assert.deepEqual(body.readiness.grantedScopes, [
+      "instagram_business_basic",
+      "instagram_business_content_publish",
+      "instagram_business_manage_insights",
+    ]);
+    assert.equal(body.readiness.tokenStatus, "active");
     assert.equal(body.readiness.setupMode, "graph-api");
     assert.deepEqual(body.readiness.blockers, []);
+    assert.equal(body.graphConnection?.source, "instagram-login-oauth");
+    assert.equal(body.graphConnection?.instagramUserId, "ig-123");
+    assert.equal(body.graphConnection?.token.accessTokenPresent, true);
+    assert.equal(body.graphConnection?.token.status, "active");
+    assert.ok(body.graphConnection?.token.expiresAt);
     assert.equal(body.graphDiscovery?.status, "candidate");
     assert.equal(body.graphDiscovery?.accountCount, 1);
     assert.equal(
@@ -609,7 +764,28 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
       )?.status,
       "available",
     );
+    assert.equal(
+      body.capabilities.find(
+        (capability) => capability.id === "instagram.media.publish",
+      )?.status,
+      "available",
+    );
+    assert.equal(
+      body.capabilities.find(
+        (capability) => capability.id === "instagram.insights.read",
+      )?.status,
+      "available",
+    );
     assert.doesNotMatch(JSON.stringify(body), /instagram-user-token|meta-client-secret/u);
+
+    const accountResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.account.read/execute",
+    });
+    assert.equal(accountResponse.statusCode, 200);
+    const accountBody = accountResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(accountBody.accountLabel, "rocky_ig");
+    assert.doesNotMatch(accountBody.accountLabel ?? "", /env-should-not-win|Env/u);
 
     const tokenFile = await readFile(
       path.join(stateRoot, "connectors", "instagram", "oauth-token.json"),
@@ -617,7 +793,113 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
     );
     assert.match(tokenFile, /"algorithm": "aes-256-gcm"/);
     assert.match(tokenFile, /"instagramBusinessAccountId": "ig-123"/);
+    assert.match(tokenFile, /"instagramUserId": "ig-123"/);
     assert.doesNotMatch(tokenFile, /instagram-user-token|meta-client-secret/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram OAuth-bound readiness refreshes stale tokens", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-22T10:30:00.000Z",
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => ({
+      status: "opened",
+      application: "default browser",
+      url,
+      platform: "test",
+      kind: "url",
+    }),
+    connectorFetch: async (input, init) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.includes("/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-user-token",
+          token_type: "bearer",
+        });
+      }
+      if (url.includes("/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-long-lived-token",
+          token_type: "bearer",
+          expires_in: 60,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
+      if (url.includes("/refresh_access_token")) {
+        assert.match(url, /grant_type=ig_refresh_token/u);
+        return jsonResponse({
+          access_token: "instagram-refreshed-token",
+          token_type: "bearer",
+          expires_in: 5_184_000,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.Authorization,
+        "Bearer instagram-long-lived-token",
+      );
+      return jsonResponse({
+        id: "app-scoped-123",
+        user_id: "ig-123",
+        username: "rocky_ig",
+        account_type: "BUSINESS",
+      });
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    const started = startResponse.json<ConnectorState>();
+    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 200);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    const body = stateResponse.json<ConnectorState>();
+    assert.equal(body.readiness.tokenStatus, "active");
+    assert.deepEqual(body.readiness.blockers, []);
+    assert.equal(
+      body.capabilities.find(
+        (capability) => capability.id === "instagram.account.read",
+      )?.status,
+      "available",
+    );
+
+    const accountResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.account.read/execute",
+    });
+    assert.equal(accountResponse.statusCode, 200);
+    const accountBody = accountResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(accountBody.ok, true);
+    assert.equal(accountBody.accountLabel, "rocky_ig");
+
+    const tokenFile = await readFile(
+      path.join(stateRoot, "connectors", "instagram", "oauth-token.json"),
+      "utf8",
+    );
+    assert.doesNotMatch(tokenFile, /instagram-user-token|instagram-long-lived-token|instagram-refreshed-token/u);
   } finally {
     await server.close();
   }
@@ -777,6 +1059,102 @@ test("Instagram native capabilities become available only with Graph API readine
     const publishBody = publishResponse.json<ConnectorExecuteCapabilityResult>();
     assert.equal(publishBody.status, "requires-approval");
     assert.match(publishBody.message, /preview and explicit user approval/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram Graph media prepare and publish execute through server-managed Graph API", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-11T08:25:00.000Z",
+    connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+    connectorFetch: async (input, init) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      calls.push({
+        url,
+        method: init?.method ?? "GET",
+        body: String(init?.body ?? ""),
+      });
+      if (url.endsWith("/17841400000000000/media")) {
+        return new Response(JSON.stringify({ id: "creation-123" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/17841400000000000/media_publish")) {
+        return new Response(JSON.stringify({ id: "media-456" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: { message: "unexpected" } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  try {
+    const blockedResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.media.prepare/execute",
+      payload: {
+        args: {
+          imageUrl: "https://example.com/rocky-test.png",
+          caption: "test",
+        },
+      },
+    });
+    assert.equal(blockedResponse.statusCode, 409);
+    assert.equal(
+      blockedResponse.json<ConnectorExecuteCapabilityResult>().status,
+      "requires-approval",
+    );
+    assert.equal(calls.length, 0);
+
+    const prepareResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.media.prepare/execute",
+      payload: {
+        args: {
+          approved: true,
+          imageUrl: "https://example.com/rocky-test.png",
+          caption: "test",
+        },
+      },
+    });
+    assert.equal(prepareResponse.statusCode, 200);
+    const prepareBody =
+      prepareResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(prepareBody.ok, true);
+    assert.equal(prepareBody.resultType, "media-container");
+    assert.equal(prepareBody.data?.id, "creation-123");
+
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/capabilities/instagram.media.publish/execute",
+      payload: {
+        args: {
+          approved: true,
+          creationId: "creation-123",
+        },
+      },
+    });
+    assert.equal(publishResponse.statusCode, 200);
+    const publishBody =
+      publishResponse.json<ConnectorExecuteCapabilityResult>();
+    assert.equal(publishBody.ok, true);
+    assert.equal(publishBody.resultType, "media-publish");
+    assert.equal(publishBody.data?.id, "media-456");
+    assert.equal(calls.length, 2);
+    assert.match(calls[0]?.body ?? "", /image_url=https%3A%2F%2Fexample\.com%2Frocky-test\.png/u);
+    assert.match(calls[0]?.body ?? "", /caption=test/u);
+    assert.match(calls[1]?.body ?? "", /creation_id=creation-123/u);
+    assert.doesNotMatch(JSON.stringify(prepareBody), /instagram-graph-secret/u);
+    assert.doesNotMatch(JSON.stringify(publishBody), /instagram-graph-secret/u);
   } finally {
     await server.close();
   }

@@ -17,9 +17,11 @@ export type InstagramGraphBlockerCode =
   | "facebook_page_required"
   | "meta_business_setup_required"
   | "meta_app_required"
+  | "app_access_required"
   | "permission_missing"
   | "app_review_required"
   | "access_token_missing"
+  | "token_expired"
   | "instagram_business_account_id_missing"
   | "rocky_capability_not_implemented";
 
@@ -109,8 +111,8 @@ const NATIVE_CAPABILITIES: InstagramNativeCapabilityDefinition[] = [
     label: "Instagram media prepare",
     description:
       "Prepares Instagram feed or Reels media payloads for Graph API publishing without submitting them.",
-    action: "read",
-    requiresApproval: false,
+    action: "write",
+    requiresApproval: true,
     requiredPermissions: ["instagram_basic", "instagram_content_publish"],
     allowedEndpointPaths: ["/{ig-user-id}/media"],
   },
@@ -164,15 +166,6 @@ const CAPABILITY_IDS = new Set(NATIVE_CAPABILITIES.map((capability) => capabilit
 
 export function isInstagramNativeCapabilityId(capabilityId: string): boolean {
   return CAPABILITY_IDS.has(capabilityId);
-}
-
-export function instagramNativeCapabilityOperationMap(): Map<string, string> {
-  return new Map(
-    NATIVE_CAPABILITIES.map((capability) => [
-      capability.operation,
-      capability.id,
-    ]),
-  );
 }
 
 export function instagramNativeCapabilityDefinitions(): InstagramNativeCapabilityDefinition[] {
@@ -260,6 +253,7 @@ export function buildInstagramNativeCapabilityRecords(
       requiresApproval: capability.requiresApproval,
       status: capabilityReadiness?.status ?? "blocked",
       source: "backend",
+      executionOwner: "rocky-server",
       setupMode: "graph-api",
       blockerCodes: capabilityReadiness?.blockerCodes ?? [],
       setupSteps: capabilityReadiness?.setupSteps ?? [],
@@ -309,6 +303,7 @@ export function buildInstagramNativeSkillManifest(): string {
         requiresBrowser: false,
         requiresConnectedAccount: true,
         requiresApproval: capability.requiresApproval,
+        executionOwner: "rocky-server",
         approvalMode: capability.requiresApproval ? "per-run" : null,
         requiredEnv: [
           "INSTAGRAM_ACCOUNT_KIND",
@@ -318,8 +313,8 @@ export function buildInstagramNativeSkillManifest(): string {
         ],
         allowedBaseUrls: GRAPH_BASE_URLS,
         allowedEndpointPaths: capability.allowedEndpointPaths,
-        scriptPath: "scripts/instagram-graph.mjs",
-        usage: `node scripts/instagram-graph.mjs ${capability.operation}`,
+        usage:
+          "Rocky server-managed Instagram Graph API execution; no local skill script.",
       })),
       unsupportedActions: [
         "follow automation",
@@ -332,114 +327,6 @@ export function buildInstagramNativeSkillManifest(): string {
     null,
     2,
   )}\n`;
-}
-
-export function buildInstagramNativeSkillScript(): string {
-  const operationEntries = [...instagramNativeCapabilityOperationMap().entries()]
-    .map(([operation, capabilityId]) => `  ["${operation}", "${capabilityId}"],`)
-    .join("\n");
-
-  return `#!/usr/bin/env node
-const operation = process.argv[2] || "help";
-const supported = new Map([
-${operationEntries}
-]);
-
-if (operation === "help" || operation === "--help" || operation === "-h") {
-  printUsage();
-  process.exit(0);
-}
-
-const capabilityId = supported.get(operation);
-if (!capabilityId) {
-  console.error(JSON.stringify({
-    ok: false,
-    message: "Unsupported Instagram native capability operation.",
-    operation,
-    supported: Array.from(supported.keys()),
-  }, null, 2));
-  process.exit(2);
-}
-
-const args = parseArgs(process.argv.slice(3));
-const baseUrl = (
-  process.env.ROCKY_CONNECTOR_BASE_URL ||
-  process.env.ROCKY_API_BASE_URL ||
-  process.env.ROCKY_AGENT_ENGINE_URL ||
-  "http://127.0.0.1:3000"
-).replace(/\\/+$/u, "");
-
-try {
-  const response = await fetch(
-    new URL("/connectors/instagram/capabilities/" + encodeURIComponent(capabilityId) + "/execute", baseUrl),
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ args }),
-    },
-  );
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
-  if (!response.ok || !payload || payload.ok === false) {
-    console.error(JSON.stringify(payload || {
-      ok: false,
-      statusCode: response.status,
-      message: response.statusText,
-    }, null, 2));
-    process.exit(1);
-  }
-  console.log(JSON.stringify(payload, null, 2));
-} catch (error) {
-  const cause = error instanceof Error && error.cause ? String(error.cause) : null;
-  console.error(JSON.stringify({
-    ok: false,
-    message: error instanceof Error ? error.message : String(error),
-    cause,
-    hint: cause && /EPERM|Operation not permitted/iu.test(cause)
-      ? "This execution session cannot access the local Rocky connector endpoint. Run with local network permission or execute through the Rocky backend host."
-      : "Set ROCKY_CONNECTOR_BASE_URL when Rocky backend is not listening on http://127.0.0.1:3000.",
-  }, null, 2));
-  process.exit(1);
-}
-
-function parseArgs(argv) {
-  const args = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (!token.startsWith("--")) {
-      continue;
-    }
-    const key = token.slice(2);
-    const raw = argv[index + 1];
-    if (!key || raw === undefined || raw.startsWith("--")) {
-      args[key] = true;
-      continue;
-    }
-    args[key] = raw;
-    index += 1;
-  }
-  return args;
-}
-
-function printUsage() {
-  console.log([
-    "Usage:",
-    "  node scripts/instagram-graph.mjs account.read",
-    "  node scripts/instagram-graph.mjs media.prepare --caption draft.md",
-    "  node scripts/instagram-graph.mjs media.publish --creation-id <id>",
-    "  node scripts/instagram-graph.mjs media.status.read --creation-id <id>",
-    "  node scripts/instagram-graph.mjs insights.read --metric impressions",
-    "",
-    "Policy:",
-    "  Uses Rocky backend Instagram Graph API readiness only.",
-    "  Publishing requires preview and explicit user approval.",
-    "  Browser cookies, session storage, and profile paths are never accepted.",
-    "",
-    "Environment:",
-    "  ROCKY_CONNECTOR_BASE_URL=http://127.0.0.1:3000",
-  ].join("\\n"));
-}
-`;
 }
 
 function missingPermissionBlockers(
@@ -471,6 +358,9 @@ function setupStepsForBlockers(
   if (blockerSet.has("meta_app_required")) {
     steps.push("Configure a Meta app for Instagram Graph API access.");
   }
+  if (blockerSet.has("app_access_required")) {
+    steps.push("Accept the Rocky Meta app tester or app-role invitation, then retry OAuth.");
+  }
   if (blockerSet.has("permission_missing")) {
     steps.push(
       "Grant and record the required Graph API permissions, such as instagram_basic, instagram_content_publish, and instagram_manage_insights.",
@@ -481,6 +371,9 @@ function setupStepsForBlockers(
   }
   if (blockerSet.has("access_token_missing")) {
     steps.push("Connect a valid Instagram Graph API access token.");
+  }
+  if (blockerSet.has("token_expired")) {
+    steps.push("Reconnect Instagram and approve Rocky access again.");
   }
   if (blockerSet.has("instagram_business_account_id_missing")) {
     steps.push("Record the Instagram Business Account ID used by the Graph API.");

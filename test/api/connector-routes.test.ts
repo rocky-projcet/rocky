@@ -480,6 +480,44 @@ test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () =>
   }
 });
 
+test("Instagram Graph discovery can defer OAuth URL opening to the current browser", async () => {
+  let opened = false;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async () => {
+      opened = true;
+      throw new Error("Graph discovery should not open the OS default browser");
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+      payload: {
+        openExternal: false,
+      },
+    });
+    assert.equal(response.statusCode, 202);
+    const state = response.json<ConnectorState>();
+    assert.equal(state.status, "connecting");
+    assert.equal(state.loginMode, "oauth");
+    assert.equal(opened, false);
+    assert.ok(state.loginUrl);
+    assert.equal(new URL(state.loginUrl ?? "").hostname, "www.instagram.com");
+    assert.equal(state.lastError, null);
+    assert.match(state.message, /URL is ready/u);
+  } finally {
+    await server.close();
+  }
+});
+
 test("Instagram Graph discovery reports actionable blockers when no account is discovered", async () => {
   const fetchCalls: string[] = [];
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
@@ -659,6 +697,147 @@ test("Instagram Graph discovery records app-access blockers and can retry", asyn
   }
 });
 
+test("Instagram tester request records pending and accepted state without secrets", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-22T10:35:00.000Z",
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => ({
+      status: "opened",
+      application: "default browser",
+      url,
+      platform: "test",
+      kind: "url",
+    }),
+    connectorFetch: async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.includes("/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-user-token",
+          token_type: "bearer",
+        });
+      }
+      if (url.includes("/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-long-lived-token",
+          token_type: "bearer",
+          expires_in: 5_184_000,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
+      return jsonResponse(
+        {
+          error: {
+            message:
+              "(#10) Application does not have permission for this action. The user must be an app tester.",
+          },
+        },
+        403,
+      );
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    const started = startResponse.json<ConnectorState>();
+    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 400);
+
+    const requestResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/tester-request",
+      payload: {
+        accountIdentifier:
+          "@rocky_ig access_token=secret-token /tmp/connectors/instagram/browser-profile",
+      },
+    });
+    assert.equal(requestResponse.statusCode, 200);
+    const requested = requestResponse.json<ConnectorState>();
+    assert.equal(requested.testerRequest?.status, "pending");
+    assert.equal(requested.readiness.entitlement?.gate, "instagram-meta-app-tester");
+    assert.equal(requested.readiness.entitlement?.status, "pending");
+    assert.equal(requested.readiness.entitlement?.testerRequestStatus, "pending");
+    assert.equal(requested.testerRequest?.requestedAt, "2026-05-22T10:35:00.000Z");
+    assert.match(requested.testerRequest?.accountIdentifier ?? "", /@rocky_ig/u);
+    assert.doesNotMatch(JSON.stringify(requested), /secret-token|browser-profile/u);
+    assert.ok(
+      requested.readiness.blockers.some(
+        (blocker) =>
+          blocker.code === "app_access_required" &&
+          /operator/u.test(blocker.nextAction),
+      ),
+    );
+
+    const acceptedResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/tester-request",
+      payload: {
+        accountIdentifier: "@rocky_ig",
+        status: "accepted",
+      },
+    });
+    assert.equal(acceptedResponse.statusCode, 200);
+    const accepted = acceptedResponse.json<ConnectorState>();
+    assert.equal(accepted.testerRequest?.status, "accepted");
+    assert.equal(accepted.readiness.entitlement?.status, "pending");
+    assert.equal(accepted.readiness.entitlement?.testerRequestStatus, "accepted");
+    assert.ok(
+      accepted.readiness.blockers.some(
+        (blocker) =>
+          blocker.code === "app_access_required" &&
+          /Retry Instagram OAuth/u.test(blocker.nextAction),
+      ),
+    );
+  } finally {
+    await server.close();
+  }
+
+  const requestFile = await readFile(
+    path.join(stateRoot, "connectors", "instagram", "tester-request.json"),
+    "utf8",
+  );
+  assert.match(requestFile, /"status": "accepted"/u);
+  assert.doesNotMatch(requestFile, /secret-token|browser-profile/u);
+
+  const restoredServer = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-22T10:36:00.000Z",
+    connectorBaseEnv: {},
+  });
+  try {
+    const stateResponse = await restoredServer.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const restored = stateResponse.json<ConnectorState>();
+    assert.equal(restored.testerRequest?.status, "accepted");
+    assert.equal(restored.readiness.entitlement?.status, "pending");
+    assert.ok(
+      restored.readiness.blockers.some(
+        (blocker) => blocker.code === "app_access_required",
+      ),
+    );
+  } finally {
+    await restoredServer.close();
+  }
+});
+
 test("Instagram Graph discovery stores a single discovered account as a safe candidate", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
@@ -712,6 +891,20 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
   });
 
   try {
+    const acceptedRequestResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/tester-request",
+      payload: {
+        accountIdentifier: "@rocky_ig",
+        status: "accepted",
+      },
+    });
+    assert.equal(acceptedRequestResponse.statusCode, 200);
+    assert.equal(
+      acceptedRequestResponse.json<ConnectorState>().testerRequest?.status,
+      "accepted",
+    );
+
     const startResponse = await server.inject({
       method: "POST",
       url: "/connectors/instagram/graph-discovery",
@@ -751,6 +944,9 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
     assert.equal(body.graphConnection?.token.accessTokenPresent, true);
     assert.equal(body.graphConnection?.token.status, "active");
     assert.ok(body.graphConnection?.token.expiresAt);
+    assert.equal(body.testerRequest?.status, "completed");
+    assert.equal(body.testerRequest?.completedAt, "2026-05-22T10:30:00.000Z");
+    assert.equal(body.readiness.entitlement?.status, "allowed");
     assert.equal(body.graphDiscovery?.status, "candidate");
     assert.equal(body.graphDiscovery?.accountCount, 1);
     assert.equal(
@@ -795,6 +991,13 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
     assert.match(tokenFile, /"instagramBusinessAccountId": "ig-123"/);
     assert.match(tokenFile, /"instagramUserId": "ig-123"/);
     assert.doesNotMatch(tokenFile, /instagram-user-token|meta-client-secret/u);
+
+    const requestFile = await readFile(
+      path.join(stateRoot, "connectors", "instagram", "tester-request.json"),
+      "utf8",
+    );
+    assert.match(requestFile, /"status": "completed"/u);
+    assert.doesNotMatch(requestFile, /instagram-user-token|meta-client-secret/u);
   } finally {
     await server.close();
   }

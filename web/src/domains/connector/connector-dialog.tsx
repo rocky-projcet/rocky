@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -9,11 +9,14 @@ import {
   Lock,
   ShieldCheck,
   Unplug,
+  UserPlus,
   X,
 } from "lucide-react";
 
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +38,7 @@ import {
   useConnectorDisconnectMutation,
   useConnectorGraphDiscoveryMutation,
   useConnectorLoginMutation,
+  useConnectorTesterRequestMutation,
   useConnectorStateQuery,
 } from "./hooks";
 
@@ -56,6 +60,7 @@ export function ConnectorDialog({
   const stateQuery = useConnectorStateQuery(provider);
   const loginMutation = useConnectorLoginMutation(provider);
   const graphDiscoveryMutation = useConnectorGraphDiscoveryMutation(provider);
+  const testerRequestMutation = useConnectorTesterRequestMutation(provider);
   const cancelMutation = useConnectorCancelMutation(provider);
   const disconnectMutation = useConnectorDisconnectMutation(provider);
 
@@ -77,6 +82,7 @@ export function ConnectorDialog({
     if (!open) {
       loginMutation.reset();
       graphDiscoveryMutation.reset();
+      testerRequestMutation.reset();
       cancelMutation.reset();
       disconnectMutation.reset();
     }
@@ -88,7 +94,37 @@ export function ConnectorDialog({
   };
 
   const startGraphDiscovery = () => {
-    graphDiscoveryMutation.mutate();
+    const loginWindow = window.open("about:blank", "_blank");
+    if (loginWindow) {
+      try {
+        loginWindow.opener = null;
+      } catch {
+        // Some browser contexts do not allow mutating opener on the returned handle.
+      }
+    }
+
+    graphDiscoveryMutation.mutate(undefined, {
+      onSuccess: (nextState) => {
+        if (!nextState.loginUrl) {
+          loginWindow?.close();
+          return;
+        }
+
+        if (loginWindow && !loginWindow.closed) {
+          loginWindow.location.assign(nextState.loginUrl);
+          return;
+        }
+
+        window.open(nextState.loginUrl, "_blank", "noopener,noreferrer");
+      },
+      onError: () => {
+        loginWindow?.close();
+      },
+    });
+  };
+
+  const submitTesterRequest = (accountIdentifier: string, status?: "accepted") => {
+    testerRequestMutation.mutate({ accountIdentifier, status });
   };
 
   const openLoginUrl = () => {
@@ -106,6 +142,8 @@ export function ConnectorDialog({
             providerLabel={providerLabel}
             onGraphDiscovery={startGraphDiscovery}
             graphStarting={graphDiscoveryMutation.isPending}
+            onTesterRequest={submitTesterRequest}
+            testerRequesting={testerRequestMutation.isPending}
             onBrowserLogin={startLogin}
             browserStarting={loginMutation.isPending}
             onOpenLoginUrl={openLoginUrl}
@@ -175,6 +213,8 @@ function InstagramGraphApiView({
   providerLabel,
   onGraphDiscovery,
   graphStarting,
+  onTesterRequest,
+  testerRequesting,
   onBrowserLogin,
   browserStarting,
   onOpenLoginUrl,
@@ -188,6 +228,8 @@ function InstagramGraphApiView({
   providerLabel: string;
   onGraphDiscovery: () => void;
   graphStarting: boolean;
+  onTesterRequest: (accountIdentifier: string, status?: "accepted") => void;
+  testerRequesting: boolean;
   onBrowserLogin: () => void;
   browserStarting: boolean;
   onOpenLoginUrl: () => void;
@@ -209,7 +251,15 @@ function InstagramGraphApiView({
   const graphReady = Boolean(state) && blockers.length === 0;
   const graphConnected =
     state?.status === "connected" && state.loginMode === "oauth" && graphReady;
-  const busy = graphStarting || browserStarting || cancelling || disconnecting;
+  const testerBlocked = blockers.some(
+    (blocker) => blocker.code === "app_access_required",
+  );
+  const busy =
+    graphStarting ||
+    browserStarting ||
+    testerRequesting ||
+    cancelling ||
+    disconnecting;
 
   return (
     <>
@@ -281,6 +331,15 @@ function InstagramGraphApiView({
           )}
         </div>
       </div>
+
+      {testerBlocked || state?.testerRequest ? (
+        <TesterRequestPanel
+          request={state?.testerRequest ?? null}
+          disabled={busy || connecting}
+          submitting={testerRequesting}
+          onSubmit={onTesterRequest}
+        />
+      ) : null}
 
       <div className="rounded-xl border border-border/70 p-3">
         <p className="mb-2 text-sm font-medium text-foreground">기능 상태</p>
@@ -383,6 +442,96 @@ function InstagramGraphApiView({
   );
 }
 
+function TesterRequestPanel({
+  request,
+  disabled,
+  submitting,
+  onSubmit,
+}: {
+  request: ConnectorState["testerRequest"] | null;
+  disabled: boolean;
+  submitting: boolean;
+  onSubmit: (accountIdentifier: string, status?: "accepted") => void;
+}) {
+  const [accountIdentifier, setAccountIdentifier] = useState(
+    request?.accountIdentifier ?? "",
+  );
+
+  useEffect(() => {
+    if (request?.accountIdentifier) {
+      setAccountIdentifier(request.accountIdentifier);
+    }
+  }, [request?.accountIdentifier]);
+
+  const trimmed = accountIdentifier.trim();
+  const canSubmit = trimmed.length > 0 && !disabled;
+  const canRecordAccepted =
+    Boolean(request) && request?.status !== "accepted" && request?.status !== "completed";
+
+  return (
+    <form
+      className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (canSubmit) {
+          onSubmit(trimmed);
+        }
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <UserPlus className="size-4" />
+            테스터 등록 요청
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {request
+              ? formatTesterRequestStatus(request.status)
+              : "Instagram username 또는 초대에 필요한 계정 식별자를 기록합니다."}
+          </p>
+        </div>
+        {request ? (
+          <Badge variant="outline" className="shrink-0">
+            {formatTesterRequestBadge(request.status)}
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        <Label htmlFor="instagram-tester-account" className="text-xs">
+          Instagram 계정 식별자
+        </Label>
+        <Input
+          id="instagram-tester-account"
+          value={accountIdentifier}
+          onChange={(event) => setAccountIdentifier(event.currentTarget.value)}
+          placeholder="@rocky_account"
+          disabled={disabled}
+          autoComplete="off"
+        />
+      </div>
+
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        {canRecordAccepted ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onSubmit(trimmed || request?.accountIdentifier || "", "accepted")}
+            disabled={disabled || submitting || !(trimmed || request?.accountIdentifier)}
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+            초대 수락 기록
+          </Button>
+        ) : null}
+        <Button type="submit" disabled={!canSubmit || submitting}>
+          {submitting ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
+          요청 기록
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function CapabilityRow({ capability }: { capability: ConnectorCapabilityRecord }) {
   const status = capability.status ?? "available";
   const copy = formatInstagramCapability(capability);
@@ -441,6 +590,30 @@ function formatCapabilityStatus(status: ConnectorCapabilityRecord["status"]) {
   if (status === "planned") return "준비 중";
   if (status === "unsupported") return "미지원";
   return "사용 가능";
+}
+
+function formatTesterRequestStatus(
+  status: NonNullable<ConnectorState["testerRequest"]>["status"],
+) {
+  if (status === "invited") {
+    return "Rocky 운영자가 테스터 초대를 보낸 상태입니다. Meta/Instagram에서 수락한 뒤 아래에 기록하세요.";
+  }
+  if (status === "accepted") {
+    return "테스터 초대 수락이 기록되었습니다. Graph API 연결을 다시 진행할 수 있습니다.";
+  }
+  if (status === "completed") {
+    return "테스터 게이트가 완료되었고 Graph API 토큰이 발급되었습니다.";
+  }
+  return "테스터 등록 요청이 기록되었습니다. 운영자 초대 후 수락하면 다시 연결할 수 있습니다.";
+}
+
+function formatTesterRequestBadge(
+  status: NonNullable<ConnectorState["testerRequest"]>["status"],
+) {
+  if (status === "invited") return "초대 보냄";
+  if (status === "accepted") return "수락 기록";
+  if (status === "completed") return "완료";
+  return "대기 중";
 }
 
 function formatBlockerCode(

@@ -4,6 +4,7 @@ import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
   ConnectorProvider,
   ConnectorState,
+  ConnectorTesterRequestInput,
 } from "@/shared/lib/agent-engine-client";
 
 const STATE_KEY = (provider: ConnectorProvider) =>
@@ -46,7 +47,21 @@ export function useConnectorLoginMutation(provider: ConnectorProvider) {
 export function useConnectorGraphDiscoveryMutation(provider: ConnectorProvider) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => agentEngineClient.startConnectorGraphDiscovery(provider),
+    mutationFn: () =>
+      agentEngineClient.startConnectorGraphDiscovery(provider, {
+        openExternal: false,
+      }),
+    onSuccess: (state) => {
+      queryClient.setQueryData(STATE_KEY(provider), state);
+    },
+  });
+}
+
+export function useConnectorTesterRequestMutation(provider: ConnectorProvider) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ConnectorTesterRequestInput) =>
+      agentEngineClient.requestConnectorTesterRegistration(provider, input),
     onSuccess: (state) => {
       queryClient.setQueryData(STATE_KEY(provider), state);
     },

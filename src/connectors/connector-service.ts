@@ -38,6 +38,7 @@ import {
   type ConnectorDiagnosticsRecord,
   type ConnectorExecuteCapabilityInput,
   type ConnectorExecuteCapabilityResult,
+  type ConnectorEntitlementRecord,
   type ConnectorReadFollowerListResult,
   type ConnectorLoginMode,
   type ConnectorOAuthCallbackInput,
@@ -58,6 +59,9 @@ import {
   type ConnectorGraphDiscoveryCandidateRecord,
   type ConnectorGraphDiscoveryRecord,
   type ConnectorGraphConnectionRecord,
+  type ConnectorTesterRequestInput,
+  type ConnectorTesterRequestRecord,
+  type ConnectorTesterRequestStatus,
   type ConnectorTokenMetadataRecord,
 } from "./connector-types.js";
 
@@ -104,6 +108,7 @@ const DIAGNOSTICS_TTL_MS = 60_000;
 const LEGACY_STORAGE_FILE = "storage.json";
 const OAUTH_TOKEN_FILE = "oauth-token.json";
 const BROWSER_SESSION_FILE = "browser-session.json";
+const TESTER_REQUEST_FILE = "tester-request.json";
 const BROWSER_PROFILE_DIR = "browser-profile";
 const CONNECTOR_SECRET_KEY_FILE = "connector-secrets.key";
 const INSTAGRAM_TOKEN_REFRESH_LEEWAY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -249,10 +254,12 @@ export class ConnectorService implements ConnectorServiceLike {
       purpose: "oauth-login",
     });
 
-    let openError: string | null = this.openExternalUrl
-      ? null
-      : "기본 브라우저 자동 열기를 사용할 수 없는 환경입니다.";
-    if (this.openExternalUrl) {
+    const shouldOpenExternal = input.openExternal !== false;
+    let openError: string | null =
+      shouldOpenExternal && !this.openExternalUrl
+        ? "기본 브라우저 자동 열기를 사용할 수 없는 환경입니다."
+        : null;
+    if (shouldOpenExternal && this.openExternalUrl) {
       try {
         await this.openExternalUrl(loginUrl);
       } catch (error) {
@@ -262,9 +269,10 @@ export class ConnectorService implements ConnectorServiceLike {
 
     this.transition(provider, {
       status: "connecting",
-      message: openError
-        ? `${adapter.label} OAuth 승인 페이지를 아래 버튼으로 열어 주세요.`
-        : `${adapter.label} OAuth 승인 페이지를 일반 브라우저에서 열었습니다.`,
+      message:
+        !shouldOpenExternal || openError
+          ? `${adapter.label} OAuth 승인 페이지를 아래 버튼으로 열어 주세요.`
+          : `${adapter.label} OAuth 승인 페이지를 일반 브라우저에서 열었습니다.`,
       accountLabel: null,
       connectedAt: null,
       loginUrl,
@@ -375,10 +383,12 @@ export class ConnectorService implements ConnectorServiceLike {
       purpose: "instagram-graph-discovery",
     });
 
-    let openError: string | null = this.openExternalUrl
-      ? null
-      : "Default browser opening is unavailable in this environment.";
-    if (this.openExternalUrl) {
+    const shouldOpenExternal = input.openExternal !== false;
+    let openError: string | null =
+      shouldOpenExternal && !this.openExternalUrl
+        ? "Default browser opening is unavailable in this environment."
+        : null;
+    if (shouldOpenExternal && this.openExternalUrl) {
       try {
         await this.openExternalUrl(loginUrl);
       } catch (error) {
@@ -390,7 +400,9 @@ export class ConnectorService implements ConnectorServiceLike {
       status: "connecting",
       message: openError
         ? "Open the Instagram Graph discovery URL to authorize your Meta app."
-        : "Instagram Graph discovery opened in the default browser.",
+        : shouldOpenExternal
+          ? "Instagram Graph discovery opened in the default browser."
+          : "Instagram Graph discovery URL is ready. Open it from this browser to authorize your Meta app.",
       accountLabel: null,
       connectedAt: null,
       loginUrl,
@@ -400,6 +412,66 @@ export class ConnectorService implements ConnectorServiceLike {
       graphDiscovery: emptyGraphDiscovery(),
     });
 
+    return this.decorateState(provider);
+  }
+
+  async requestTesterRegistration(
+    provider: ConnectorProvider,
+    input: ConnectorTesterRequestInput,
+  ): Promise<ConnectorState> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    if (provider !== "instagram") {
+      throw Object.assign(
+        new Error("Tester registration requests are only supported for Instagram."),
+        { statusCode: 400 },
+      );
+    }
+
+    const existing = await this.readStoredTesterRequest(provider);
+    const checkedAt = this.now();
+    const status = normalizeTesterRequestStatus(input.status);
+    const accountIdentifier = normalizeTesterAccountIdentifier(
+      input.accountIdentifier,
+    );
+    const record = buildTesterRequestRecord({
+      accountIdentifier,
+      status,
+      requestedAt: existing?.requestedAt ?? checkedAt,
+      updatedAt: checkedAt,
+      completedAt:
+        status === "completed"
+          ? existing?.completedAt ?? checkedAt
+          : existing?.completedAt ?? null,
+    });
+
+    await this.persistTesterRequest(provider, record);
+    const requestCompleted =
+      status === "completed" && Boolean(this.states[provider].graphConnection);
+    const blockers =
+      requestCompleted
+        ? []
+        : instagramAppAccessBlockers(record);
+    this.transition(provider, {
+      status:
+        this.states[provider].status === "connected" &&
+        this.states[provider].graphConnection
+          ? "connected"
+          : "failed",
+      message: testerRequestStateMessage(record),
+      accountLabel: this.states[provider].accountLabel,
+      connectedAt: this.states[provider].connectedAt,
+      loginUrl: null,
+      loginMode: this.states[provider].loginMode,
+      lastError: null,
+      failureKind: requestCompleted ? null : "authentication",
+      graphConnection: this.states[provider].graphConnection ?? null,
+      graphDiscovery:
+        requestCompleted
+          ? this.states[provider].graphDiscovery ?? null
+          : buildBlockedGraphDiscovery(checkedAt, blockers),
+      testerRequest: record,
+    });
     return this.decorateState(provider);
   }
 
@@ -782,6 +854,10 @@ export class ConnectorService implements ConnectorServiceLike {
         scopedCandidates.length,
         candidate,
       );
+      const testerRequest = await this.completeTesterRequestIfPresent(
+        provider,
+        checkedAt,
+      );
       await this.persistOAuthToken(provider, {
         provider,
         accountLabel: candidate.instagramAccountLabel,
@@ -804,6 +880,7 @@ export class ConnectorService implements ConnectorServiceLike {
         lastError: null,
         graphConnection,
         graphDiscovery,
+        testerRequest,
       });
       return {
         ok: true,
@@ -1899,6 +1976,7 @@ export class ConnectorService implements ConnectorServiceLike {
       lastError: null,
       graphConnection: provider === "instagram" ? null : undefined,
       graphDiscovery: provider === "instagram" ? null : undefined,
+      testerRequest: provider === "instagram" ? null : undefined,
     });
     return this.decorateState(provider);
   }
@@ -1983,6 +2061,56 @@ export class ConnectorService implements ConnectorServiceLike {
     } catch {
       return null;
     }
+  }
+
+  private async readStoredTesterRequest(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorTesterRequestRecord | null> {
+    if (provider !== "instagram") {
+      return null;
+    }
+    const requestPath = path.join(this.providerDir(provider), TESTER_REQUEST_FILE);
+    try {
+      const raw = await readFile(requestPath, "utf8");
+      return parseStoredTesterRequest(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  private async persistTesterRequest(
+    provider: ConnectorProvider,
+    record: ConnectorTesterRequestRecord,
+  ): Promise<void> {
+    const dir = this.providerDir(provider);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeFile(
+      path.join(dir, TESTER_REQUEST_FILE),
+      `${JSON.stringify(record, null, 2)}\n`,
+      {
+        encoding: "utf8",
+        mode: 0o600,
+      },
+    );
+  }
+
+  private async completeTesterRequestIfPresent(
+    provider: ConnectorProvider,
+    completedAt: string,
+  ): Promise<ConnectorTesterRequestRecord | null> {
+    const existing = await this.readStoredTesterRequest(provider);
+    if (!existing) {
+      return null;
+    }
+    const completed = buildTesterRequestRecord({
+      accountIdentifier: existing.accountIdentifier,
+      status: "completed",
+      requestedAt: existing.requestedAt,
+      updatedAt: completedAt,
+      completedAt,
+    });
+    await this.persistTesterRequest(provider, completed);
+    return completed;
   }
 
   private async refreshInstagramOAuthTokenIfNeeded(
@@ -2131,6 +2259,32 @@ export class ConnectorService implements ConnectorServiceLike {
       if (!isConnectorProviderAvailable(provider)) {
         continue;
       }
+      const testerRequest = await this.readStoredTesterRequest(provider);
+      if (testerRequest) {
+        this.transition(provider, {
+          status:
+            testerRequest.status === "completed"
+              ? "idle"
+              : "failed",
+          message: testerRequestStateMessage(testerRequest),
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: null,
+          failureKind:
+            testerRequest.status === "completed" ? null : "authentication",
+          graphConnection: provider === "instagram" ? null : undefined,
+          graphDiscovery:
+            provider === "instagram" && testerRequest.status !== "completed"
+              ? buildBlockedGraphDiscovery(
+                  testerRequest.updatedAt,
+                  instagramAppAccessBlockers(testerRequest),
+                )
+              : undefined,
+          testerRequest,
+        });
+      }
       const oauthPath = path.join(this.providerDir(provider), OAUTH_TOKEN_FILE);
       try {
         const raw = await readFile(oauthPath, "utf8");
@@ -2146,6 +2300,7 @@ export class ConnectorService implements ConnectorServiceLike {
             lastError: null,
             graphConnection: stored.graphConnection ?? null,
             graphDiscovery: stored.graphDiscovery ?? null,
+            testerRequest,
           });
           continue;
         }
@@ -2169,6 +2324,7 @@ export class ConnectorService implements ConnectorServiceLike {
             loginUrl: null,
             loginMode: "custom-browser",
             lastError: null,
+            testerRequest,
           });
           continue;
         }
@@ -2742,6 +2898,7 @@ function emptyConnectorReadiness(): ConnectorReadinessRecord {
     setupMode: null,
     accountKind: null,
     browserSessionPurpose: null,
+    entitlement: null,
     blockers: [],
   };
 }
@@ -2821,6 +2978,11 @@ function buildConnectorReadiness(
       tokenStatus: null,
       checkedAt: state.graphDiscovery.checkedAt,
       browserSessionPurpose: "readiness_check",
+      entitlement: instagramEntitlementForBlockers(
+        [],
+        state.graphDiscovery.checkedAt,
+        state.testerRequest ?? null,
+      ),
       blockers: [],
     };
   }
@@ -2834,7 +2996,30 @@ function buildConnectorReadiness(
       tokenStatus: null,
       checkedAt: state.graphDiscovery.checkedAt,
       browserSessionPurpose: "readiness_check",
+      entitlement: instagramEntitlementForBlockers(
+        state.graphDiscovery.blockers,
+        state.graphDiscovery.checkedAt,
+        state.testerRequest ?? null,
+      ),
       blockers: state.graphDiscovery.blockers,
+    };
+  }
+  if (state.testerRequest && state.testerRequest.status !== "completed") {
+    return {
+      setupMode: "graph-api",
+      accountKind: "unknown",
+      accountLabel: null,
+      instagramUserId: null,
+      grantedScopes: [],
+      tokenStatus: null,
+      checkedAt: state.testerRequest.updatedAt,
+      browserSessionPurpose: "readiness_check",
+      entitlement: instagramEntitlementForBlockers(
+        instagramAppAccessBlockers(state.testerRequest),
+        state.testerRequest.updatedAt,
+        state.testerRequest,
+      ),
+      blockers: instagramAppAccessBlockers(state.testerRequest),
     };
   }
   return buildInstagramGraphReadiness(baseEnv, checkedAt);
@@ -2866,6 +3051,11 @@ function buildInstagramOAuthReadiness(
     tokenStatus: resolveTokenStatus(connection.token, checkedAt),
     checkedAt: connection.checkedAt,
     browserSessionPurpose: "readiness_check",
+    entitlement: instagramEntitlementForBlockers(
+      blockers,
+      checkedAt,
+      null,
+    ),
     blockers,
   };
 }
@@ -3012,6 +3202,7 @@ function buildInstagramGraphReadiness(
     tokenStatus,
     checkedAt,
     browserSessionPurpose: "readiness_check",
+    entitlement: instagramEntitlementForBlockers(blockers, checkedAt, null),
     blockers,
   };
 }
@@ -3048,6 +3239,42 @@ function tokenExpiredBlocker(): ConnectorReadinessBlockerRecord {
   );
 }
 
+function instagramEntitlementForBlockers(
+  blockers: ConnectorReadinessBlockerRecord[],
+  checkedAt: string | null | undefined,
+  testerRequest: ConnectorTesterRequestRecord | null,
+): ConnectorEntitlementRecord {
+  const blockedByTesterGate = blockers.some(
+    (blocker) => blocker.code === "app_access_required",
+  );
+  if (testerRequest && testerRequest.status !== "completed") {
+    return {
+      gate: "instagram-meta-app-tester",
+      status: "pending",
+      reason: testerRequestStateMessage(testerRequest),
+      checkedAt: checkedAt ?? testerRequest.updatedAt,
+      testerRequestStatus: testerRequest.status,
+    };
+  }
+  if (blockedByTesterGate) {
+    return {
+      gate: "instagram-meta-app-tester",
+      status: "blocked",
+      reason:
+        "The Instagram account must be allowed to use the Rocky Meta app before OAuth can complete.",
+      checkedAt: checkedAt ?? null,
+      testerRequestStatus: null,
+    };
+  }
+  return {
+    gate: "instagram-meta-app-tester",
+    status: "allowed",
+    reason: "No tester gate is currently blocking this Instagram Graph API connection.",
+    checkedAt: checkedAt ?? null,
+    testerRequestStatus: testerRequest?.status ?? null,
+  };
+}
+
 function instagramDiscoverySetupBlockers(): ConnectorReadinessBlockerRecord[] {
   return [
     readinessBlocker(
@@ -3058,12 +3285,22 @@ function instagramDiscoverySetupBlockers(): ConnectorReadinessBlockerRecord[] {
   ];
 }
 
-function instagramAppAccessBlockers(): ConnectorReadinessBlockerRecord[] {
+function instagramAppAccessBlockers(
+  testerRequest?: ConnectorTesterRequestRecord | null,
+): ConnectorReadinessBlockerRecord[] {
+  const nextAction =
+    testerRequest?.status === "accepted"
+      ? "Retry Instagram OAuth now that the tester invitation has been accepted."
+      : testerRequest?.status === "invited"
+        ? "Accept the Rocky Meta app tester invitation in Meta/Instagram, then mark it accepted and retry OAuth."
+        : testerRequest?.status === "pending"
+          ? "Wait for the Rocky operator to send the tester invitation, accept it in Meta/Instagram, then retry OAuth."
+          : "Request Rocky Meta app tester registration, accept the invitation in Meta/Instagram, then retry OAuth.";
   return [
     readinessBlocker(
       "app_access_required",
       "The Rocky Meta app is not available to this Instagram account yet.",
-      "Accept the Rocky Meta app tester or app-role invitation in Meta/Instagram, then retry Instagram OAuth.",
+      nextAction,
     ),
   ];
 }
@@ -3090,6 +3327,57 @@ function isInstagramAppAccessError(message: string): boolean {
   return /tester|test user|app role|app access|invitation|development mode|beta|not authorized|does not have permission|permission for this action|not allowed/iu.test(
     message,
   );
+}
+
+function normalizeTesterRequestStatus(
+  status: ConnectorTesterRequestStatus | undefined,
+): ConnectorTesterRequestStatus {
+  if (status === "invited" || status === "accepted" || status === "completed") {
+    return status;
+  }
+  return "pending";
+}
+
+function normalizeTesterAccountIdentifier(value: string): string {
+  const sanitized = sanitizeConnectorPublicText(value)?.trim() ?? "";
+  return sanitized.replace(/\s+/gu, " ").slice(0, 160);
+}
+
+function buildTesterRequestRecord(input: {
+  accountIdentifier: string;
+  status: ConnectorTesterRequestStatus;
+  requestedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}): ConnectorTesterRequestRecord {
+  return {
+    provider: "instagram",
+    accountIdentifier: input.accountIdentifier,
+    status: input.status,
+    requestedAt: input.requestedAt,
+    updatedAt: input.updatedAt,
+    completedAt: input.completedAt,
+    message: testerRequestStatusMessage(input.status),
+  };
+}
+
+function testerRequestStateMessage(
+  request: ConnectorTesterRequestRecord,
+): string {
+  return testerRequestStatusMessage(request.status);
+}
+
+function testerRequestStatusMessage(status: ConnectorTesterRequestStatus): string {
+  if (status === "invited") {
+    return "Instagram tester invitation has been recorded. Accept it in Meta/Instagram, then retry Instagram OAuth.";
+  }
+  if (status === "accepted") {
+    return "Instagram tester invitation acceptance has been recorded. Retry Instagram OAuth to issue the access token.";
+  }
+  if (status === "completed") {
+    return "Instagram tester gate is complete and the Graph API access token has been issued.";
+  }
+  return "Instagram tester registration request has been recorded for Rocky operator action.";
 }
 
 function readInstagramAccountKind(value: string | null): ConnectorAccountKind {
@@ -4225,6 +4513,49 @@ function parseStoredOAuthConnection(
       ? parsed.graphDiscovery
       : null,
   };
+}
+
+function parseStoredTesterRequest(
+  raw: string,
+): ConnectorTesterRequestRecord | null {
+  const parsed = parseStoredJson(raw);
+  if (!parsed || parsed.provider !== "instagram") {
+    return null;
+  }
+  const status = readTesterRequestStatus(parsed.status);
+  if (
+    !status ||
+    typeof parsed.accountIdentifier !== "string" ||
+    typeof parsed.requestedAt !== "string" ||
+    typeof parsed.updatedAt !== "string" ||
+    (parsed.completedAt !== null && typeof parsed.completedAt !== "string")
+  ) {
+    return null;
+  }
+  return buildTesterRequestRecord({
+    accountIdentifier: normalizeTesterAccountIdentifier(
+      parsed.accountIdentifier,
+    ),
+    status,
+    requestedAt: parsed.requestedAt,
+    updatedAt: parsed.updatedAt,
+    completedAt:
+      typeof parsed.completedAt === "string" ? parsed.completedAt : null,
+  });
+}
+
+function readTesterRequestStatus(
+  value: unknown,
+): ConnectorTesterRequestStatus | null {
+  if (
+    value === "pending" ||
+    value === "invited" ||
+    value === "accepted" ||
+    value === "completed"
+  ) {
+    return value;
+  }
+  return null;
 }
 
 function isConnectorGraphDiscoveryRecord(

@@ -563,6 +563,17 @@ export interface ConnectorReadinessBlockerRecord {
   nextAction: string;
 }
 
+export type ConnectorEntitlementGate = "instagram-meta-app-tester";
+export type ConnectorEntitlementStatus = "allowed" | "blocked" | "pending";
+
+export interface ConnectorEntitlementRecord {
+  gate: ConnectorEntitlementGate;
+  status: ConnectorEntitlementStatus;
+  reason: string;
+  checkedAt: string | null;
+  testerRequestStatus?: ConnectorTesterRequestStatus | null;
+}
+
 export interface ConnectorReadinessRecord {
   setupMode: ConnectorSetupMode | null;
   accountKind: ConnectorAccountKind | null;
@@ -572,6 +583,7 @@ export interface ConnectorReadinessRecord {
   tokenStatus?: ConnectorTokenStatus | null;
   checkedAt?: string | null;
   browserSessionPurpose: ConnectorBrowserSessionPurpose | null;
+  entitlement?: ConnectorEntitlementRecord | null;
   blockers: ConnectorReadinessBlockerRecord[];
 }
 
@@ -579,6 +591,31 @@ export type ConnectorGraphDiscoveryStatus =
   | "not-started"
   | "blocked"
   | "candidate";
+
+export type ConnectorTesterRequestStatus =
+  | "pending"
+  | "invited"
+  | "accepted"
+  | "completed";
+
+export interface ConnectorTesterRequestInput {
+  accountIdentifier: string;
+  status?: ConnectorTesterRequestStatus;
+}
+
+export interface ConnectorStartLoginInput {
+  openExternal?: boolean;
+}
+
+export interface ConnectorTesterRequestRecord {
+  provider: "instagram";
+  accountIdentifier: string;
+  status: ConnectorTesterRequestStatus;
+  requestedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  message: string;
+}
 
 export interface ConnectorGraphDiscoveryCandidateRecord {
   facebookPageId: string | null;
@@ -782,6 +819,7 @@ export interface ConnectorState {
   readiness: ConnectorReadinessRecord;
   graphDiscovery?: ConnectorGraphDiscoveryRecord | null;
   graphConnection?: ConnectorGraphConnectionRecord | null;
+  testerRequest?: ConnectorTesterRequestRecord | null;
   updatedAt: string;
 }
 
@@ -1862,11 +1900,28 @@ export class AgentEngineClient {
     );
   }
 
-  startConnectorGraphDiscovery(provider: ConnectorProvider): Promise<ConnectorState> {
+  startConnectorGraphDiscovery(
+    provider: ConnectorProvider,
+    input: ConnectorStartLoginInput = {},
+  ): Promise<ConnectorState> {
     return this.request<ConnectorState>(
       `/connectors/${encodeURIComponent(provider)}/graph-discovery`,
       {
         method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  requestConnectorTesterRegistration(
+    provider: ConnectorProvider,
+    input: ConnectorTesterRequestInput,
+  ): Promise<ConnectorState> {
+    return this.request<ConnectorState>(
+      `/connectors/${encodeURIComponent(provider)}/tester-request`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       },
     );
   }

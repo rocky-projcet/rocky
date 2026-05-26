@@ -43,6 +43,8 @@ import {
   type ConnectorLoginMode,
   type ConnectorOAuthCallbackInput,
   type ConnectorOAuthCallbackResult,
+  type ConnectorOAuthSettingsInput,
+  type ConnectorOAuthSettingsRecord,
   type ConnectorProfileRecord,
   type ConnectorPublishDraftInput,
   type ConnectorPublishDraftResult,
@@ -107,6 +109,7 @@ interface PendingOAuthSession {
 const DIAGNOSTICS_TTL_MS = 60_000;
 const LEGACY_STORAGE_FILE = "storage.json";
 const OAUTH_TOKEN_FILE = "oauth-token.json";
+const OAUTH_SETTINGS_FILE = "oauth-settings.json";
 const BROWSER_SESSION_FILE = "browser-session.json";
 const TESTER_REQUEST_FILE = "tester-request.json";
 const BROWSER_PROFILE_DIR = "browser-profile";
@@ -135,6 +138,18 @@ interface StoredBrowserSessionSecret {
   browserDebuggingPort: number | null;
 }
 
+interface StoredOAuthSettingsSecret {
+  clientId: string;
+  clientSecret: string;
+}
+
+interface StoredConnectorOAuthSettings {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string | null;
+  updatedAt: string;
+}
+
 export class ConnectorService implements ConnectorServiceLike {
   private readonly stateRoot: string;
   private readonly now: () => string;
@@ -148,6 +163,7 @@ export class ConnectorService implements ConnectorServiceLike {
   private readonly fetchImpl: typeof fetch;
   private readonly hydratePromise: Promise<void>;
   private states: Record<ConnectorProvider, ConnectorState>;
+  private oauthSettings = new Map<ConnectorProvider, StoredConnectorOAuthSettings>();
   private pendingOAuth = new Map<string, PendingOAuthSession>();
   private activeBrowserSessions = new Map<ConnectorProvider, ConnectorRunnerSession>();
   private cachedDiagnostics: ConnectorDiagnosticsRecord | null = null;
@@ -180,6 +196,7 @@ export class ConnectorService implements ConnectorServiceLike {
       provider,
       this.states[provider],
       this.baseEnv,
+      this.oauthSettings.get(provider) ?? null,
       this.now(),
     );
   }
@@ -189,6 +206,41 @@ export class ConnectorService implements ConnectorServiceLike {
     this.assertSupported(provider);
     await this.refreshInstagramOAuthTokenIfNeeded(provider);
     return this.decorateState(provider);
+  }
+
+  async getOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    this.assertOAuthSettingsSupported(provider);
+    return this.buildPublicOAuthSettings(provider);
+  }
+
+  async saveOAuthSettings(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthSettingsInput,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    this.assertOAuthSettingsSupported(provider);
+    const settings = normalizeOAuthSettingsInput(input, this.now());
+    await this.persistOAuthSettings(provider, settings);
+    this.oauthSettings.set(provider, settings);
+    return this.buildPublicOAuthSettings(provider);
+  }
+
+  async deleteOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    await this.ensureHydrated();
+    this.assertSupported(provider);
+    this.assertOAuthSettingsSupported(provider);
+    this.oauthSettings.delete(provider);
+    await rm(path.join(this.providerDir(provider), OAUTH_SETTINGS_FILE), {
+      force: true,
+    });
+    return this.buildPublicOAuthSettings(provider);
   }
 
   async startLogin(
@@ -1068,6 +1120,7 @@ export class ConnectorService implements ConnectorServiceLike {
       provider,
       this.states[provider],
       this.baseEnv,
+      this.oauthSettings.get(provider) ?? null,
       this.now(),
     );
     const capability = getConnectorExecutionCapabilities(provider, readiness).find(
@@ -1705,6 +1758,7 @@ export class ConnectorService implements ConnectorServiceLike {
       provider,
       state,
       this.baseEnv,
+      this.oauthSettings.get(provider) ?? null,
       this.now(),
     );
     const availableCapabilities = getConnectorExecutionCapabilities(
@@ -2009,7 +2063,13 @@ export class ConnectorService implements ConnectorServiceLike {
 
   private async removeStorage(provider: ConnectorProvider): Promise<void> {
     const dir = this.providerDir(provider);
-    await rm(dir, { recursive: true, force: true });
+    await Promise.all([
+      rm(path.join(dir, OAUTH_TOKEN_FILE), { force: true }),
+      rm(path.join(dir, BROWSER_SESSION_FILE), { force: true }),
+      rm(path.join(dir, LEGACY_STORAGE_FILE), { force: true }),
+      rm(path.join(dir, TESTER_REQUEST_FILE), { force: true }),
+      rm(path.join(dir, BROWSER_PROFILE_DIR), { recursive: true, force: true }),
+    ]);
   }
 
   private async cancelActiveBrowserSession(
@@ -2063,6 +2123,18 @@ export class ConnectorService implements ConnectorServiceLike {
     }
   }
 
+  private async readStoredOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<StoredConnectorOAuthSettings | null> {
+    const settingsPath = path.join(this.providerDir(provider), OAUTH_SETTINGS_FILE);
+    try {
+      const raw = await readFile(settingsPath, "utf8");
+      return await this.parseStoredOAuthSettings(raw, provider);
+    } catch {
+      return null;
+    }
+  }
+
   private async readStoredTesterRequest(
     provider: ConnectorProvider,
   ): Promise<ConnectorTesterRequestRecord | null> {
@@ -2076,6 +2148,32 @@ export class ConnectorService implements ConnectorServiceLike {
     } catch {
       return null;
     }
+  }
+
+  private async persistOAuthSettings(
+    provider: ConnectorProvider,
+    settings: StoredConnectorOAuthSettings,
+  ): Promise<void> {
+    const dir = this.providerDir(provider);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const stored = {
+      version: 1,
+      provider,
+      redirectUri: settings.redirectUri,
+      updatedAt: settings.updatedAt,
+      secret: await this.encryptConnectorSecret<StoredOAuthSettingsSecret>({
+        clientId: settings.clientId,
+        clientSecret: settings.clientSecret,
+      }),
+    };
+    await writeFile(
+      path.join(dir, OAUTH_SETTINGS_FILE),
+      `${JSON.stringify(stored, null, 2)}\n`,
+      {
+        encoding: "utf8",
+        mode: 0o600,
+      },
+    );
   }
 
   private async persistTesterRequest(
@@ -2259,6 +2357,10 @@ export class ConnectorService implements ConnectorServiceLike {
       if (!isConnectorProviderAvailable(provider)) {
         continue;
       }
+      const oauthSettings = await this.readStoredOAuthSettings(provider);
+      if (oauthSettings) {
+        this.oauthSettings.set(provider, oauthSettings);
+      }
       const testerRequest = await this.readStoredTesterRequest(provider);
       if (testerRequest) {
         this.transition(provider, {
@@ -2358,6 +2460,31 @@ export class ConnectorService implements ConnectorServiceLike {
     return path.join(this.stateRoot, "connectors", provider);
   }
 
+  private buildPublicOAuthSettings(
+    provider: ConnectorProvider,
+  ): ConnectorOAuthSettingsRecord {
+    const settings = this.oauthSettings.get(provider);
+    if (!settings) {
+      return emptyOAuthSettingsRecord();
+    }
+    return {
+      configured: true,
+      clientIdMasked: maskConnectorSecret(settings.clientId),
+      clientSecretMasked: maskConnectorSecret(settings.clientSecret),
+      redirectUri: settings.redirectUri,
+      updatedAt: settings.updatedAt,
+    };
+  }
+
+  private assertOAuthSettingsSupported(provider: ConnectorProvider): void {
+    if (provider !== "instagram") {
+      throw Object.assign(
+        new Error("OAuth app settings are currently supported only for Instagram."),
+        { statusCode: 400 },
+      );
+    }
+  }
+
   private browserProfileDir(provider: ConnectorProvider): string {
     return path.join(this.providerDir(provider), BROWSER_PROFILE_DIR);
   }
@@ -2375,12 +2502,17 @@ export class ConnectorService implements ConnectorServiceLike {
     | { ok: true; value: OAuthCredentials }
     | { ok: false; message: string } {
     const prefix = `ROCKY_CONNECTOR_${config.envPrefix}`;
+    const storedSettings = this.oauthSettings.get(provider);
     const clientId =
+      storedSettings?.clientId ??
       readEnv(this.baseEnv, `${prefix}_CLIENT_ID`) ??
       readEnv(this.baseEnv, `${prefix}_CLIENT_KEY`);
-    const clientSecret = readEnv(this.baseEnv, `${prefix}_CLIENT_SECRET`);
+    const clientSecret =
+      storedSettings?.clientSecret ??
+      readEnv(this.baseEnv, `${prefix}_CLIENT_SECRET`);
     const redirectUri =
       readEnvAny(this.baseEnv, options.redirectEnvKeys ?? []) ??
+      storedSettings?.redirectUri ??
       (options.useGenericRedirectEnv === false
         ? null
         : readEnv(this.baseEnv, `${prefix}_REDIRECT_URI`)) ??
@@ -2697,6 +2829,33 @@ export class ConnectorService implements ConnectorServiceLike {
     return parseLegacyStoredOAuthToken(parsed, provider);
   }
 
+  private async parseStoredOAuthSettings(
+    raw: string,
+    provider: ConnectorProvider,
+  ): Promise<StoredConnectorOAuthSettings | null> {
+    const parsed = parseStoredJson(raw);
+    if (!isStoredOAuthSettingsRecord(parsed, provider)) {
+      return null;
+    }
+    const secret = await this.decryptConnectorSecret<StoredOAuthSettingsSecret>(
+      parsed.secret,
+    );
+    if (
+      typeof secret.clientId !== "string" ||
+      typeof secret.clientSecret !== "string" ||
+      !secret.clientId.trim() ||
+      !secret.clientSecret.trim()
+    ) {
+      return null;
+    }
+    return {
+      clientId: secret.clientId.trim(),
+      clientSecret: secret.clientSecret.trim(),
+      redirectUri: parsed.redirectUri,
+      updatedAt: parsed.updatedAt,
+    };
+  }
+
   private async parseStoredBrowserSession(
     raw: string,
     provider: ConnectorProvider,
@@ -2855,13 +3014,89 @@ function buildPlannedStatePatch(
   };
 }
 
+function emptyOAuthSettingsRecord(): ConnectorOAuthSettingsRecord {
+  return {
+    configured: false,
+    clientIdMasked: null,
+    clientSecretMasked: null,
+    redirectUri: null,
+    updatedAt: null,
+  };
+}
+
+function normalizeOAuthSettingsInput(
+  input: ConnectorOAuthSettingsInput,
+  updatedAt: string,
+): StoredConnectorOAuthSettings {
+  const clientId = requireConnectorSetting(input.clientId, "clientId");
+  const clientSecret = requireConnectorSetting(input.clientSecret, "clientSecret");
+  const redirectUri = normalizeConnectorRedirectUri(input.redirectUri);
+  return {
+    clientId,
+    clientSecret,
+    redirectUri,
+    updatedAt,
+  };
+}
+
+function requireConnectorSetting(value: string, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw Object.assign(new Error(`Connector OAuth settings require ${field}.`), {
+      statusCode: 400,
+    });
+  }
+  return value.trim();
+}
+
+function normalizeConnectorRedirectUri(
+  value: string | null | undefined,
+): string | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw Object.assign(new Error("Connector OAuth redirectUri must be a string."), {
+      statusCode: 400,
+    });
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("unsupported protocol");
+    }
+    return url.toString();
+  } catch {
+    throw Object.assign(
+      new Error("Connector OAuth redirectUri must be a valid HTTP(S) URL."),
+      { statusCode: 400 },
+    );
+  }
+}
+
+function maskConnectorSecret(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= 4) return "*".repeat(value.length);
+  return `${value.slice(0, 2)}${"*".repeat(Math.min(value.length - 4, 8))}${value.slice(-2)}`;
+}
+
 function decorateConnectorState(
   provider: ConnectorProvider,
   state: ConnectorState,
   baseEnv: NodeJS.ProcessEnv,
+  oauthSettings: StoredConnectorOAuthSettings | null,
   checkedAt: string,
 ): ConnectorState {
-  const readiness = buildConnectorReadiness(provider, state, baseEnv, checkedAt);
+  const readiness = buildConnectorReadiness(
+    provider,
+    state,
+    baseEnv,
+    oauthSettings,
+    checkedAt,
+  );
   const graphConnected =
     provider === "instagram" &&
     readiness.setupMode === "graph-api" &&
@@ -2960,6 +3195,7 @@ function buildConnectorReadiness(
   provider: ConnectorProvider,
   state: ConnectorState,
   baseEnv: NodeJS.ProcessEnv,
+  oauthSettings: StoredConnectorOAuthSettings | null,
   checkedAt: string,
 ): ConnectorReadinessRecord {
   if (provider !== "instagram") {
@@ -3022,7 +3258,7 @@ function buildConnectorReadiness(
       blockers: instagramAppAccessBlockers(state.testerRequest),
     };
   }
-  return buildInstagramGraphReadiness(baseEnv, checkedAt);
+  return buildInstagramGraphReadiness(baseEnv, oauthSettings, checkedAt);
 }
 
 function buildInstagramOAuthReadiness(
@@ -3062,6 +3298,7 @@ function buildInstagramOAuthReadiness(
 
 function buildInstagramGraphReadiness(
   baseEnv: NodeJS.ProcessEnv,
+  oauthSettings: StoredConnectorOAuthSettings | null,
   checkedAt: string,
 ): ConnectorReadinessRecord {
   const accountKind = readInstagramAccountKind(
@@ -3128,6 +3365,7 @@ function buildInstagramGraphReadiness(
     ]),
   );
   const hasMetaApp = Boolean(
+    oauthSettings?.clientId ||
     readEnvAny(baseEnv, [
       "ROCKY_INSTAGRAM_META_APP_ID",
       "ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID",
@@ -3491,7 +3729,7 @@ function getConnectorExecutionCapabilities(
   const resolvedReadiness =
     readiness ??
     (provider === "instagram"
-      ? buildInstagramGraphReadiness({}, new Date(0).toISOString())
+      ? buildInstagramGraphReadiness({}, null, new Date(0).toISOString())
       : emptyConnectorReadiness());
   const byId = new Map<string, ConnectorCapabilityRecord>();
   const baseCapabilities =
@@ -3968,11 +4206,11 @@ function sanitizeConnectorPublicText(value: string | null): string | null {
   if (value === null) return null;
   return value
     .replace(
-      /([?&](?:access_token|refresh_token|id_token|auth_token|session_id|SESSION_ID|api_cert_key|API_CERT_KEY)=)[^&\s]+/giu,
+      /([?&](?:access_token|refresh_token|id_token|auth_token|client_secret|session_id|SESSION_ID|api_cert_key|API_CERT_KEY)=)[^&\s]+/giu,
       "$1[redacted]",
     )
     .replace(
-      /("(?:(?:access|refresh|id|auth)_token|sessionid|session_id|storageStateJson|cookies?|localStorage|sessionStorage)"\s*:\s*)("[^"]*"|[^,}\]]+)/giu,
+      /("(?:(?:access|refresh|id|auth)_token|client_secret|clientSecret|sessionid|session_id|storageStateJson|cookies?|localStorage|sessionStorage)"\s*:\s*)("[^"]*"|[^,}\]]+)/giu,
       '$1"[redacted]"',
     )
     .replace(/"value"\s*:\s*"[^"]*"/giu, '"value":"[redacted]"')
@@ -4453,6 +4691,25 @@ function isEncryptedConnectorPayload(value: unknown): value is EncryptedConnecto
     typeof record.iv === "string" &&
     typeof record.authTag === "string" &&
     typeof record.ciphertext === "string"
+  );
+}
+
+function isStoredOAuthSettingsRecord(
+  parsed: Record<string, unknown> | null,
+  provider: ConnectorProvider,
+): parsed is {
+  provider: ConnectorProvider;
+  redirectUri: string | null;
+  updatedAt: string;
+  secret: EncryptedConnectorPayload;
+} {
+  return Boolean(
+    parsed &&
+      parsed.version === 1 &&
+      parsed.provider === provider &&
+      (parsed.redirectUri === null || typeof parsed.redirectUri === "string") &&
+      typeof parsed.updatedAt === "string" &&
+      isEncryptedConnectorPayload(parsed.secret),
   );
 }
 

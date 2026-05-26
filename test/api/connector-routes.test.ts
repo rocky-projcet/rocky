@@ -518,6 +518,86 @@ test("Instagram Graph discovery can defer OAuth URL opening to the current brows
   }
 });
 
+test("Instagram OAuth app settings are encrypted and used for Graph discovery", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-26T12:00:00.000Z",
+    connectorBaseEnv: {},
+    nativeUrlOpener: async () => {
+      throw new Error("Graph discovery should use the current browser in this test");
+    },
+  });
+
+  try {
+    const saveResponse = await server.inject({
+      method: "PUT",
+      url: "/connectors/instagram/oauth-settings",
+      payload: {
+        clientId: "meta-client-id",
+        clientSecret: "meta-client-secret",
+      },
+    });
+    assert.equal(saveResponse.statusCode, 200);
+    assert.equal(saveResponse.json().configured, true);
+    assert.equal(JSON.stringify(saveResponse.json()).includes("meta-client-secret"), false);
+    assert.equal(JSON.stringify(saveResponse.json()).includes("meta-client-id"), false);
+
+    const settingsResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/oauth-settings",
+    });
+    assert.equal(settingsResponse.statusCode, 200);
+    assert.equal(settingsResponse.json().configured, true);
+    assert.equal(JSON.stringify(settingsResponse.json()).includes("meta-client-secret"), false);
+    assert.equal(JSON.stringify(settingsResponse.json()).includes("meta-client-id"), false);
+
+    const storedFile = await readFile(
+      path.join(stateRoot, "connectors", "instagram", "oauth-settings.json"),
+      "utf8",
+    );
+    assert.equal(storedFile.includes("meta-client-secret"), false);
+    assert.equal(storedFile.includes("meta-client-id"), false);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    assert.equal(stateResponse.statusCode, 200);
+    const state = stateResponse.json<ConnectorState>();
+    assert.equal(
+      state.readiness.blockers.some(
+        (blocker) => blocker.code === "meta_app_required",
+      ),
+      false,
+    );
+
+    const discoveryResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+      payload: {
+        openExternal: false,
+      },
+    });
+    assert.equal(discoveryResponse.statusCode, 202);
+    const discoveryState = discoveryResponse.json<ConnectorState>();
+    assert.ok(discoveryState.loginUrl);
+    const loginUrl = new URL(discoveryState.loginUrl ?? "");
+    assert.equal(loginUrl.hostname, "www.instagram.com");
+    assert.equal(loginUrl.searchParams.get("client_id"), "meta-client-id");
+    assert.doesNotMatch(discoveryState.loginUrl ?? "", /meta-client-secret/u);
+
+    const deleteResponse = await server.inject({
+      method: "DELETE",
+      url: "/connectors/instagram/oauth-settings",
+    });
+    assert.equal(deleteResponse.statusCode, 200);
+    assert.equal(deleteResponse.json().configured, false);
+  } finally {
+    await server.close();
+  }
+});
+
 test("Instagram Graph discovery reports actionable blockers when no account is discovered", async () => {
   const fetchCalls: string[] = [];
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));

@@ -209,6 +209,20 @@ export interface ConnectorStartLoginInput {
   openExternal?: boolean;
 }
 
+export interface ConnectorOAuthSettingsInput {
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string | null;
+}
+
+export interface ConnectorOAuthSettingsRecord {
+  configured: boolean;
+  clientIdMasked: string | null;
+  clientSecretMasked: string | null;
+  redirectUri: string | null;
+  updatedAt: string | null;
+}
+
 export interface ConnectorOAuthCallbackInput {
   code?: string | null;
   state?: string | null;
@@ -371,6 +385,12 @@ export interface ConnectorDiagnosticsRecord {
 
 export interface ConnectorServiceLike {
   getState(provider: ConnectorProvider): Promise<ConnectorState>;
+  getOAuthSettings(provider: ConnectorProvider): Promise<ConnectorOAuthSettingsRecord>;
+  saveOAuthSettings(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthSettingsInput,
+  ): Promise<ConnectorOAuthSettingsRecord>;
+  deleteOAuthSettings(provider: ConnectorProvider): Promise<ConnectorOAuthSettingsRecord>;
   startLogin(
     provider: ConnectorProvider,
     input?: ConnectorStartLoginInput,

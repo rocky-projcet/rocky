@@ -823,6 +823,20 @@ export interface ConnectorState {
   updatedAt: string;
 }
 
+export interface ConnectorOAuthSettingsInput {
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string | null;
+}
+
+export interface ConnectorOAuthSettingsRecord {
+  configured: boolean;
+  clientIdMasked: string | null;
+  clientSecretMasked: string | null;
+  redirectUri: string | null;
+  updatedAt: string | null;
+}
+
 export interface AgentConnectorIntegrationRecord {
   provider: ConnectorProvider;
   label: string;
@@ -1888,6 +1902,38 @@ export class AgentEngineClient {
   getConnectorState(provider: ConnectorProvider): Promise<ConnectorState> {
     return this.request<ConnectorState>(
       `/connectors/${encodeURIComponent(provider)}/state`,
+    );
+  }
+
+  getConnectorOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    return this.request<ConnectorOAuthSettingsRecord>(
+      `/connectors/${encodeURIComponent(provider)}/oauth-settings`,
+    );
+  }
+
+  saveConnectorOAuthSettings(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthSettingsInput,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    return this.request<ConnectorOAuthSettingsRecord>(
+      `/connectors/${encodeURIComponent(provider)}/oauth-settings`,
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  deleteConnectorOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    return this.request<ConnectorOAuthSettingsRecord>(
+      `/connectors/${encodeURIComponent(provider)}/oauth-settings`,
+      {
+        method: "DELETE",
+      },
     );
   }
 

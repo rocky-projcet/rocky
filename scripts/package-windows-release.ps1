@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$Tag = "v0.1.0",
+  [string]$Tag = "v0.1.1",
   [string]$OutputDirectory,
   [switch]$SkipBuild
 )

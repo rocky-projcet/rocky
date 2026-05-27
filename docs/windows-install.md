@@ -1,11 +1,11 @@
 # Rocky Windows install
 
-Release tag: `v0.1.0`
+Release tag: `v0.1.1`
 
 The preferred release shape is a single Windows setup executable:
 
 ```text
-Rocky-Setup-v0.1.0.exe
+Rocky-Setup-v0.1.1.exe
 ```
 
 It installs Rocky as a per-user app under `%LOCALAPPDATA%\Programs\Rocky` by
@@ -29,7 +29,7 @@ agent instructions, and development configuration.
 Run the setup executable:
 
 ```cmd
-Rocky-Setup-v0.1.0.exe
+Rocky-Setup-v0.1.1.exe
 ```
 
 The setup executable is built with Inno Setup and shows a normal Windows setup
@@ -56,6 +56,27 @@ The installer:
 
 The installer does not automate Codex login. If Codex-backed runs need login,
 authenticate Codex separately after install.
+
+## Manual update behavior
+
+Running `Rocky-Setup-v0.1.1.exe` or `Install-Rocky-Windows.cmd` over an existing
+Rocky install updates the app/runtime payload instead of treating the target as a
+new destructive install. The update path preserves:
+
+- the default per-user state root `%LOCALAPPDATA%\Rocky\state`;
+- in-install state/log/runtime data under `.runtime`;
+- Codex/runtime home data under `.codex`;
+- the app-managed runtime tool cache under `.tools`;
+- local environment files such as `.env`, `.env.local`, and `.rocky-env.ps1`.
+
+For direct payload installs, the previous app folder is first moved to a
+timestamped backup. If copying or migration fails, the installer writes an error
+under `.rocky-update-logs` and attempts to restore the previous install instead
+of leaving only a half-replaced folder. Inno Setup also writes setup logs under
+`%TEMP%\Setup Log*.txt`.
+
+Known limitations for `v0.1.1`: Rocky does not provide automatic GitHub release
+downloads, silent/background updates, or a complete graphical rollback UX.
 
 To install without starting Rocky:
 
@@ -105,13 +126,13 @@ npm run release:windows:installer
 These create:
 
 ```text
-releases\v0.1.0\rocky-v0.1.0-windows.zip
-releases\v0.1.0\rocky-v0.1.0-windows-app.zip
-releases\v0.1.0\Rocky-Setup-v0.1.0.exe
+releases\v0.1.1\rocky-v0.1.1-windows.zip
+releases\v0.1.1\rocky-v0.1.1-windows-app.zip
+releases\v0.1.1\Rocky-Setup-v0.1.1.exe
 ```
 
-The `rocky-v0.1.0-windows.zip` bundle is the developer-oriented fallback. The
-setup executable and `rocky-v0.1.0-windows-app.zip` use the source-free app
+The `rocky-v0.1.1-windows.zip` bundle is the developer-oriented fallback. The
+setup executable and `rocky-v0.1.1-windows-app.zip` use the source-free app
 payload and skip target-machine `npm ci` and build steps.
 
 `npm run release:windows:installer` requires Inno Setup 6. If `ISCC.exe` is not

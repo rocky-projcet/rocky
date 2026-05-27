@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$Tag = "v0.1.0",
+  [string]$Tag = "v0.1.1",
   [string]$OutputDirectory,
   [string]$InnoCompilerPath,
   [switch]$SkipBuild
@@ -268,8 +268,10 @@ Rocky Windows app installer payload: $Tag
 
 This payload is intended for Rocky-Setup-$Tag.exe.
 It contains compiled backend JavaScript, built web assets, Windows launchers,
-and bundled backend npm dependencies. It intentionally excludes TypeScript
-source, tests, local agent instructions, and development configuration.
+and bundled backend npm dependencies. Running this payload over an existing
+Rocky install updates the app/runtime files while preserving .runtime, .codex,
+.tools, .env files, and the default per-user state root. It intentionally excludes
+TypeScript source, tests, local agent instructions, and development configuration.
 "@
 Set-Content -Path (Join-Path $PayloadRoot "WINDOWS_RELEASE.txt") -Value $ReleaseNotes -Encoding ASCII
 

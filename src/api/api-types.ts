@@ -39,6 +39,7 @@ import type {
   ConnectorBrowserFollowerListReader,
   ConnectorBrowserProfileReader,
 } from "../connectors/browser-profile-reader.js";
+import type { InstagramFeedScreener } from "../connectors/instagram-feed-screener.js";
 import type {
   RuntimeKind,
   RuntimeEvent,
@@ -277,6 +278,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   connectorBrowserDraftPublisher?: ConnectorBrowserDraftPublisher;
   connectorBrowserProfileReader?: ConnectorBrowserProfileReader;
   connectorBrowserFollowerListReader?: ConnectorBrowserFollowerListReader;
+  connectorInstagramFeedScreener?: InstagramFeedScreener;
   connectorBaseEnv?: NodeJS.ProcessEnv;
   connectorFetch?: typeof fetch;
 }

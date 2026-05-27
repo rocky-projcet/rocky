@@ -1,4 +1,4 @@
-# Rocky macOS install
+# Rocky macOS install/update
 
 Release tag: `v0.1.1`
 
@@ -55,6 +55,42 @@ ROCKY_WEB_PORT=4173 \
 ROCKY_STATE_ROOT="$HOME/Library/Application Support/Rocky/agent-engine" \
 open Rocky.app
 ```
+
+## Manual update-safe path
+
+For the packaged `Rocky.app`, replace the app bundle with the newly downloaded
+bundle. Runtime state is outside the app bundle by default, so replacing the app
+does not delete sessions/tasks/state.
+
+For early manual installs or extracted repository-style payloads that contain a
+`.rocky-install` marker, use the helper from the new Rocky payload directory:
+
+```sh
+scripts/update-macos-manual.sh /path/to/existing/Rocky
+```
+
+The helper treats the target as an existing Rocky install and then:
+
+1. Moves the previous install aside as a timestamped backup.
+2. Copies the new app/runtime payload into the target path.
+3. Restores local state/settings paths: `.runtime`, `.codex`, `.rocky-env.ps1`,
+   `.env`, `.env.local`, and the `.tools` runtime tool cache.
+4. Writes `.rocky-install` with the release tag.
+5. Removes the backup only after the update completes.
+
+If copying or migration fails, the helper restores the previous install from the
+backup and writes recovery information under `.rocky-update-logs`.
+
+## State preservation
+
+The recommended Rocky state root is outside the app payload:
+
+```text
+~/Library/Application Support/Rocky/agent-engine
+```
+
+If you used an in-app `.runtime/state` during early manual installs, the update
+helper preserves it.
 
 ## Build the release artifacts
 
@@ -119,6 +155,9 @@ the artifact before publication.
 
 - No bundled Node.js runtime.
 - No Apple Developer ID signing or notarization.
+- No automatic download/update channel is provided in `v0.1.1`.
+- No silent/background update flow is provided.
+- Rollback is best-effort command-line recovery, not a complete GUI rollback UX.
 - No LaunchAgent/service registration; closing the app stops the API and web UI.
 - No custom macOS app icon yet.
 - Codex login is not automated by the installer.

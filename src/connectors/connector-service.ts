@@ -24,6 +24,12 @@ import {
   type ConnectorBrowserProfileReader,
 } from "./browser-profile-reader.js";
 import {
+  chromeAssistPlannedResult,
+  normalizeInstagramFeedScreenInput,
+  screenInstagramFeedWithPlaywright,
+  type InstagramFeedScreener,
+} from "./instagram-feed-screener.js";
+import {
   detectChromium,
   startHeadedLogin,
   type ConnectorAdapter,
@@ -76,6 +82,7 @@ export interface ConnectorServiceOptions {
   publishBrowserDraft?: ConnectorBrowserDraftPublisher;
   readBrowserProfile?: ConnectorBrowserProfileReader;
   readBrowserFollowerList?: ConnectorBrowserFollowerListReader;
+  screenInstagramFeed?: InstagramFeedScreener;
   baseEnv?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
@@ -159,6 +166,7 @@ export class ConnectorService implements ConnectorServiceLike {
   private readonly publishBrowserDraft: ConnectorBrowserDraftPublisher;
   private readonly readBrowserProfile: ConnectorBrowserProfileReader;
   private readonly readBrowserFollowerList: ConnectorBrowserFollowerListReader;
+  private readonly screenInstagramFeed: InstagramFeedScreener;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly fetchImpl: typeof fetch;
   private readonly hydratePromise: Promise<void>;
@@ -179,6 +187,8 @@ export class ConnectorService implements ConnectorServiceLike {
     this.readBrowserProfile = options.readBrowserProfile ?? readBrowserProfile;
     this.readBrowserFollowerList =
       options.readBrowserFollowerList ?? readBrowserFollowerList;
+    this.screenInstagramFeed =
+      options.screenInstagramFeed ?? screenInstagramFeedWithPlaywright;
     this.baseEnv = options.baseEnv ?? process.env;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.states = listSupportedProviders().reduce(
@@ -1220,6 +1230,14 @@ export class ConnectorService implements ConnectorServiceLike {
       };
     }
 
+    if (capability.id === "instagram.feed.screen") {
+      return this.executeInstagramFeedScreen({
+        capability,
+        readiness,
+        args: input.args ?? {},
+      });
+    }
+
     if (capability.id === "instagram.media.prepare") {
       return this.executeInstagramMediaPrepare({
         capability,
@@ -1361,6 +1379,58 @@ export class ConnectorService implements ConnectorServiceLike {
       draft: null,
       message: `${capability.label} capability 실행 핸들러가 아직 준비되지 않았습니다.`,
       checkedAt,
+    };
+  }
+
+  private async executeInstagramFeedScreen(input: {
+    capability: ConnectorCapabilityRecord;
+    readiness: ConnectorReadinessRecord;
+    args: Record<string, unknown>;
+  }): Promise<ConnectorExecuteCapabilityResult> {
+    const base = this.instagramCapabilityResultBase(input.capability, input.readiness);
+    const request = normalizeInstagramFeedScreenInput(input.args);
+    if (request.ok === false) {
+      return {
+        ...base,
+        ok: false,
+        status: "failed",
+        message: request.message,
+      };
+    }
+
+    if (request.value.browserMode === "chrome-assist") {
+      const result = chromeAssistPlannedResult(request.value, this.now());
+      return {
+        ...base,
+        setupMode: "custom-browser",
+        blockerCodes: [],
+        setupSteps: input.capability.setupSteps ?? [],
+        ok: false,
+        status: "unsupported",
+        message:
+          "Chrome assist feed screening is represented separately from Instagram Graph API credentials, but is not executable in this Playwright MVP.",
+        data: result as unknown as Record<string, unknown>,
+      };
+    }
+
+    const result = await this.screenInstagramFeed({
+      request: request.value,
+      now: this.now,
+    });
+    return {
+      ...base,
+      setupMode: "custom-browser",
+      blockerCodes: [],
+      setupSteps: input.capability.setupSteps ?? [],
+      ok: result.status === "completed" || result.status === "partial",
+      status: result.status === "failed" ? "failed" : "completed",
+      message:
+        result.status === "partial"
+          ? "Instagram feed screening completed with partial per-handle/post failures."
+          : result.status === "completed"
+            ? "Instagram feed screening completed."
+            : "Instagram feed screening failed for all requested handles.",
+      data: result as unknown as Record<string, unknown>,
     };
   }
 
@@ -3918,6 +3988,24 @@ function getConnectorSkillBridgeCapabilities(
         action: "read",
         requiresApproval: false,
       }),
+      {
+        id: "instagram.feed.screen",
+        provider,
+        label: "Instagram feed screening",
+        description:
+          "Read-only public feed screening with deterministic Playwright support; Chrome assist is modeled separately from Instagram Graph API connection and publishing permissions.",
+        action: "read",
+        requiresBrowser: true,
+        requiresConnectedAccount: false,
+        requiresApproval: false,
+        status: "available",
+        source: "backend",
+        executionOwner: "rocky-server",
+        setupMode: "custom-browser",
+        setupSteps: [
+          "Use browserMode=playwright-public for the MVP. browserMode=chrome-assist is planned read-only assist support and does not grant Graph API or publishing permission.",
+        ],
+      },
     ];
   }
 

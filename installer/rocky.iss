@@ -10,25 +10,25 @@
 #if GetEnv("ROCKY_RELEASE_TAG") != ""
   #define ReleaseTag GetEnv("ROCKY_RELEASE_TAG")
 #else
-  #define ReleaseTag "v0.1.0"
+  #define ReleaseTag "v0.1.1"
 #endif
 
 #if GetEnv("ROCKY_APP_VERSION") != ""
   #define MyAppVersion GetEnv("ROCKY_APP_VERSION")
 #else
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.1"
 #endif
 
 #if GetEnv("ROCKY_PAYLOAD_ROOT") != ""
   #define PayloadRoot GetEnv("ROCKY_PAYLOAD_ROOT")
 #else
-  #define PayloadRoot "..\.tmp\windows-installer\v0.1.0\payload"
+  #define PayloadRoot "..\.tmp\windows-installer\v0.1.1\payload"
 #endif
 
 #if GetEnv("ROCKY_OUTPUT_DIR") != ""
   #define OutputDirPath GetEnv("ROCKY_OUTPUT_DIR")
 #else
-  #define OutputDirPath "..\releases\v0.1.0"
+  #define OutputDirPath "..\releases\v0.1.1"
 #endif
 
 #if GetEnv("ROCKY_REPO_ROOT") != ""
@@ -78,7 +78,7 @@ Name: "{group}\Stop Rocky"; Filename: "{app}\Stop-Rocky-Windows.cmd"; WorkingDir
 Name: "{group}\Uninstall Rocky"; Filename: "{uninstallexe}"; IconFilename: "{app}\assets\windows\rocky-uninstall.ico"
 
 [Run]
-Filename: "{app}\Install-Rocky-Windows.cmd"; Parameters: "-InPlace -SkipDependencyInstall -SkipBuild -IncludeBundledDependencies -SkipWindowsShellRegistration -NoStart"; StatusMsg: "Preparing Rocky runtime..."; Flags: runhidden waituntilterminated
+Filename: "{app}\Install-Rocky-Windows.cmd"; Parameters: "-InPlace -SkipDependencyInstall -SkipBuild -IncludeBundledDependencies -SkipWindowsShellRegistration -NoStart"; StatusMsg: "Preparing Rocky runtime and preserving existing state..."; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Start Rocky"; Flags: nowait postinstall skipifsilent runhidden
 
 [UninstallRun]

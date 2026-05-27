@@ -54,6 +54,12 @@ npm run runtime:probe -- --provider codex --write
 - `.agents/skills/`: local Codex workflow skills
 - `.runtime/`: local runtime state and smoke artifacts
 
+## Installer/update notes
+
+- Windows manual installer/update guidance: `docs/windows-install.md`
+- macOS manual update-safe helper guidance: `docs/macos-install.md`
+- v0.1.1 installer updates are payload replacements that must preserve existing Rocky state roots, sessions/tasks, runtime homes, and local environment files.
+
 ## Notes
 
 - 기본 상태 루트는 `.runtime/agent-engine`입니다.

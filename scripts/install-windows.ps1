@@ -17,10 +17,30 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ReleaseTag = "v0.1.0"
+$ReleaseTag = "v0.1.1"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $MarkerPath = Join-Path $Root ".rocky-install"
 $ToolsRoot = Join-Path $Root ".tools"
+$InstallLogRoot = Join-Path $Root ".rocky-update-logs"
+$InstallLogPath = Join-Path $InstallLogRoot ("install-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+
+function Write-InstallLog {
+  param([Parameter(Mandatory = $true)][string]$Message)
+
+  try {
+    New-Item -ItemType Directory -Force -Path $InstallLogRoot | Out-Null
+    Add-Content -Path $InstallLogPath -Value ("[{0}] {1}" -f (Get-Date -Format "o"), $Message) -Encoding UTF8
+  } catch {
+    # Best-effort logging must not block installation or update recovery.
+  }
+}
+
+function Write-InstallStatus {
+  param([Parameter(Mandatory = $true)][string]$Message)
+
+  Write-Host $Message
+  Write-InstallLog -Message $Message
+}
 
 function Resolve-Tool {
   param(
@@ -68,7 +88,7 @@ function Invoke-Checked {
     [Parameter(Mandatory = $true)][string]$WorkingDirectory
   )
 
-  Write-Host ">> $FilePath $($Arguments -join ' ')"
+  Write-InstallStatus ">> $FilePath $($Arguments -join ' ')"
   $ArgumentLine = ($Arguments | ForEach-Object { ConvertTo-CommandLineArgument $_ }) -join " "
   $Process = Start-Process `
     -FilePath $FilePath `
@@ -91,7 +111,7 @@ function Assert-NodeVersion {
   if ($Major -lt 22) {
     throw "Node.js 22 or newer is required. Found $VersionText."
   }
-  Write-Host "Node.js $VersionText"
+  Write-InstallStatus "Node.js $VersionText"
 }
 
 function Get-NodeMajorVersion {
@@ -141,7 +161,7 @@ function Install-PortableNode {
   $NpmPath = Join-Path $ExtractedRoot "npm.cmd"
 
   if ((Test-Path -LiteralPath $NodePath) -and (Test-Path -LiteralPath $NpmPath)) {
-    Write-Host "Using bundled Node.js from $ExtractedRoot"
+    Write-InstallStatus "Using bundled Node.js from $ExtractedRoot"
     return @{
       NodePath = $NodePath
       NpmPath = $NpmPath
@@ -172,7 +192,7 @@ function Install-PortableNode {
     throw "Portable Node.js install did not create expected executables under $ExtractedRoot."
   }
 
-  Write-Host "Installed portable Node.js v$Version to $ExtractedRoot"
+  Write-InstallStatus "Installed portable Node.js v$Version to $ExtractedRoot"
   return @{
     NodePath = $NodePath
     NpmPath = $NpmPath
@@ -257,7 +277,7 @@ function Install-CodexCli {
   }
 
   $CodexVersionText = (& $CodexPath --version).Trim()
-  Write-Host "Codex CLI $CodexVersionText"
+  Write-InstallStatus "Codex CLI $CodexVersionText"
   return @{
     CodexPath = $CodexPath
     CodexPrefix = $Prefix
@@ -419,12 +439,44 @@ function Copy-PayloadDirectory {
   }
 }
 
+function Get-UpdateBackupPath {
+  param([Parameter(Mandatory = $true)][string]$TargetRoot)
+
+  $Parent = Split-Path -Parent $TargetRoot
+  $Leaf = Split-Path -Leaf $TargetRoot
+  $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+  return Join-Path $Parent (".{0}-update-backup-{1}" -f $Leaf, $Timestamp)
+}
+
+function Restore-PreservedInstallPaths {
+  param(
+    [Parameter(Mandatory = $true)][string]$BackupRoot,
+    [Parameter(Mandatory = $true)][string]$TargetRoot
+  )
+
+  $PreservedNames = @(".runtime", ".codex", ".tools", ".rocky-env.ps1", ".env", ".env.local")
+  foreach ($Name in $PreservedNames) {
+    $BackupPath = Join-Path $BackupRoot $Name
+    if (-not (Test-Path -LiteralPath $BackupPath)) {
+      continue
+    }
+
+    $TargetPath = Join-Path $TargetRoot $Name
+    Remove-Item -LiteralPath $TargetPath -Recurse -Force -ErrorAction SilentlyContinue
+    Move-Item -LiteralPath $BackupPath -Destination $TargetPath -Force
+    Write-InstallStatus "Preserved existing install data: $Name"
+  }
+}
+
 function Install-PayloadToDirectory {
   param([Parameter(Mandatory = $true)][string]$TargetRoot)
 
   if (Test-SamePath -Left $Root -Right $TargetRoot) {
     return
   }
+
+  $UpdateMode = $false
+  $BackupRoot = $null
 
   if (Test-Path -LiteralPath $TargetRoot) {
     $TargetMarker = Join-Path $TargetRoot ".rocky-install"
@@ -433,21 +485,47 @@ function Install-PayloadToDirectory {
       throw "Install directory is not empty and is not a Rocky install: $TargetRoot"
     }
 
+    $UpdateMode = $true
+    Write-InstallStatus "Existing Rocky install detected. Updating payload while preserving state and local settings."
+
     $ExistingStopScript = Join-Path $TargetRoot "scripts\stop-rocky-windows.ps1"
     if (Test-Path -LiteralPath $ExistingStopScript) {
       try {
         & $ExistingStopScript
       } catch {
         Write-Warning "Could not stop existing Rocky processes before update: $($_.Exception.Message)"
+        Write-InstallLog -Message "Could not stop existing Rocky processes before update: $($_.Exception.Message)"
       }
     }
 
-    Remove-Item -LiteralPath $TargetRoot -Recurse -Force
+    $BackupRoot = Get-UpdateBackupPath -TargetRoot $TargetRoot
+    Move-Item -LiteralPath $TargetRoot -Destination $BackupRoot
+    Write-InstallStatus "Backed up previous Rocky install to $BackupRoot"
   }
 
-  New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
-  Copy-PayloadDirectory -Source $Root -Target $TargetRoot -Base $Root
-  Set-Content -Path (Join-Path $TargetRoot ".rocky-install") -Value $ReleaseTag -Encoding ASCII
+  try {
+    New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
+    Copy-PayloadDirectory -Source $Root -Target $TargetRoot -Base $Root
+
+    if ($UpdateMode) {
+      Restore-PreservedInstallPaths -BackupRoot $BackupRoot -TargetRoot $TargetRoot
+    }
+
+    Set-Content -Path (Join-Path $TargetRoot ".rocky-install") -Value $ReleaseTag -Encoding ASCII
+
+    if ($UpdateMode) {
+      Remove-Item -LiteralPath $BackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+      Write-InstallStatus "Rocky payload update completed. Preserved state roots and local settings."
+    }
+  } catch {
+    Write-InstallLog -Message "Install/update failed: $($_.Exception.Message)"
+    if ($UpdateMode -and $BackupRoot -and (Test-Path -LiteralPath $BackupRoot)) {
+      Remove-Item -LiteralPath $TargetRoot -Recurse -Force -ErrorAction SilentlyContinue
+      Move-Item -LiteralPath $BackupRoot -Destination $TargetRoot
+      Write-InstallLog -Message "Restored previous Rocky install from $BackupRoot after failed update."
+    }
+    throw
+  }
 }
 
 function Invoke-NpmInstall {
@@ -563,7 +641,8 @@ if ($UsesBundledAppPayload) {
 
 $ResolvedInstallDir = Resolve-InstallDirPath -RequestedInstallDir $InstallDir
 if (-not $InPlace -and -not (Test-SamePath -Left $Root -Right $ResolvedInstallDir)) {
-  Write-Host "Installing Rocky $ReleaseTag to $ResolvedInstallDir"
+  $InstallMode = if (Test-Path -LiteralPath (Join-Path $ResolvedInstallDir ".rocky-install")) { "Updating" } else { "Installing" }
+  Write-InstallStatus "$InstallMode Rocky $ReleaseTag to $ResolvedInstallDir"
   Install-PayloadToDirectory -TargetRoot $ResolvedInstallDir
 
   $InstalledScript = Join-Path $ResolvedInstallDir "scripts\install-windows.ps1"
@@ -606,7 +685,7 @@ $CodexPrefix = $CodexInstall.CodexPrefix
 $env:PATH = "$CodexPrefix;$env:PATH"
 Write-ManagedEnvironment -NodeHome $NodeHome -CodexPrefix $CodexPrefix
 
-Write-Host "Installing Rocky $ReleaseTag in $Root"
+Write-InstallStatus "Preparing Rocky $ReleaseTag in $Root"
 
 if (-not $SkipDependencyInstall) {
   Invoke-NpmInstall -WorkingDirectory $Root
@@ -634,9 +713,10 @@ if (-not $SkipWindowsShellRegistration) {
   Register-UninstallEntry -DisplayIconPath $AppIconPath
 }
 
-Write-Host "Rocky $ReleaseTag is installed."
-Write-Host "Install directory: $Root"
-Write-Host "State root: $StateRoot"
+Write-InstallStatus "Rocky $ReleaseTag is installed or updated."
+Write-InstallStatus "Install directory: $Root"
+Write-InstallStatus "State root: $StateRoot"
+Write-InstallStatus "Installer log: $InstallLogPath"
 
 if (-not $NoStart) {
   & (Join-Path $Root "scripts\start-rocky-windows.ps1") `

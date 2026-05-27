@@ -107,6 +107,7 @@ export function createAgentEngineServer(
     publishBrowserDraft: options.connectorBrowserDraftPublisher,
     readBrowserProfile: options.connectorBrowserProfileReader,
     readBrowserFollowerList: options.connectorBrowserFollowerListReader,
+    screenInstagramFeed: options.connectorInstagramFeedScreener,
     baseEnv: options.connectorBaseEnv,
     fetchImpl: options.connectorFetch,
   });

@@ -68,6 +68,17 @@ export interface ConnectorReadinessBlockerRecord {
   nextAction: string;
 }
 
+export type ConnectorEntitlementGate = "instagram-meta-app-tester";
+export type ConnectorEntitlementStatus = "allowed" | "blocked" | "pending";
+
+export interface ConnectorEntitlementRecord {
+  gate: ConnectorEntitlementGate;
+  status: ConnectorEntitlementStatus;
+  reason: string;
+  checkedAt: string | null;
+  testerRequestStatus?: ConnectorTesterRequestStatus | null;
+}
+
 export interface ConnectorReadinessRecord {
   setupMode: ConnectorSetupMode | null;
   accountKind: ConnectorAccountKind | null;
@@ -77,6 +88,7 @@ export interface ConnectorReadinessRecord {
   tokenStatus?: ConnectorTokenStatus | null;
   checkedAt?: string | null;
   browserSessionPurpose: ConnectorBrowserSessionPurpose | null;
+  entitlement?: ConnectorEntitlementRecord | null;
   blockers: ConnectorReadinessBlockerRecord[];
 }
 
@@ -84,6 +96,27 @@ export type ConnectorGraphDiscoveryStatus =
   | "not-started"
   | "blocked"
   | "candidate";
+
+export type ConnectorTesterRequestStatus =
+  | "pending"
+  | "invited"
+  | "accepted"
+  | "completed";
+
+export interface ConnectorTesterRequestInput {
+  accountIdentifier: string;
+  status?: ConnectorTesterRequestStatus;
+}
+
+export interface ConnectorTesterRequestRecord {
+  provider: Extract<ConnectorProvider, "instagram">;
+  accountIdentifier: string;
+  status: ConnectorTesterRequestStatus;
+  requestedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  message: string;
+}
 
 export interface ConnectorGraphDiscoveryCandidateRecord {
   facebookPageId: string | null;
@@ -173,6 +206,21 @@ export interface ConnectorBrowserAccessRecord {
 
 export interface ConnectorStartLoginInput {
   redirectBaseUrl?: string | null;
+  openExternal?: boolean;
+}
+
+export interface ConnectorOAuthSettingsInput {
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string | null;
+}
+
+export interface ConnectorOAuthSettingsRecord {
+  configured: boolean;
+  clientIdMasked: string | null;
+  clientSecretMasked: string | null;
+  redirectUri: string | null;
+  updatedAt: string | null;
 }
 
 export interface ConnectorOAuthCallbackInput {
@@ -306,6 +354,7 @@ export interface ConnectorState {
   readiness: ConnectorReadinessRecord;
   graphDiscovery?: ConnectorGraphDiscoveryRecord | null;
   graphConnection?: ConnectorGraphConnectionRecord | null;
+  testerRequest?: ConnectorTesterRequestRecord | null;
   updatedAt: string;
 }
 
@@ -336,6 +385,12 @@ export interface ConnectorDiagnosticsRecord {
 
 export interface ConnectorServiceLike {
   getState(provider: ConnectorProvider): Promise<ConnectorState>;
+  getOAuthSettings(provider: ConnectorProvider): Promise<ConnectorOAuthSettingsRecord>;
+  saveOAuthSettings(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthSettingsInput,
+  ): Promise<ConnectorOAuthSettingsRecord>;
+  deleteOAuthSettings(provider: ConnectorProvider): Promise<ConnectorOAuthSettingsRecord>;
   startLogin(
     provider: ConnectorProvider,
     input?: ConnectorStartLoginInput,
@@ -343,6 +398,10 @@ export interface ConnectorServiceLike {
   startGraphDiscovery(
     provider: ConnectorProvider,
     input?: ConnectorStartLoginInput,
+  ): Promise<ConnectorState>;
+  requestTesterRegistration(
+    provider: ConnectorProvider,
+    input: ConnectorTesterRequestInput,
   ): Promise<ConnectorState>;
   handleOAuthCallback(
     provider: ConnectorProvider,

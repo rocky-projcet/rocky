@@ -563,6 +563,17 @@ export interface ConnectorReadinessBlockerRecord {
   nextAction: string;
 }
 
+export type ConnectorEntitlementGate = "instagram-meta-app-tester";
+export type ConnectorEntitlementStatus = "allowed" | "blocked" | "pending";
+
+export interface ConnectorEntitlementRecord {
+  gate: ConnectorEntitlementGate;
+  status: ConnectorEntitlementStatus;
+  reason: string;
+  checkedAt: string | null;
+  testerRequestStatus?: ConnectorTesterRequestStatus | null;
+}
+
 export interface ConnectorReadinessRecord {
   setupMode: ConnectorSetupMode | null;
   accountKind: ConnectorAccountKind | null;
@@ -572,6 +583,7 @@ export interface ConnectorReadinessRecord {
   tokenStatus?: ConnectorTokenStatus | null;
   checkedAt?: string | null;
   browserSessionPurpose: ConnectorBrowserSessionPurpose | null;
+  entitlement?: ConnectorEntitlementRecord | null;
   blockers: ConnectorReadinessBlockerRecord[];
 }
 
@@ -579,6 +591,31 @@ export type ConnectorGraphDiscoveryStatus =
   | "not-started"
   | "blocked"
   | "candidate";
+
+export type ConnectorTesterRequestStatus =
+  | "pending"
+  | "invited"
+  | "accepted"
+  | "completed";
+
+export interface ConnectorTesterRequestInput {
+  accountIdentifier: string;
+  status?: ConnectorTesterRequestStatus;
+}
+
+export interface ConnectorStartLoginInput {
+  openExternal?: boolean;
+}
+
+export interface ConnectorTesterRequestRecord {
+  provider: "instagram";
+  accountIdentifier: string;
+  status: ConnectorTesterRequestStatus;
+  requestedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  message: string;
+}
 
 export interface ConnectorGraphDiscoveryCandidateRecord {
   facebookPageId: string | null;
@@ -782,7 +819,22 @@ export interface ConnectorState {
   readiness: ConnectorReadinessRecord;
   graphDiscovery?: ConnectorGraphDiscoveryRecord | null;
   graphConnection?: ConnectorGraphConnectionRecord | null;
+  testerRequest?: ConnectorTesterRequestRecord | null;
   updatedAt: string;
+}
+
+export interface ConnectorOAuthSettingsInput {
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string | null;
+}
+
+export interface ConnectorOAuthSettingsRecord {
+  configured: boolean;
+  clientIdMasked: string | null;
+  clientSecretMasked: string | null;
+  redirectUri: string | null;
+  updatedAt: string | null;
 }
 
 export interface AgentConnectorIntegrationRecord {
@@ -1853,6 +1905,38 @@ export class AgentEngineClient {
     );
   }
 
+  getConnectorOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    return this.request<ConnectorOAuthSettingsRecord>(
+      `/connectors/${encodeURIComponent(provider)}/oauth-settings`,
+    );
+  }
+
+  saveConnectorOAuthSettings(
+    provider: ConnectorProvider,
+    input: ConnectorOAuthSettingsInput,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    return this.request<ConnectorOAuthSettingsRecord>(
+      `/connectors/${encodeURIComponent(provider)}/oauth-settings`,
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  deleteConnectorOAuthSettings(
+    provider: ConnectorProvider,
+  ): Promise<ConnectorOAuthSettingsRecord> {
+    return this.request<ConnectorOAuthSettingsRecord>(
+      `/connectors/${encodeURIComponent(provider)}/oauth-settings`,
+      {
+        method: "DELETE",
+      },
+    );
+  }
+
   startConnectorLogin(provider: ConnectorProvider): Promise<ConnectorState> {
     return this.request<ConnectorState>(
       `/connectors/${encodeURIComponent(provider)}/login`,
@@ -1862,11 +1946,28 @@ export class AgentEngineClient {
     );
   }
 
-  startConnectorGraphDiscovery(provider: ConnectorProvider): Promise<ConnectorState> {
+  startConnectorGraphDiscovery(
+    provider: ConnectorProvider,
+    input: ConnectorStartLoginInput = {},
+  ): Promise<ConnectorState> {
     return this.request<ConnectorState>(
       `/connectors/${encodeURIComponent(provider)}/graph-discovery`,
       {
         method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+  }
+
+  requestConnectorTesterRegistration(
+    provider: ConnectorProvider,
+    input: ConnectorTesterRequestInput,
+  ): Promise<ConnectorState> {
+    return this.request<ConnectorState>(
+      `/connectors/${encodeURIComponent(provider)}/tester-request`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
       },
     );
   }

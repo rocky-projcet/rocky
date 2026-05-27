@@ -3,9 +3,13 @@ import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 import { listSupportedProviders } from "../../connectors/adapters.js";
 import type {
   ConnectorExecuteCapabilityInput,
+  ConnectorOAuthSettingsInput,
   ConnectorPublishDraftInput,
   ConnectorProvider,
   ConnectorServiceLike,
+  ConnectorStartLoginInput,
+  ConnectorTesterRequestInput,
+  ConnectorTesterRequestStatus,
 } from "../../connectors/connector-types.js";
 import { sendJson } from "../http/reply.js";
 
@@ -85,6 +89,92 @@ function parseExecuteCapabilityBody(
   return { capabilityId, args: args as Record<string, unknown> };
 }
 
+function parseStartLoginBody(
+  body: unknown,
+): Pick<ConnectorStartLoginInput, "openExternal"> {
+  if (body === undefined || body === null) {
+    return {};
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("커넥터 로그인 요청은 JSON object여야 합니다.");
+  }
+  const input = body as Record<string, unknown>;
+  if (input.openExternal === undefined || input.openExternal === null) {
+    return {};
+  }
+  if (typeof input.openExternal !== "boolean") {
+    throw badRequest("openExternal은 boolean이어야 합니다.");
+  }
+  return { openExternal: input.openExternal };
+}
+
+function parseOAuthSettingsBody(body: unknown): ConnectorOAuthSettingsInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("커넥터 OAuth 설정은 JSON object여야 합니다.");
+  }
+  const input = body as Record<string, unknown>;
+  return {
+    clientId: requiredOAuthSetting(input, "clientId"),
+    clientSecret: requiredOAuthSetting(input, "clientSecret"),
+    redirectUri: optionalOAuthSetting(input, "redirectUri"),
+  };
+}
+
+function requiredOAuthSetting(
+  input: Record<string, unknown>,
+  key: "clientId" | "clientSecret",
+): string {
+  const value = input[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw badRequest(`커넥터 OAuth 설정에는 ${key}이 필요합니다.`);
+  }
+  return value.trim();
+}
+
+function optionalOAuthSetting(
+  input: Record<string, unknown>,
+  key: "redirectUri",
+): string | null {
+  const value = input[key];
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw badRequest(`커넥터 OAuth 설정 ${key}은 string이어야 합니다.`);
+  }
+  return value.trim() || null;
+}
+
+function parseTesterRequestBody(body: unknown): ConnectorTesterRequestInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("테스터 등록 요청은 JSON object여야 합니다.");
+  }
+  const input = body as Record<string, unknown>;
+  if (
+    typeof input.accountIdentifier !== "string" ||
+    !input.accountIdentifier.trim()
+  ) {
+    throw badRequest("테스터 등록 요청에는 Instagram 계정 식별자가 필요합니다.");
+  }
+  const status = parseTesterRequestStatus(input.status);
+  return {
+    accountIdentifier: input.accountIdentifier.trim(),
+    ...(status ? { status } : {}),
+  };
+}
+
+function parseTesterRequestStatus(
+  value: unknown,
+): ConnectorTesterRequestStatus | null {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (value === "pending" || value === "invited" || value === "accepted") {
+    return value;
+  }
+  throw badRequest("테스터 등록 상태는 pending, invited, accepted 중 하나여야 합니다.");
+}
+
 export const registerConnectorRoutes: FastifyPluginAsync<
   ConnectorRoutesOptions
 > = async (server, options) => {
@@ -98,6 +188,31 @@ export const registerConnectorRoutes: FastifyPluginAsync<
     sendJson(reply, 200, await options.connectorService.getState(parsed));
   });
 
+  server.get("/connectors/:provider/oauth-settings", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    sendJson(reply, 200, await options.connectorService.getOAuthSettings(parsed));
+  });
+
+  server.put("/connectors/:provider/oauth-settings", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    sendJson(
+      reply,
+      200,
+      await options.connectorService.saveOAuthSettings(
+        parsed,
+        parseOAuthSettingsBody(request.body),
+      ),
+    );
+  });
+
+  server.delete("/connectors/:provider/oauth-settings", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    sendJson(reply, 200, await options.connectorService.deleteOAuthSettings(parsed));
+  });
+
   server.post("/connectors/:provider/login", async (request, reply) => {
     const { provider } = request.params as { provider: string };
     const parsed = parseProvider(provider);
@@ -106,6 +221,7 @@ export const registerConnectorRoutes: FastifyPluginAsync<
       202,
       await options.connectorService.startLogin(parsed, {
         redirectBaseUrl: resolveRequestBaseUrl(request),
+        ...parseStartLoginBody(request.body),
       }),
     );
   });
@@ -118,7 +234,21 @@ export const registerConnectorRoutes: FastifyPluginAsync<
       202,
       await options.connectorService.startGraphDiscovery(parsed, {
         redirectBaseUrl: resolveRequestBaseUrl(request),
+        ...parseStartLoginBody(request.body),
       }),
+    );
+  });
+
+  server.post("/connectors/:provider/tester-request", async (request, reply) => {
+    const { provider } = request.params as { provider: string };
+    const parsed = parseProvider(provider);
+    sendJson(
+      reply,
+      200,
+      await options.connectorService.requestTesterRegistration(
+        parsed,
+        parseTesterRequestBody(request.body),
+      ),
     );
   });
 

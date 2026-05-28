@@ -238,6 +238,37 @@ export interface ConnectorOAuthCallbackResult {
   state: ConnectorState;
 }
 
+export interface ConnectorBrokerStartInput {
+  returnUrl: string;
+  brokerBaseUrl?: string | null;
+}
+
+export interface ConnectorBrokerStartResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  loginUrl: string | null;
+  message: string;
+}
+
+export interface ConnectorBrokerCallbackResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  title: string;
+  message: string;
+  redirectUrl: string | null;
+}
+
+export interface ConnectorBrokerRedeemInput {
+  handoffCode: string;
+}
+
+export interface ConnectorBrokerRedeemResult {
+  ok: boolean;
+  provider: ConnectorProvider;
+  tokenPayload: Record<string, unknown> | null;
+  message: string;
+}
+
 export type ConnectorPublishVisibility = "draft" | "private" | "public";
 
 export interface ConnectorPublishDraftInput {
@@ -422,5 +453,18 @@ export interface ConnectorServiceLike {
   readProfile(provider: ConnectorProvider): Promise<ConnectorReadProfileResult>;
   cancelLogin(provider: ConnectorProvider): Promise<ConnectorState>;
   disconnect(provider: ConnectorProvider): Promise<ConnectorState>;
+  startInstagramGraphOAuthBroker(
+    input: ConnectorBrokerStartInput,
+  ): Promise<ConnectorBrokerStartResult>;
+  handleInstagramGraphOAuthBrokerCallback(
+    input: ConnectorOAuthCallbackInput,
+  ): Promise<ConnectorBrokerCallbackResult>;
+  redeemInstagramGraphOAuthBroker(
+    input: ConnectorBrokerRedeemInput,
+  ): Promise<ConnectorBrokerRedeemResult>;
+  handleGraphBrokerCallback(
+    provider: ConnectorProvider,
+    input: ConnectorBrokerRedeemInput,
+  ): Promise<ConnectorOAuthCallbackResult>;
   getDiagnostics(): Promise<ConnectorDiagnosticsRecord>;
 }

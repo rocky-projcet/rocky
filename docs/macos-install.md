@@ -2,17 +2,19 @@
 
 Release tag: `v0.1.1`
 
-The v0.1.1 macOS distribution format is a zipped app bundle, with an optional
-DMG produced on macOS builders:
+The v0.1.1 macOS distribution includes a zipped app bundle, optional DMG, and
+an unsigned `.pkg` installer produced on macOS builders:
 
 ```text
 rocky-v0.1.1-macos-<arch>.app.zip
 rocky-v0.1.1-macos-<arch>.dmg
+rocky-v0.1.1-macos-<arch>.pkg
 ```
 
-The `.app.zip` is the primary GitHub Release artifact because it can be attached
-directly to a release and does not require Apple Developer ID credentials. The
-DMG is a convenience wrapper created with macOS `hdiutil` when available.
+The `.app.zip` remains the simplest preview artifact. The `.pkg` is the clearer
+installer/update UX: users run the package, macOS shows installation progress,
+and the payload is installed to `/Applications/Rocky.app`. The DMG is a
+convenience wrapper created with macOS `hdiutil` when available.
 
 The app bundle contains compiled backend JavaScript, built web assets, the small
 static web server script, package metadata, and production npm dependencies. It
@@ -27,7 +29,16 @@ development configuration.
 
 ## Install and run
 
-From the zipped app artifact:
+Preferred installer/update flow:
+
+1. Download `rocky-v0.1.1-macos-<arch>.pkg` from the GitHub Release.
+2. Open the package and follow the macOS Installer prompts.
+3. The package installs or replaces `/Applications/Rocky.app`.
+4. Open `Rocky.app`.
+5. If Gatekeeper blocks the unsigned package or app, use **System Settings >
+   Privacy & Security > Open Anyway**.
+
+Preview app-bundle flow:
 
 1. Download `rocky-v0.1.1-macos-<arch>.app.zip` from the GitHub Release.
 2. Unzip it.
@@ -56,11 +67,14 @@ ROCKY_STATE_ROOT="$HOME/Library/Application Support/Rocky/agent-engine" \
 /Applications/Rocky.app/Contents/MacOS/Rocky
 ```
 
-## Manual update-safe path
+## Update-safe path
 
-For the packaged `Rocky.app`, replace the app bundle with the newly downloaded
-bundle. Runtime state is outside the app bundle by default, so replacing the app
-does not delete sessions/tasks/state.
+For normal updates, run the newer `.pkg`. It replaces `/Applications/Rocky.app`
+and leaves runtime state outside the app bundle, so sessions/tasks/state are not
+deleted.
+
+For the packaged `Rocky.app`, replacing the app bundle manually is still safe as
+long as state stays under `~/Library/Application Support/Rocky/agent-engine`.
 
 For early manual installs or extracted repository-style payloads that contain a
 `.rocky-install` marker, use the helper from the new Rocky payload directory:
@@ -113,18 +127,20 @@ Useful options:
 ```sh
 npm run release:macos -- --tag v0.1.1
 npm run release:macos -- --no-dmg
+npm run release:macos -- --no-pkg
 npm run release:macos -- --skip-build
 ```
 
 On non-macOS builders, the script can still stage and zip `Rocky.app` when `zip`
-is available, but DMG creation is skipped because `hdiutil` is macOS-only.
+is available, but DMG and PKG creation are skipped because `hdiutil` and
+`pkgbuild` are macOS-only.
 
 ## Smoke validation
 
 After building or downloading the artifact:
 
-1. Unzip `rocky-v0.1.1-macos-<arch>.app.zip` or mount the DMG.
-2. Open `Rocky.app`.
+1. Install `rocky-v0.1.1-macos-<arch>.pkg`, unzip the app zip, or mount the DMG.
+2. Open `/Applications/Rocky.app` or the staged `Rocky.app`.
 3. Confirm the browser opens `http://127.0.0.1:4173`.
 4. Confirm the API responds:
 
@@ -155,6 +171,8 @@ the artifact before publication.
 
 - No bundled Node.js runtime.
 - No Apple Developer ID signing or notarization.
+- The `.pkg` installer is unsigned and uses macOS Installer UI, but it is not a
+  fully automatic in-app updater.
 - No automatic download/update channel is provided in `v0.1.1`.
 - No silent/background update flow is provided.
 - Rollback is best-effort command-line recovery, not a complete GUI rollback UX.

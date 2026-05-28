@@ -15,6 +15,7 @@ function parseArgs(argv) {
     skipBuild: false,
     skipNpmInstall: false,
     dmg: true,
+    pkg: true,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -38,6 +39,9 @@ function parseArgs(argv) {
       case "--no-dmg":
         options.dmg = false;
         break;
+      case "--no-pkg":
+        options.pkg = false;
+        break;
       case "--help":
         printUsage();
         process.exit(0);
@@ -56,7 +60,8 @@ function parseArgs(argv) {
 }
 
 function printUsage() {
-  console.log(`Usage: npm run release:macos -- [options]\n\nOptions:\n  --tag <tag>                 Release tag. Defaults to v0.1.1.\n  --output-directory <path>   Artifact output directory. Defaults to releases/<tag>.\n  --skip-build                Reuse existing dist/ and web/dist/.\n  --skip-npm-install          Do not run npm ci in the staged app payload.\n  --no-dmg                    Skip optional DMG creation.\n`);
+  console.log(`Usage: npm run release:macos -- [options]\n\nOptions:\n  --tag <tag>                 Release tag. Defaults to v0.1.1.\n  --output-directory <path>   Artifact output directory. Defaults to releases/<tag>.\n  --skip-build                Reuse existing dist/ and web/dist/.\n  --skip-npm-install          Do not run npm ci in the staged app payload.\n  --no-dmg                    Skip optional DMG creation.
+  --no-pkg                    Skip optional PKG installer creation.\n`);
 }
 
 function run(command, args, options = {}) {
@@ -327,6 +332,81 @@ async function createDmg(appRoot, outputDirectory, tag, arch, enabled) {
   return dmgPath;
 }
 
+function pkgVersion(tag) {
+  const version = tag.replace(/^v/u, "");
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new Error(`PKG version must be semver-like; got ${tag}.`);
+  }
+  return version;
+}
+
+function installScript(tag) {
+  return `#!/bin/sh
+set -eu
+LOG_DIR="/Library/Logs/Rocky"
+LOG_PATH="$LOG_DIR/install.log"
+APP_PATH="/Applications/Rocky.app"
+mkdir -p "$LOG_DIR"
+printf '[%s] Rocky ${tag} installer started. Existing app: %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(test -d "$APP_PATH" && echo yes || echo no)" >> "$LOG_PATH"
+exit 0
+`;
+}
+
+function postinstallScript(tag) {
+  return `#!/bin/sh
+set -eu
+LOG_DIR="/Library/Logs/Rocky"
+LOG_PATH="$LOG_DIR/install.log"
+mkdir -p "$LOG_DIR"
+printf '[%s] Rocky ${tag} installer completed. App installed at /Applications/Rocky.app. User state is outside the app bundle and is not removed by this installer.\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_PATH"
+printf '[%s] Default per-user state root: ~/Library/Application Support/Rocky/agent-engine\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_PATH"
+exit 0
+`;
+}
+
+async function createPkg(appRoot, stageRoot, outputDirectory, tag, arch, enabled) {
+  if (!enabled) {
+    return undefined;
+  }
+  if (process.platform !== "darwin") {
+    console.log("Skipping PKG creation: pkgbuild is only available on macOS.");
+    return undefined;
+  }
+
+  const pkgPath = path.join(outputDirectory, `rocky-${tag}-macos-${arch}.pkg`);
+  const pkgRoot = path.join(stageRoot, "pkg-root");
+  const scriptsRoot = path.join(stageRoot, "pkg-scripts");
+  await rm(pkgPath, { force: true });
+  await rm(pkgRoot, { recursive: true, force: true });
+  await rm(scriptsRoot, { recursive: true, force: true });
+  await mkdir(path.join(pkgRoot, "Applications"), { recursive: true });
+  await mkdir(scriptsRoot, { recursive: true });
+  await cp(appRoot, path.join(pkgRoot, "Applications", "Rocky.app"), {
+    recursive: true,
+    force: true,
+  });
+  await writeFile(path.join(scriptsRoot, "preinstall"), installScript(tag), "utf8");
+  await writeFile(path.join(scriptsRoot, "postinstall"), postinstallScript(tag), "utf8");
+  await chmod(path.join(scriptsRoot, "preinstall"), 0o755);
+  await chmod(path.join(scriptsRoot, "postinstall"), 0o755);
+
+  await run("pkgbuild", [
+    "--root",
+    pkgRoot,
+    "--scripts",
+    scriptsRoot,
+    "--identifier",
+    "works.earendil.rocky",
+    "--version",
+    pkgVersion(tag),
+    "--install-location",
+    "/",
+    pkgPath,
+  ]);
+  await assertExists(pkgPath, "macOS PKG installer");
+  return pkgPath;
+}
+
 const options = parseArgs(process.argv.slice(2));
 
 if (!options.skipBuild) {
@@ -337,13 +417,17 @@ if (!options.skipBuild) {
 await assertExists(path.join(repoRoot, "dist", "src", "cli.js"), "dist backend CLI");
 await assertExists(path.join(repoRoot, "web", "dist", "index.html"), "web build");
 
-const { appRoot, arch } = await stageApp(options);
+const { appRoot, stageRoot, arch } = await stageApp(options);
 const zipPath = await createZip(appRoot, options.outputDirectory, options.tag, arch);
 const dmgPath = await createDmg(appRoot, options.outputDirectory, options.tag, arch, options.dmg);
+const pkgPath = await createPkg(appRoot, stageRoot, options.outputDirectory, options.tag, arch, options.pkg);
 
 console.log("Created macOS artifacts:");
 console.log(`- ${zipPath}`);
 if (dmgPath) {
   console.log(`- ${dmgPath}`);
+}
+if (pkgPath) {
+  console.log(`- ${pkgPath}`);
 }
 console.log("Note: artifacts are unsigned and not notarized for v0.1.1.");

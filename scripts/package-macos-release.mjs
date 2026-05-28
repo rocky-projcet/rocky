@@ -160,15 +160,57 @@ WEB_PORT="\${ROCKY_WEB_PORT:-4173}"
 WEB_URL="http://$API_HOST:$WEB_PORT"
 
 mkdir -p "$LOG_DIR" "$STATE_ROOT"
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"
 
-NODE_BIN="\${ROCKY_NODE:-node}"
-NODE_MAJOR="$($NODE_BIN -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-if [ "$NODE_MAJOR" -lt 22 ]; then
-  osascript -e 'display alert "Rocky requires Node.js 22 or newer" message "Install Node.js 22+, then open Rocky again."' >/dev/null 2>&1 || true
-  echo "Rocky requires Node.js 22 or newer." >> "$LOG_DIR/rocky.log"
+find_node() {
+  if [ -n "\${ROCKY_NODE:-}" ] && [ -x "$ROCKY_NODE" ]; then
+    printf '%s\n' "$ROCKY_NODE"
+    return 0
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+
+  for candidate in \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node \
+    "$HOME/.volta/bin/node" \
+    "$HOME/.asdf/shims/node"; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    for candidate in "$HOME"/.nvm/versions/node/*/bin/node; do
+      if [ -x "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+NODE_BIN="$(find_node || true)"
+NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ -z "$NODE_BIN" ] || [ "$NODE_MAJOR" -lt 22 ]; then
+  osascript -e 'display alert "Rocky requires Node.js 22 or newer" message "Install Node.js 22+ with Homebrew, Volta, asdf, or nvm. If Node is already installed, set ROCKY_NODE to its node binary and open Rocky from Terminal."' >/dev/null 2>&1 || true
+  {
+    echo "Rocky requires Node.js 22 or newer."
+    echo "PATH=$PATH"
+    echo "ROCKY_NODE=\${ROCKY_NODE:-}"
+    echo "Detected NODE_BIN=$NODE_BIN"
+    echo "Detected NODE_MAJOR=$NODE_MAJOR"
+  } >> "$LOG_DIR/rocky.log"
   exit 1
 fi
+
+echo "Using Node.js at $NODE_BIN" >> "$LOG_DIR/rocky.log"
 
 cd "$APP_DIR"
 "$NODE_BIN" dist/src/cli.js serve --host "$API_HOST" --port "$API_PORT" --state-root "$STATE_ROOT" >> "$LOG_DIR/api.log" 2>&1 &

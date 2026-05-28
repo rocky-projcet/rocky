@@ -55,10 +55,6 @@ const BROWSER_AUTOMATION_PATTERN =
   /(playwright|puppeteer|selenium|chromium|chrome|browser|브라우저)/i;
 const BROWSER_AUTOMATION_ACTION_PATTERN =
   /(login|log in|sign in|authenticate|launch|open|start|run|execute|manual login|persistent context|로그인|인증|열어|띄워|실행)/i;
-const WORKSPACE_ARTIFACT_ACTION_PATTERN =
-  /(create|make|generate|write|save|export|render|build|produce|prepare|compose|convert|set-content|out-file|new-item|만들|생성|작성|저장|내보내|출력|제작|변환|준비)/i;
-const WORKSPACE_ARTIFACT_TARGET_PATTERN =
-  /(outputs\/|output|deliverable|artifact|pptx?|powerpoint|presentation|deck|slides?|pdf|docx?|xlsx?|csv|report|document|image|video|audio|chart|산출물|결과물|PPT|피피티|파워포인트|발표자료|슬라이드|보고서|문서|엑셀|스프레드시트|이미지|영상|오디오|차트)/i;
 const SHELL_WRAPPER_PATTERN =
   /^(?:\/bin\/)?(?:bash|sh)\s+-lc\s+(['"])([\s\S]*)\1$/i;
 const SHELL_METACHARACTER_PATTERN = /[|&;><`$()]/;
@@ -1260,13 +1256,6 @@ export function shouldUseBrowserAutomationBypass(prompt: string): boolean {
   );
 }
 
-function hasWorkspaceArtifactIntent(prompt: string): boolean {
-  return (
-    WORKSPACE_ARTIFACT_ACTION_PATTERN.test(prompt) &&
-    WORKSPACE_ARTIFACT_TARGET_PATTERN.test(prompt)
-  );
-}
-
 export function shouldUseManagedWorkspaceExecutionBypass({
   session,
   input,
@@ -1282,19 +1271,9 @@ export function shouldUseManagedWorkspaceExecutionBypass({
     return false;
   }
 
-  if (
-    session.kind === "single-task" ||
-    input.triggerType === "manual_task" ||
-    input.triggerType === "scheduled" ||
-    input.triggerType === "event"
-  ) {
-    return true;
-  }
-
-  return (
-    shouldUseUnsandboxedShellBypass(input.prompt) ||
-    hasWorkspaceArtifactIntent(input.prompt)
-  );
+  // Managed workspace sessions are already constrained to the agent workspace by
+  // session policy. Prefer reliable workspace writes over prompt keyword guessing.
+  return true;
 }
 
 export function buildRuntimeRequest({

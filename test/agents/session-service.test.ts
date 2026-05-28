@@ -2057,7 +2057,7 @@ test("buildRuntimeRequest inherits the managed session bypass policy", () => {
         prompt: "Run 'touch hello.txt' in the current workspace.",
       },
     }),
-    false
+    true
   );
   assert.equal(
     shouldUseManagedWorkspaceExecutionBypass({

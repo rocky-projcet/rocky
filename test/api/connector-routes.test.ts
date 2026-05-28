@@ -958,6 +958,85 @@ test("Instagram Graph discovery records app-access blockers and can retry", asyn
   }
 });
 
+test("Instagram Graph discovery maps Korean developer-role errors to tester blockers", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async (url) => ({
+      status: "opened",
+      application: "default browser",
+      url,
+      platform: "test",
+      kind: "url",
+    }),
+    connectorFetch: async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.includes("/oauth/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-user-token",
+          token_type: "bearer",
+        });
+      }
+      if (url.includes("/access_token")) {
+        return jsonResponse({
+          access_token: "instagram-long-lived-token",
+          token_type: "bearer",
+          expires_in: 5_184_000,
+          scope:
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+        });
+      }
+      return jsonResponse(
+        {
+          error: {
+            message: "개발자 역할 권한 부족: 개발자 역할 권한이 부족합니다.",
+          },
+        },
+        403,
+      );
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+    });
+    assert.equal(startResponse.statusCode, 202);
+    const started = startResponse.json<ConnectorState>();
+    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 400);
+
+    const stateResponse = await server.inject({
+      method: "GET",
+      url: "/connectors/instagram/state",
+    });
+    const blocked = stateResponse.json<ConnectorState>();
+    assert.equal(blocked.graphDiscovery?.status, "blocked");
+    assert.ok(
+      blocked.readiness.blockers.some(
+        (blocker) =>
+          blocker.code === "app_access_required" &&
+          /Instagram 계정 식별자|Rocky Meta 앱/u.test(blocker.nextAction),
+      ),
+    );
+    assert.equal(blocked.readiness.entitlement?.status, "blocked");
+  } finally {
+    await server.close();
+  }
+});
+
 test("Instagram tester request records pending and accepted state without secrets", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
@@ -1040,7 +1119,28 @@ test("Instagram tester request records pending and accepted state without secret
       requested.readiness.blockers.some(
         (blocker) =>
           blocker.code === "app_access_required" &&
-          /operator/u.test(blocker.nextAction),
+          /Rocky 운영자/u.test(blocker.nextAction),
+      ),
+    );
+
+    const failedResponse = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/tester-request",
+      payload: {
+        accountIdentifier: "@rocky_ig",
+        status: "failed",
+      },
+    });
+    assert.equal(failedResponse.statusCode, 200);
+    const failed = failedResponse.json<ConnectorState>();
+    assert.equal(failed.testerRequest?.status, "failed");
+    assert.equal(failed.readiness.entitlement?.status, "blocked");
+    assert.equal(failed.readiness.entitlement?.testerRequestStatus, "failed");
+    assert.ok(
+      failed.readiness.blockers.some(
+        (blocker) =>
+          blocker.code === "app_access_required" &&
+          /다시 요청하거나 Rocky 운영자에게 문의/u.test(blocker.nextAction),
       ),
     );
 
@@ -1061,7 +1161,7 @@ test("Instagram tester request records pending and accepted state without secret
       accepted.readiness.blockers.some(
         (blocker) =>
           blocker.code === "app_access_required" &&
-          /Retry Instagram OAuth/u.test(blocker.nextAction),
+          /OAuth를 다시 진행/u.test(blocker.nextAction),
       ),
     );
   } finally {

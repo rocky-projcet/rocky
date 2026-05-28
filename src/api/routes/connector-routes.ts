@@ -199,10 +199,17 @@ function parseTesterRequestStatus(
   if (value === undefined || value === null || value === "") {
     return null;
   }
-  if (value === "pending" || value === "invited" || value === "accepted") {
+  if (
+    value === "pending" ||
+    value === "invited" ||
+    value === "accepted" ||
+    value === "failed"
+  ) {
     return value;
   }
-  throw badRequest("테스터 등록 상태는 pending, invited, accepted 중 하나여야 합니다.");
+  throw badRequest(
+    "테스터 등록 상태는 pending, invited, accepted, failed 중 하나여야 합니다.",
+  );
 }
 
 export const registerConnectorRoutes: FastifyPluginAsync<

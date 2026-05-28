@@ -22,7 +22,7 @@ development configuration.
 ## Requirements
 
 - macOS 12 or newer
-- Node.js 22 or newer available as `node`
+- Node.js 22 or newer installed through Homebrew, Volta, asdf, nvm, or available as `node`
 - Codex CLI installed and authenticated before Codex-backed runs are used
 
 ## Install and run
@@ -46,14 +46,14 @@ When opened, Rocky starts:
 Logs are written under `~/Library/Logs/Rocky/`. Runtime state defaults to
 `~/Library/Application Support/Rocky/agent-engine`.
 
-Advanced environment overrides before launching from a shell:
+Rocky tries to find Node.js in standard GUI-safe locations, including Homebrew, Volta, asdf, and nvm installs. If the app still shows the Node.js requirement alert, launch it once from Terminal with an explicit Node path:
 
 ```sh
-ROCKY_NODE=/opt/homebrew/bin/node \
+ROCKY_NODE="$(command -v node)" \
 ROCKY_API_PORT=3000 \
 ROCKY_WEB_PORT=4173 \
 ROCKY_STATE_ROOT="$HOME/Library/Application Support/Rocky/agent-engine" \
-open Rocky.app
+/Applications/Rocky.app/Contents/MacOS/Rocky
 ```
 
 ## Manual update-safe path

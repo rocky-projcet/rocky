@@ -35,6 +35,7 @@ import type {
   ConnectorProvider,
   ConnectorReadinessRecord,
   ConnectorState,
+  ConnectorTesterRequestStatus,
 } from "@/shared/lib/agent-engine-client";
 
 import {
@@ -136,7 +137,10 @@ export function ConnectorDialog({
     });
   };
 
-  const submitTesterRequest = (accountIdentifier: string, status?: "accepted") => {
+  const submitTesterRequest = (
+    accountIdentifier: string,
+    status?: ConnectorTesterRequestStatus,
+  ) => {
     testerRequestMutation.mutate({ accountIdentifier, status });
   };
 
@@ -269,7 +273,10 @@ function InstagramGraphApiView({
   oauthSettingsDeleteError: Error | null;
   onGraphDiscovery: () => void;
   graphStarting: boolean;
-  onTesterRequest: (accountIdentifier: string, status?: "accepted") => void;
+  onTesterRequest: (
+    accountIdentifier: string,
+    status?: ConnectorTesterRequestStatus,
+  ) => void;
   testerRequesting: boolean;
   onBrowserLogin: () => void;
   browserStarting: boolean;
@@ -309,8 +316,9 @@ function InstagramGraphApiView({
       <DialogHeader className="gap-2">
         <DialogTitle className="text-lg">{providerLabel} Graph API 설정</DialogTitle>
         <DialogDescription className="text-sm leading-6">
-          Instagram 실행에는 Business 또는 Creator 프로페셔널 계정, Meta 앱,
-          승인된 권한, 액세스 토큰, Instagram Business Account ID가 필요합니다.
+          Instagram 실행에는 Business 또는 Creator 프로페셔널 계정과 Rocky 관리
+          OAuth 승인, Graph API 토큰, Instagram User ID가 필요합니다. 브라우저
+          보조 로그인만으로는 Graph API 기능을 사용할 수 없습니다.
         </DialogDescription>
       </DialogHeader>
 
@@ -551,12 +559,12 @@ function OAuthSettingsPanel({
         <div>
           <p className="flex items-center gap-2 text-sm font-medium text-foreground">
             <KeyRound className="size-4" />
-            Meta 앱 설정
+            자체 Meta 앱 설정 (선택)
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {configured
               ? `저장됨 · Client ID ${settings?.clientIdMasked ?? "****"}`
-              : "Instagram OAuth에 사용할 앱 값을 저장합니다."}
+              : "기본값은 Rocky 관리 OAuth 브로커입니다. 자체 Meta 앱을 쓸 때만 입력하세요."}
           </p>
         </div>
         <Badge variant="outline">
@@ -645,7 +653,10 @@ function TesterRequestPanel({
   request: ConnectorState["testerRequest"] | null;
   disabled: boolean;
   submitting: boolean;
-  onSubmit: (accountIdentifier: string, status?: "accepted") => void;
+  onSubmit: (
+    accountIdentifier: string,
+    status?: ConnectorTesterRequestStatus,
+  ) => void;
 }) {
   const [accountIdentifier, setAccountIdentifier] = useState(
     request?.accountIdentifier ?? "",
@@ -660,7 +671,10 @@ function TesterRequestPanel({
   const trimmed = accountIdentifier.trim();
   const canSubmit = trimmed.length > 0 && !disabled;
   const canRecordAccepted =
-    Boolean(request) && request?.status !== "accepted" && request?.status !== "completed";
+    Boolean(request) &&
+    request?.status !== "accepted" &&
+    request?.status !== "failed" &&
+    request?.status !== "completed";
 
   return (
     <form
@@ -795,6 +809,9 @@ function formatTesterRequestStatus(
   if (status === "accepted") {
     return "테스터 초대 수락이 기록되었습니다. Graph API 연결을 다시 진행할 수 있습니다.";
   }
+  if (status === "failed") {
+    return "테스터 등록 요청 실패가 기록되었습니다. 계정 식별자를 확인해 다시 요청하거나 Rocky 운영자에게 문의하세요.";
+  }
   if (status === "completed") {
     return "테스터 게이트가 완료되었고 Graph API 토큰이 발급되었습니다.";
   }
@@ -806,6 +823,7 @@ function formatTesterRequestBadge(
 ) {
   if (status === "invited") return "초대 보냄";
   if (status === "accepted") return "수락 기록";
+  if (status === "failed") return "실패";
   if (status === "completed") return "완료";
   return "대기 중";
 }
@@ -817,7 +835,7 @@ function formatBlockerCode(
   if (code === "facebook_page_required") return "Facebook 페이지 필요";
   if (code === "meta_business_setup_required") return "Meta Business 설정 필요";
   if (code === "meta_app_required") return "Meta 앱 필요";
-  if (code === "app_access_required") return "앱 접근 승인 필요";
+  if (code === "app_access_required") return "앱 접근/개발자 역할 승인 필요";
   if (code === "permission_missing") return "권한 필요";
   if (code === "app_review_required") return "앱 검수 필요";
   if (code === "access_token_missing") return "액세스 토큰 필요";
@@ -846,7 +864,7 @@ function formatBlockerAction(
     return "Meta 앱 Client ID와 Secret을 설정한 뒤 Graph API 연결을 다시 시작하세요.";
   }
   if (code === "app_access_required") {
-    return "Meta/Instagram에서 Rocky 앱 테스트 사용자 또는 앱 역할 초대를 수락한 뒤 다시 연결하세요.";
+    return fallback;
   }
   if (code === "permission_missing") {
     return "필요한 Instagram Graph API 권한을 승인하세요.";

@@ -101,6 +101,7 @@ export type ConnectorTesterRequestStatus =
   | "pending"
   | "invited"
   | "accepted"
+  | "failed"
   | "completed";
 
 export interface ConnectorTesterRequestInput {

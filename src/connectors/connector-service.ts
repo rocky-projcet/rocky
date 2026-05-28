@@ -4011,8 +4011,8 @@ function readinessBlocker(
 function professionalAccountBlocker(): ConnectorReadinessBlockerRecord {
   return readinessBlocker(
     "professional_account_required",
-    "Instagram Graph API execution requires a Professional Business or Creator account.",
-    "Switch the Instagram account to Business or Creator before enabling execution capabilities.",
+    "Instagram Graph API 실행에는 Business 또는 Creator 프로페셔널 계정이 필요합니다.",
+    "Instagram 계정을 Business 또는 Creator로 전환한 뒤 Graph API 연결을 다시 진행하세요.",
   );
 }
 
@@ -4043,7 +4043,7 @@ function instagramEntitlementForBlockers(
   if (testerRequest && testerRequest.status !== "completed") {
     return {
       gate: "instagram-meta-app-tester",
-      status: "pending",
+      status: testerRequest.status === "failed" ? "blocked" : "pending",
       reason: testerRequestStateMessage(testerRequest),
       checkedAt: checkedAt ?? testerRequest.updatedAt,
       testerRequestStatus: testerRequest.status,
@@ -4054,7 +4054,7 @@ function instagramEntitlementForBlockers(
       gate: "instagram-meta-app-tester",
       status: "blocked",
       reason:
-        "The Instagram account must be allowed to use the Rocky Meta app before OAuth can complete.",
+        "Instagram 계정이 Rocky Meta 앱 테스트 사용자 또는 앱 역할로 승인되어야 OAuth를 완료할 수 있습니다.",
       checkedAt: checkedAt ?? null,
       testerRequestStatus: null,
     };
@@ -4062,7 +4062,7 @@ function instagramEntitlementForBlockers(
   return {
     gate: "instagram-meta-app-tester",
     status: "allowed",
-    reason: "No tester gate is currently blocking this Instagram Graph API connection.",
+    reason: "현재 이 Instagram Graph API 연결을 막는 테스터 게이트가 없습니다.",
     checkedAt: checkedAt ?? null,
     testerRequestStatus: testerRequest?.status ?? null,
   };
@@ -4083,16 +4083,18 @@ function instagramAppAccessBlockers(
 ): ConnectorReadinessBlockerRecord[] {
   const nextAction =
     testerRequest?.status === "accepted"
-      ? "Retry Instagram OAuth now that the tester invitation has been accepted."
+      ? "테스터 초대 수락이 기록되었습니다. Instagram OAuth를 다시 진행해 Graph API 토큰을 발급하세요."
       : testerRequest?.status === "invited"
-        ? "Accept the Rocky Meta app tester invitation in Meta/Instagram, then mark it accepted and retry OAuth."
-        : testerRequest?.status === "pending"
-          ? "Wait for the Rocky operator to send the tester invitation, accept it in Meta/Instagram, then retry OAuth."
-          : "Request Rocky Meta app tester registration, accept the invitation in Meta/Instagram, then retry OAuth.";
+        ? "Meta/Instagram에서 Rocky Meta 앱 테스터 초대를 수락한 뒤 수락 기록을 남기고 OAuth를 다시 진행하세요."
+        : testerRequest?.status === "failed"
+          ? "테스터 등록 요청이 실패했습니다. Instagram 계정 식별자를 확인해 다시 요청하거나 Rocky 운영자에게 문의하세요."
+          : testerRequest?.status === "pending"
+            ? "Rocky 운영자가 테스터 초대를 보낼 때까지 기다린 뒤 Meta/Instagram에서 수락하고 OAuth를 다시 진행하세요."
+            : "Instagram 계정 식별자로 Rocky Meta 앱 테스터 등록을 요청하고, 초대를 수락한 뒤 OAuth를 다시 진행하세요.";
   return [
     readinessBlocker(
       "app_access_required",
-      "The Rocky Meta app is not available to this Instagram account yet.",
+      "이 Instagram 계정은 아직 Rocky Meta 앱을 사용할 수 없습니다.",
       nextAction,
     ),
   ];
@@ -4102,8 +4104,8 @@ function instagramDiscoveryNoAccountBlockers(): ConnectorReadinessBlockerRecord[
   return [
     readinessBlocker(
       "professional_account_required",
-      "No Instagram Business or Creator account was discovered.",
-      "Switch the Instagram account to Business or Creator, then grant instagram_business_basic.",
+      "Instagram Business 또는 Creator 계정을 찾지 못했습니다.",
+      "Instagram 계정을 Business 또는 Creator로 전환한 뒤 instagram_business_basic 권한을 승인하세요.",
     ),
   ];
 }
@@ -4117,7 +4119,7 @@ function instagramDiscoveryFailureBlockers(
 }
 
 function isInstagramAppAccessError(message: string): boolean {
-  return /tester|test user|app role|app access|invitation|development mode|beta|not authorized|does not have permission|permission for this action|not allowed/iu.test(
+  return /tester|test user|app role|app access|invitation|development mode|beta|not authorized|does not have permission|permission for this action|not allowed|개발자\s*역할\s*권한\s*부족|개발자\s*역할|앱\s*역할|테스터|초대|개발\s*모드|승인되지|허용되지/iu.test(
     message,
   );
 }
@@ -4125,7 +4127,12 @@ function isInstagramAppAccessError(message: string): boolean {
 function normalizeTesterRequestStatus(
   status: ConnectorTesterRequestStatus | undefined,
 ): ConnectorTesterRequestStatus {
-  if (status === "invited" || status === "accepted" || status === "completed") {
+  if (
+    status === "invited" ||
+    status === "accepted" ||
+    status === "failed" ||
+    status === "completed"
+  ) {
     return status;
   }
   return "pending";
@@ -4162,15 +4169,18 @@ function testerRequestStateMessage(
 
 function testerRequestStatusMessage(status: ConnectorTesterRequestStatus): string {
   if (status === "invited") {
-    return "Instagram tester invitation has been recorded. Accept it in Meta/Instagram, then retry Instagram OAuth.";
+    return "Rocky Meta 앱 테스터 초대 발송이 기록되었습니다. Meta/Instagram에서 초대를 수락한 뒤 OAuth를 다시 진행하세요.";
   }
   if (status === "accepted") {
-    return "Instagram tester invitation acceptance has been recorded. Retry Instagram OAuth to issue the access token.";
+    return "테스터 초대 수락이 기록되었습니다. Instagram OAuth를 다시 진행해 Graph API 토큰을 발급하세요.";
+  }
+  if (status === "failed") {
+    return "테스터 등록 요청 실패가 기록되었습니다. 계정 식별자를 확인해 다시 요청하거나 Rocky 운영자에게 문의하세요.";
   }
   if (status === "completed") {
-    return "Instagram tester gate is complete and the Graph API access token has been issued.";
+    return "테스터 게이트가 완료되었고 Graph API 토큰이 발급되었습니다.";
   }
-  return "Instagram tester registration request has been recorded for Rocky operator action.";
+  return "Rocky 운영자에게 전달할 Instagram 테스터 등록 요청이 기록되었습니다.";
 }
 
 function readInstagramAccountKind(value: string | null): ConnectorAccountKind {

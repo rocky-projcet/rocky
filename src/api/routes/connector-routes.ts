@@ -2,6 +2,8 @@ import type { FastifyPluginAsync, FastifyPluginOptions } from "fastify";
 
 import { listSupportedProviders } from "../../connectors/adapters.js";
 import type {
+  ConnectorBrokerRedeemInput,
+  ConnectorBrokerStartInput,
   ConnectorExecuteCapabilityInput,
   ConnectorOAuthSettingsInput,
   ConnectorPublishDraftInput,
@@ -87,6 +89,34 @@ function parseExecuteCapabilityBody(
     throw badRequest("커넥터 capability 실행 args는 JSON object여야 합니다.");
   }
   return { capabilityId, args: args as Record<string, unknown> };
+}
+
+function parseBrokerStartBody(body: unknown): ConnectorBrokerStartInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("OAuth broker start 요청은 JSON object여야 합니다.");
+  }
+  const input = body as Record<string, unknown>;
+  if (typeof input.returnUrl !== "string" || !input.returnUrl.trim()) {
+    throw badRequest("OAuth broker start 요청에는 returnUrl이 필요합니다.");
+  }
+  return {
+    returnUrl: input.returnUrl.trim(),
+    brokerBaseUrl:
+      typeof input.brokerBaseUrl === "string" && input.brokerBaseUrl.trim()
+        ? input.brokerBaseUrl.trim()
+        : null,
+  };
+}
+
+function parseBrokerRedeemBody(body: unknown): ConnectorBrokerRedeemInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("OAuth broker redeem 요청은 JSON object여야 합니다.");
+  }
+  const input = body as Record<string, unknown>;
+  if (typeof input.handoffCode !== "string" || !input.handoffCode.trim()) {
+    throw badRequest("OAuth broker redeem 요청에는 handoffCode가 필요합니다.");
+  }
+  return { handoffCode: input.handoffCode.trim() };
 }
 
 function parseStartLoginBody(
@@ -272,6 +302,67 @@ export const registerConnectorRoutes: FastifyPluginAsync<
       .type("text/html; charset=utf-8")
       .send(renderOAuthCallbackHtml(result.title, result.message));
   });
+
+  server.post("/oauth-broker/instagram/graph/start", async (request, reply) => {
+    sendJson(
+      reply,
+      202,
+      await options.connectorService.startInstagramGraphOAuthBroker(
+        parseBrokerStartBody(request.body),
+      ),
+    );
+  });
+
+  server.get("/oauth-broker/instagram/graph/callback", async (request, reply) => {
+    const query = request.query as {
+      code?: string;
+      state?: string;
+      error?: string;
+      error_description?: string;
+    };
+    const result = await options.connectorService.handleInstagramGraphOAuthBrokerCallback(
+      {
+        code: query.code ?? null,
+        state: query.state ?? null,
+        error: query.error ?? null,
+        errorDescription: query.error_description ?? null,
+      },
+    );
+    if (result.redirectUrl) {
+      reply.redirect(result.redirectUrl);
+      return;
+    }
+    reply
+      .code(result.ok ? 200 : 400)
+      .type("text/html; charset=utf-8")
+      .send(renderOAuthCallbackHtml(result.title, result.message));
+  });
+
+  server.post("/oauth-broker/instagram/graph/redeem", async (request, reply) => {
+    const result = await options.connectorService.redeemInstagramGraphOAuthBroker(
+      parseBrokerRedeemBody(request.body),
+    );
+    sendJson(reply, result.ok ? 200 : 404, result);
+  });
+
+  for (const callbackPath of [
+    "/connectors/:provider/graph/broker/callback",
+    "/api/connectors/:provider/graph/broker/callback",
+  ]) {
+    server.get(callbackPath, async (request, reply) => {
+      const { provider } = request.params as { provider: string };
+      const parsed = parseProvider(provider);
+      const query = request.query as { handoff_code?: string };
+      const result = await options.connectorService.handleGraphBrokerCallback(
+        parsed,
+        { handoffCode: query.handoff_code ?? "" },
+      );
+      reply
+        .code(result.ok ? 200 : 400)
+        .type("text/html; charset=utf-8")
+        .send(renderOAuthCallbackHtml(result.title, result.message));
+    });
+  }
 
   server.get(
     "/connectors/:provider/graph/oauth/callback",

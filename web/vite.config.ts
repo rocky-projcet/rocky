@@ -20,6 +20,7 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 4173,
+    allowedHosts: [".ngrok-free.app"],
     proxy: {
       "/api": {
         target: backendProxyTarget,
@@ -31,5 +32,6 @@ export default defineConfig({
   preview: {
     host: "127.0.0.1",
     port: 4173,
+    allowedHosts: [".ngrok-free.app"],
   },
 });

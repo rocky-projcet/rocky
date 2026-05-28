@@ -137,6 +137,8 @@ const TESTER_REQUEST_FILE = "tester-request.json";
 const BROWSER_PROFILE_DIR = "browser-profile";
 const CONNECTOR_SECRET_KEY_FILE = "connector-secrets.key";
 const INSTAGRAM_TOKEN_REFRESH_LEEWAY_MS = 7 * 24 * 60 * 60 * 1000;
+const INSTAGRAM_BROKER_SESSION_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_INSTAGRAM_OAUTH_BROKER_BASE_URL = "https://connect.blip.rocks";
 const INSTAGRAM_GRAPH_OAUTH_SCOPES = [
   "instagram_business_basic",
   "instagram_business_content_publish",
@@ -411,9 +413,9 @@ export class ConnectorService implements ConnectorServiceLike {
       },
     };
 
-    const brokerBaseUrl = readEnv(
-      this.baseEnv,
-      "ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL",
+    const brokerBaseUrl = this.resolveInstagramOAuthBrokerBaseUrl(
+      provider,
+      discoveryOAuth,
     );
     if (brokerBaseUrl) {
       return this.startBrokeredInstagramGraphDiscovery(
@@ -1083,12 +1085,22 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<ConnectorBrokerStartResult> {
     await this.ensureHydrated();
     const provider: ConnectorProvider = "instagram";
+    this.pruneBrokerOAuthSessions();
     if (!input.returnUrl || typeof input.returnUrl !== "string") {
       return {
         ok: false,
         provider,
         loginUrl: null,
         message: "OAuth broker returnUrl is required.",
+      };
+    }
+    if (!isAllowedInstagramBrokerReturnUrl(input.returnUrl)) {
+      return {
+        ok: false,
+        provider,
+        loginUrl: null,
+        message:
+          "OAuth broker returnUrl must be a loopback Rocky callback URL.",
       };
     }
     const oauth = getConnectorAdapter(provider).oauth;
@@ -1115,7 +1127,7 @@ export class ConnectorService implements ConnectorServiceLike {
       readEnv(this.baseEnv, "ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL") ??
       readEnv(this.baseEnv, "ROCKY_CONNECTOR_OAUTH_BASE_URL") ??
       input.brokerBaseUrl ??
-      null;
+      DEFAULT_INSTAGRAM_OAUTH_BROKER_BASE_URL;
     const redirectUri = readEnv(
       this.baseEnv,
       "ROCKY_CONNECTOR_INSTAGRAM_BROKER_REDIRECT_URI",
@@ -1189,6 +1201,7 @@ export class ConnectorService implements ConnectorServiceLike {
         redirectUrl: null,
       };
     }
+    this.pruneBrokerOAuthSessions();
     const pending = this.pendingBrokerOAuth.get(input.state);
     if (!pending) {
       return {
@@ -1233,6 +1246,7 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<ConnectorBrokerRedeemResult> {
     await this.ensureHydrated();
     const provider: ConnectorProvider = "instagram";
+    this.pruneBrokerOAuthSessions();
     const handoff = this.brokerHandoffs.get(input.handoffCode);
     if (!handoff || handoff.provider !== provider) {
       return {
@@ -1260,10 +1274,7 @@ export class ConnectorService implements ConnectorServiceLike {
     if (provider !== "instagram") {
       throw Object.assign(new Error("Graph broker callback is only supported for Instagram."), { statusCode: 400 });
     }
-    const brokerBaseUrl = readEnv(
-      this.baseEnv,
-      "ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL",
-    );
+    const brokerBaseUrl = this.resolveInstagramOAuthBrokerBaseUrl(provider);
     if (!brokerBaseUrl) {
       const message = "Instagram Graph OAuth broker base URL is not configured.";
       return {
@@ -2977,6 +2988,57 @@ export class ConnectorService implements ConnectorServiceLike {
     return path.join(this.providerDir(provider), BROWSER_PROFILE_DIR);
   }
 
+  private resolveInstagramOAuthBrokerBaseUrl(
+    provider: ConnectorProvider,
+    config?: Extract<ConnectorOAuthConfig, { supported: true }>,
+  ): string | null {
+    const explicitBrokerBaseUrl = readEnv(
+      this.baseEnv,
+      "ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL",
+    );
+    if (explicitBrokerBaseUrl) {
+      return explicitBrokerBaseUrl;
+    }
+    if (isTruthyEnv(this.baseEnv.ROCKY_CONNECTOR_DISABLE_DEFAULT_OAUTH_BROKER)) {
+      return null;
+    }
+    if (config && this.hasOAuthClientCredentials(provider, config)) {
+      return null;
+    }
+    return DEFAULT_INSTAGRAM_OAUTH_BROKER_BASE_URL;
+  }
+
+  private hasOAuthClientCredentials(
+    provider: ConnectorProvider,
+    config: Extract<ConnectorOAuthConfig, { supported: true }>,
+  ): boolean {
+    const prefix = `ROCKY_CONNECTOR_${config.envPrefix}`;
+    const storedSettings = this.oauthSettings.get(provider);
+    const clientId =
+      storedSettings?.clientId ??
+      readEnv(this.baseEnv, `${prefix}_CLIENT_ID`) ??
+      readEnv(this.baseEnv, `${prefix}_CLIENT_KEY`);
+    const clientSecret =
+      storedSettings?.clientSecret ??
+      readEnv(this.baseEnv, `${prefix}_CLIENT_SECRET`);
+    return Boolean(clientId && clientSecret);
+  }
+
+  private pruneBrokerOAuthSessions(): void {
+    const nowMs = Date.parse(this.now());
+    if (!Number.isFinite(nowMs)) return;
+    for (const [state, pending] of this.pendingBrokerOAuth.entries()) {
+      if (isExpiredIsoTimestamp(pending.createdAt, nowMs, INSTAGRAM_BROKER_SESSION_TTL_MS)) {
+        this.pendingBrokerOAuth.delete(state);
+      }
+    }
+    for (const [handoffCode, handoff] of this.brokerHandoffs.entries()) {
+      if (isExpiredIsoTimestamp(handoff.createdAt, nowMs, INSTAGRAM_BROKER_SESSION_TTL_MS)) {
+        this.brokerHandoffs.delete(handoffCode);
+      }
+    }
+  }
+
   private resolveOAuthCredentials(
     provider: ConnectorProvider,
     config: Extract<ConnectorOAuthConfig, { supported: true }>,
@@ -3852,7 +3914,12 @@ function buildInstagramGraphReadiness(
       "INSTAGRAM_META_BUSINESS_ID",
     ]),
   );
+  const hasManagedBroker = Boolean(
+    readEnv(baseEnv, "ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL") ||
+      !isTruthyEnv(baseEnv.ROCKY_CONNECTOR_DISABLE_DEFAULT_OAUTH_BROKER),
+  );
   const hasMetaApp = Boolean(
+    hasManagedBroker ||
     oauthSettings?.clientId ||
     readEnvAny(baseEnv, [
       "ROCKY_INSTAGRAM_META_APP_ID",
@@ -4848,6 +4915,55 @@ function readEnvAny(env: NodeJS.ProcessEnv, keys: string[]): string | null {
     }
   }
   return null;
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function isExpiredIsoTimestamp(
+  timestamp: string,
+  nowMs: number,
+  ttlMs: number,
+): boolean {
+  const timestampMs = Date.parse(timestamp);
+  return !Number.isFinite(timestampMs) || nowMs - timestampMs > ttlMs;
+}
+
+function isAllowedInstagramBrokerReturnUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password || url.hash) {
+    return false;
+  }
+  if (url.protocol === "rocky:") {
+    return url.hostname === "oauth" && url.pathname === "/instagram/graph/callback";
+  }
+  if (url.protocol !== "http:") {
+    return false;
+  }
+  if (!isLoopbackHostname(url.hostname)) {
+    return false;
+  }
+  return (
+    url.pathname === "/api/connectors/instagram/graph/broker/callback" ||
+    url.pathname === "/connectors/instagram/graph/broker/callback"
+  );
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
 }
 
 function readInstagramAccountLabel(env: NodeJS.ProcessEnv): string | null {

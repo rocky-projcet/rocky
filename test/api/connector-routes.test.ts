@@ -518,6 +518,187 @@ test("Instagram Graph discovery can defer OAuth URL opening to the current brows
   }
 });
 
+test("Instagram Graph discovery uses the default managed broker without local Meta credentials", async () => {
+  let brokerStartUrl: string | null = null;
+  let brokerStartBody: Record<string, unknown> | null = null;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {},
+    nativeUrlOpener: async () => {
+      throw new Error("Graph discovery should use the current browser in this test");
+    },
+    connectorFetch: async (input, init) => {
+      brokerStartUrl = input instanceof URL ? input.toString() : String(input);
+      brokerStartBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      return jsonResponse({
+        ok: true,
+        provider: "instagram",
+        loginUrl: "https://www.instagram.com/oauth/authorize?state=broker-state",
+        message: "Instagram Graph OAuth broker URL is ready.",
+      });
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+      headers: {
+        host: "127.0.0.1:4173",
+        "x-forwarded-proto": "http",
+      },
+      payload: {
+        openExternal: false,
+      },
+    });
+    assert.equal(response.statusCode, 202);
+    const state = response.json<ConnectorState>();
+    assert.equal(state.status, "connecting");
+    assert.equal(state.loginMode, "oauth");
+    assert.equal(
+      brokerStartUrl,
+      "https://connect.blip.rocks/api/oauth-broker/instagram/graph/start",
+    );
+    assert.equal(
+      brokerStartBody?.returnUrl,
+      "http://127.0.0.1:4173/api/connectors/instagram/graph/broker/callback",
+    );
+    assert.equal(brokerStartBody?.brokerBaseUrl, "https://connect.blip.rocks");
+    assert.equal(
+      state.loginUrl,
+      "https://www.instagram.com/oauth/authorize?state=broker-state",
+    );
+    assert.equal(
+      state.readiness.blockers.some(
+        (blocker) => blocker.code === "meta_app_required",
+      ),
+      false,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram Graph discovery uses an explicit broker URL override", async () => {
+  let brokerStartUrl: string | null = null;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL: "https://broker.example.test",
+    },
+    connectorFetch: async (input) => {
+      brokerStartUrl = input instanceof URL ? input.toString() : String(input);
+      return jsonResponse({
+        ok: true,
+        provider: "instagram",
+        loginUrl: "https://www.instagram.com/oauth/authorize?state=broker-state",
+        message: "Instagram Graph OAuth broker URL is ready.",
+      });
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+      payload: {
+        openExternal: false,
+      },
+    });
+    assert.equal(response.statusCode, 202);
+    assert.equal(
+      brokerStartUrl,
+      "https://broker.example.test/api/oauth-broker/instagram/graph/start",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram OAuth broker rejects external return URLs", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {},
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/oauth-broker/instagram/graph/start",
+      payload: {
+        returnUrl: "https://evil.example/callback",
+      },
+    });
+    assert.equal(response.statusCode, 202);
+    const body = response.json<{
+      ok: boolean;
+      loginUrl: string | null;
+      message: string;
+    }>();
+    assert.equal(body.ok, false);
+    assert.equal(body.loginUrl, null);
+    assert.match(body.message, /loopback Rocky callback/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Instagram OAuth broker expires pending authorization state", async () => {
+  let now = "2026-05-28T10:00:00.000Z";
+  let tokenExchangeCalls = 0;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => now,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_INSTAGRAM_BROKER_REDIRECT_URI:
+        "https://connect.blip.rocks/api/oauth-broker/instagram/graph/callback",
+    },
+    connectorFetch: async () => {
+      tokenExchangeCalls += 1;
+      return jsonResponse({});
+    },
+  });
+
+  try {
+    const startResponse = await server.inject({
+      method: "POST",
+      url: "/oauth-broker/instagram/graph/start",
+      payload: {
+        returnUrl:
+          "http://127.0.0.1:4173/api/connectors/instagram/graph/broker/callback",
+      },
+    });
+    assert.equal(startResponse.statusCode, 202);
+    const startBody = startResponse.json<{
+      ok: boolean;
+      loginUrl: string | null;
+    }>();
+    assert.equal(startBody.ok, true);
+    const state = new URL(startBody.loginUrl ?? "").searchParams.get("state");
+    assert.ok(state);
+
+    now = "2026-05-28T10:10:01.000Z";
+    const callbackResponse = await server.inject({
+      method: "GET",
+      url: `/oauth-broker/instagram/graph/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+    });
+    assert.equal(callbackResponse.statusCode, 400);
+    assert.match(callbackResponse.body, /broker state is missing/u);
+    assert.equal(tokenExchangeCalls, 0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("Instagram OAuth app settings are encrypted and used for Graph discovery", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({

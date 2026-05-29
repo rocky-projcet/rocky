@@ -3362,7 +3362,10 @@ function compareRockyMessages(
   const safeLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
   const safeRightTime = Number.isFinite(rightTime) ? rightTime : 0;
 
-  return safeLeftTime - safeRightTime || left.id.localeCompare(right.id);
+  // User and Rocky placeholder messages for one turn are created with the
+  // same timestamp. Keep the server/merge insertion order in that case so the
+  // answer never jumps above the user request after a refresh.
+  return safeLeftTime - safeRightTime;
 }
 
 function mergeRockyMessages(

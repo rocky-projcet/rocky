@@ -640,7 +640,7 @@ function formatBlockerCode(
   if (code === "professional_account_required") return "프로페셔널 계정 필요";
   if (code === "facebook_page_required") return "Facebook 페이지 필요";
   if (code === "meta_business_setup_required") return "Meta Business 설정 필요";
-  if (code === "meta_app_required") return "Meta 앱 필요";
+  if (code === "meta_app_required") return "관리 OAuth 필요";
   if (code === "app_access_required") return "앱 접근/개발자 역할 승인 필요";
   if (code === "permission_missing") return "권한 필요";
   if (code === "app_review_required") return "앱 검수 필요";

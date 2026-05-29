@@ -10,7 +10,7 @@ const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 function parseArgs(argv) {
   const options = {
-    tag: "v0.1.1",
+    tag: "v0.1.2",
     outputDirectory: undefined,
     skipBuild: false,
     skipNpmInstall: false,
@@ -52,7 +52,7 @@ function parseArgs(argv) {
   }
 
   if (!options.tag || options.tag.startsWith("-")) {
-    throw new Error("--tag must be a release tag such as v0.1.1.");
+    throw new Error("--tag must be a release tag such as v0.1.2.");
   }
 
   options.outputDirectory ??= path.join(repoRoot, "releases", options.tag);
@@ -60,7 +60,7 @@ function parseArgs(argv) {
 }
 
 function printUsage() {
-  console.log(`Usage: npm run release:macos -- [options]\n\nOptions:\n  --tag <tag>                 Release tag. Defaults to v0.1.1.\n  --output-directory <path>   Artifact output directory. Defaults to releases/<tag>.\n  --skip-build                Reuse existing dist/ and web/dist/.\n  --skip-npm-install          Do not run npm ci in the staged app payload.\n  --no-dmg                    Skip optional DMG creation.
+  console.log(`Usage: npm run release:macos -- [options]\n\nOptions:\n  --tag <tag>                 Release tag. Defaults to v0.1.2.\n  --output-directory <path>   Artifact output directory. Defaults to releases/<tag>.\n  --skip-build                Reuse existing dist/ and web/dist/.\n  --skip-npm-install          Do not run npm ci in the staged app payload.\n  --no-dmg                    Skip optional DMG creation.
   --no-pkg                    Skip optional PKG installer creation.\n`);
 }
 
@@ -430,4 +430,4 @@ if (dmgPath) {
 if (pkgPath) {
   console.log(`- ${pkgPath}`);
 }
-console.log("Note: artifacts are unsigned and not notarized for v0.1.1.");
+console.log("Note: artifacts are unsigned and not notarized for v0.1.2.");

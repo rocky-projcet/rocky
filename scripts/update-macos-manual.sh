@@ -3,7 +3,7 @@ set -euo pipefail
 
 SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_ROOT="${1:-}"
-RELEASE_TAG="v0.1.1"
+RELEASE_TAG="v0.1.2"
 
 if [[ -z "$TARGET_ROOT" ]]; then
   cat >&2 <<'USAGE'

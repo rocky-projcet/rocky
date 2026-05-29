@@ -1,14 +1,14 @@
 # Rocky macOS install/update
 
-Release tag: `v0.1.1`
+Release tag: `v0.1.2`
 
-The v0.1.1 macOS distribution includes a zipped app bundle, optional DMG, and
+The v0.1.2 macOS distribution includes a zipped app bundle, optional DMG, and
 an unsigned `.pkg` installer produced on macOS builders:
 
 ```text
-rocky-v0.1.1-macos-<arch>.app.zip
-rocky-v0.1.1-macos-<arch>.dmg
-rocky-v0.1.1-macos-<arch>.pkg
+rocky-v0.1.2-macos-<arch>.app.zip
+rocky-v0.1.2-macos-<arch>.dmg
+rocky-v0.1.2-macos-<arch>.pkg
 ```
 
 The `.app.zip` remains the simplest preview artifact. The `.pkg` is the clearer
@@ -31,7 +31,7 @@ development configuration.
 
 Preferred installer/update flow:
 
-1. Download `rocky-v0.1.1-macos-<arch>.pkg` from the GitHub Release.
+1. Download `rocky-v0.1.2-macos-<arch>.pkg` from the GitHub Release.
 2. Open the package and follow the macOS Installer prompts.
 3. The package installs or replaces `/Applications/Rocky.app`.
 4. Open `Rocky.app`.
@@ -40,7 +40,7 @@ Preferred installer/update flow:
 
 Preview app-bundle flow:
 
-1. Download `rocky-v0.1.1-macos-<arch>.app.zip` from the GitHub Release.
+1. Download `rocky-v0.1.2-macos-<arch>.app.zip` from the GitHub Release.
 2. Unzip it.
 3. Move `Rocky.app` to `/Applications` or another writable folder.
 4. Open `Rocky.app`.
@@ -119,13 +119,13 @@ npm dependencies into the staged payload, validates the app layout, and creates
 artifacts under:
 
 ```text
-releases/v0.1.1/
+releases/v0.1.2/
 ```
 
 Useful options:
 
 ```sh
-npm run release:macos -- --tag v0.1.1
+npm run release:macos -- --tag v0.1.2
 npm run release:macos -- --no-dmg
 npm run release:macos -- --no-pkg
 npm run release:macos -- --skip-build
@@ -139,7 +139,7 @@ is available, but DMG and PKG creation are skipped because `hdiutil` and
 
 After building or downloading the artifact:
 
-1. Install `rocky-v0.1.1-macos-<arch>.pkg`, unzip the app zip, or mount the DMG.
+1. Install `rocky-v0.1.2-macos-<arch>.pkg`, unzip the app zip, or mount the DMG.
 2. Open `/Applications/Rocky.app` or the staged `Rocky.app`.
 3. Confirm the browser opens `http://127.0.0.1:4173`.
 4. Confirm the API responds:
@@ -154,14 +154,14 @@ After building or downloading the artifact:
 
 ## Signing and notarization decision
 
-v0.1.1 macOS artifacts are unsigned and not notarized. The release intentionally
+v0.1.2 macOS artifacts are unsigned and not notarized. The release intentionally
 avoids paid Apple Developer ID credentials while the repository is still early.
 Gatekeeper warnings are expected. A later release can add Developer ID signing,
 notarization, stapling, and a stricter DMG install experience.
 
 ## Architecture support decision
 
-The v0.1.1 artifact name includes the builder Node architecture (`arm64` or
+The v0.1.2 artifact name includes the builder Node architecture (`arm64` or
 `x64`). Rocky does not bundle a universal Node runtime in this release. Users
 must install Node.js 22+ for their Mac architecture. The app payload is mostly
 JavaScript, but the release should be smoke-tested on the architecture named in
@@ -173,7 +173,7 @@ the artifact before publication.
 - No Apple Developer ID signing or notarization.
 - The `.pkg` installer is unsigned and uses macOS Installer UI, but it is not a
   fully automatic in-app updater.
-- No automatic download/update channel is provided in `v0.1.1`.
+- No automatic download/update channel is provided in `v0.1.2`.
 - No silent/background update flow is provided.
 - Rollback is best-effort command-line recovery, not a complete GUI rollback UX.
 - No LaunchAgent/service registration; closing the app stops the API and web UI.

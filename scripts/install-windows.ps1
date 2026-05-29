@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ReleaseTag = "v0.1.1"
+$ReleaseTag = "v0.1.2"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $MarkerPath = Join-Path $Root ".rocky-install"
 $ToolsRoot = Join-Path $Root ".tools"

@@ -126,6 +126,19 @@ export interface RockyMessageRecord {
   createdAt: string;
 }
 
+export interface RockyChatMessagePageRecord {
+  messages: RockyMessageRecord[];
+  limit: number;
+  totalCount: number;
+  hasPrevious: boolean;
+  nextBefore: string | null;
+}
+
+export interface RockyChatMessagePageInput {
+  limit?: number | null;
+  before?: string | null;
+}
+
 export interface RockyChatRecord {
   id: string;
   title: string;
@@ -140,6 +153,7 @@ export interface RockyChatRecord {
   executionStarted: boolean;
   createdAt: string;
   updatedAt: string;
+  messagePage?: RockyChatMessagePageRecord;
 }
 
 export interface RockyCoreSettingsRecord {
@@ -263,7 +277,14 @@ export interface RockyChatServiceLike {
     input: RockyTemplateInterviewTurnInput
   ): Promise<RockyTemplateInterviewTurnResult>;
   createChat(input: RockyChatCreateInput): Promise<RockyChatRecord>;
-  getChat(chatId: string): Promise<RockyChatRecord>;
+  getChat(
+    chatId: string,
+    page?: RockyChatMessagePageInput
+  ): Promise<RockyChatRecord>;
+  getChatMessages(
+    chatId: string,
+    page?: RockyChatMessagePageInput
+  ): Promise<RockyChatMessagePageRecord>;
   listChats(): Promise<RockyChatRecord[]>;
   getCoreManagement(): Promise<RockyCoreManagementRecord>;
   updateCoreSettings(

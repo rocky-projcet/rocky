@@ -13,7 +13,9 @@ import {
 import type { AgentRecord } from "../../src/agents/agent-types.js";
 import type {
   RockyAbilityCardRecord,
+  RockyChatMessagePageRecord,
   RockyChatRecord,
+  RockyMessageRecord,
 } from "../../src/rocky-chat/rocky-chat-types.js";
 import type {
   AgentRunRecord,
@@ -433,6 +435,107 @@ function createRockyChatTestServer(
     transcriptOverrides,
   };
 }
+
+test("rocky chat detail returns latest message page and loads older messages by cursor", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-page-"));
+  const { server } = createRockyChatTestServer(stateRoot);
+  const chatId = "rocky-chat-message-page-test";
+  const messages: RockyMessageRecord[] = Array.from({ length: 65 }, (_, index) => {
+    const createdAt = new Date(Date.UTC(2026, 3, 21, 0, 0, index)).toISOString();
+    return {
+      id: `message-${index}`,
+      chatId,
+      role: index % 2 === 0 ? "user" : "rocky",
+      intent: "conversation",
+      text: `message ${index}`,
+      attachmentIds: [],
+      domain: "general",
+      workerId: null,
+      skillCandidateIds: [],
+      usedSkills: [],
+      dispatchId: null,
+      createdAt,
+    };
+  });
+  const chat: RockyChatRecord = {
+    id: chatId,
+    title: "Long chat",
+    intent: "conversation",
+    domain: "general",
+    worker: null,
+    attachments: [],
+    messages,
+    skillCandidates: [],
+    dispatches: [],
+    orchestration: null,
+    executionStarted: false,
+    createdAt: messages[0]!.createdAt,
+    updatedAt: messages.at(-1)!.createdAt,
+  };
+  await mkdir(path.join(stateRoot, "rocky-chat", "chats", chatId), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(stateRoot, "rocky-chat", "chats", chatId, "chat.json"),
+    JSON.stringify(chat, null, 2),
+    "utf8"
+  );
+
+  try {
+    const detailResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chatId}`,
+    });
+    assert.equal(detailResponse.statusCode, 200);
+    const detail = detailResponse.json<RockyChatRecord>();
+    assert.equal(detail.messages.length, 50);
+    assert.equal(detail.messages[0]?.id, "message-15");
+    assert.equal(detail.messages.at(-1)?.id, "message-64");
+    assert.equal(detail.messagePage?.totalCount, 65);
+    assert.equal(detail.messagePage?.hasPrevious, true);
+    assert.equal(detail.messagePage?.nextBefore, "message-15");
+
+    const olderResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chatId}/messages?before=message-15&limit=10`,
+    });
+    assert.equal(olderResponse.statusCode, 200);
+    const older = olderResponse.json<RockyChatMessagePageRecord>();
+    assert.deepEqual(
+      older.messages.map((message) => message.id),
+      [
+        "message-5",
+        "message-6",
+        "message-7",
+        "message-8",
+        "message-9",
+        "message-10",
+        "message-11",
+        "message-12",
+        "message-13",
+        "message-14",
+      ]
+    );
+    assert.equal(older.totalCount, 65);
+    assert.equal(older.hasPrevious, true);
+    assert.equal(older.nextBefore, "message-5");
+
+    const firstResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${chatId}/messages?before=message-5&limit=10`,
+    });
+    assert.equal(firstResponse.statusCode, 200);
+    const first = firstResponse.json<RockyChatMessagePageRecord>();
+    assert.deepEqual(
+      first.messages.map((message) => message.id),
+      ["message-0", "message-1", "message-2", "message-3", "message-4"]
+    );
+    assert.equal(first.hasPrevious, false);
+    assert.equal(first.nextBefore, null);
+  } finally {
+    await server.close();
+  }
+});
 
 test("rocky abilities expose skill-backed home cards", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -50,7 +51,9 @@ import type { RuntimeEvent } from "@/domains/run/types";
 import {
   useCancelRockyChatMutation,
   useCreateRockyChatMutation,
+  ROCKY_CHAT_MESSAGE_PAGE_LIMIT,
   useRockyChatQuery,
+  useRockyChatMessagesMutation,
   useSendRockyMessageMutation,
 } from "@/domains/rocky/hooks";
 import {
@@ -101,6 +104,7 @@ import {
 } from "@/domains/agent/lib/agent-task-upload";
 import type {
   RockyAttachmentRecord,
+  RockyChatMessagePageRecord,
   RockyChatRecord,
   RockyMessageRecord,
 } from "@/domains/rocky/types";
@@ -3349,6 +3353,87 @@ function appendOptimisticMessage(
     : [...messages, optimisticMessage];
 }
 
+function compareRockyMessages(
+  left: RockyMessageRecord,
+  right: RockyMessageRecord
+): number {
+  const leftTime = Date.parse(left.createdAt);
+  const rightTime = Date.parse(right.createdAt);
+  const safeLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
+  const safeRightTime = Number.isFinite(rightTime) ? rightTime : 0;
+
+  return safeLeftTime - safeRightTime || left.id.localeCompare(right.id);
+}
+
+function mergeRockyMessages(
+  ...groups: Array<RockyMessageRecord[] | null | undefined>
+): RockyMessageRecord[] {
+  const byId = new Map<string, RockyMessageRecord>();
+  for (const group of groups) {
+    for (const message of group ?? []) {
+      byId.set(message.id, message);
+    }
+  }
+
+  return [...byId.values()].sort(compareRockyMessages);
+}
+
+function mergeRefreshedRockyChat(
+  current: RockyChatRecord | null,
+  incoming: RockyChatRecord
+): RockyChatRecord {
+  if (!current || current.id !== incoming.id) {
+    return incoming;
+  }
+
+  const mergedMessages = mergeRockyMessages(current.messages, incoming.messages);
+  const hasLoadedOlderMessages = current.messages.length > incoming.messages.length;
+  const currentPage = current.messagePage;
+  const incomingPage = incoming.messagePage;
+  const messagePage: RockyChatMessagePageRecord | undefined =
+    currentPage || incomingPage
+      ? {
+          messages: mergedMessages,
+          limit:
+            incomingPage?.limit ??
+            currentPage?.limit ??
+            ROCKY_CHAT_MESSAGE_PAGE_LIMIT,
+          totalCount:
+            incomingPage?.totalCount ??
+            currentPage?.totalCount ??
+            mergedMessages.length,
+          hasPrevious: hasLoadedOlderMessages
+            ? currentPage?.hasPrevious ?? false
+            : incomingPage?.hasPrevious ?? currentPage?.hasPrevious ?? false,
+          nextBefore: hasLoadedOlderMessages
+            ? currentPage?.nextBefore ?? null
+            : incomingPage?.nextBefore ?? currentPage?.nextBefore ?? null,
+        }
+      : undefined;
+
+  return {
+    ...incoming,
+    messages: mergedMessages,
+    messagePage,
+  };
+}
+
+function prependRockyChatMessagePage(
+  chat: RockyChatRecord,
+  page: RockyChatMessagePageRecord
+): RockyChatRecord {
+  const messages = mergeRockyMessages(page.messages, chat.messages);
+
+  return {
+    ...chat,
+    messages,
+    messagePage: {
+      ...page,
+      messages,
+    },
+  };
+}
+
 function buildOptimisticUserMessage(
   chat: RockyChatRecord,
   text: string,
@@ -6337,14 +6422,19 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   >({});
   const submitInFlightRef = useRef(false);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageScrollRef = useRef<HTMLElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const filePanelSignatureRef = useRef<string | null>(null);
   const filePanelSelectionRequestIdRef = useRef(0);
   const runProgressSourcesRef = useRef<Map<string, RunEventsSource>>(new Map());
+  const pendingPrependScrollRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const scrollToBottomRef = useRef(false);
+  const loadingPreviousMessagesRef = useRef(false);
   const { userTemplates } = useMdTemplates();
   const createChatMutation = useCreateRockyChatMutation();
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
   const cancelRockyChatMutation = useCancelRockyChatMutation(chat?.id ?? null);
+  const rockyChatMessagesMutation = useRockyChatMessagesMutation(chat?.id ?? null);
   const rockyChatQuery = useRockyChatQuery(
     isTaskDetail ? routeTaskId : chat?.id ?? null
   );
@@ -6352,28 +6442,48 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const messageCount = chat?.messages.length ?? 0;
   const visibleMessageCount =
     messageCount + (optimisticUserMessage?.chatId === chat?.id ? 1 : 0);
+  const hasPreviousMessages = chat?.messagePage?.hasPrevious ?? false;
   const hasActiveOrchestration =
     chat?.dispatches.some((dispatch) => {
       const status = dispatch.orchestration?.status;
       return status === "running" || status === "planned";
     }) ?? false;
-  const transcriptSessionIds =
-    chat?.dispatches.flatMap((dispatch) =>
-      dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
-    ) ?? [];
-  const transcriptAgentIds =
-    chat?.dispatches.flatMap((dispatch) =>
-      dispatch.orchestration?.agentId ? [dispatch.orchestration.agentId] : []
-    ) ?? [];
+  const visibleDispatchIds = useMemo(
+    () =>
+      new Set(
+        chat?.messages.flatMap((message) =>
+          message.dispatchId ? [message.dispatchId] : []
+        ) ?? []
+      ),
+    [chat?.messages]
+  );
+  const visibleOrActiveDispatches = useMemo(
+    () =>
+      chat?.dispatches.filter((dispatch) => {
+        const status = dispatch.orchestration?.status;
+        return (
+          visibleDispatchIds.has(dispatch.id) ||
+          status === "running" ||
+          status === "planned"
+        );
+      }) ?? [],
+    [chat?.dispatches, visibleDispatchIds]
+  );
+  const transcriptSessionIds = visibleOrActiveDispatches.flatMap((dispatch) =>
+    dispatch.orchestration?.sessionId ? [dispatch.orchestration.sessionId] : []
+  );
+  const transcriptAgentIds = visibleOrActiveDispatches.flatMap((dispatch) =>
+    dispatch.orchestration?.agentId ? [dispatch.orchestration.agentId] : []
+  );
   const allRunIds = useMemo(
     () => [
       ...new Set(
-        chat?.dispatches.flatMap((dispatch) =>
+        visibleOrActiveDispatches.flatMap((dispatch) =>
           dispatch.orchestration?.runId ? [dispatch.orchestration.runId] : []
-        ) ?? []
+        )
       ),
     ],
-    [chat?.dispatches]
+    [visibleOrActiveDispatches]
   );
   const allRunIdsKey = allRunIds.join("\n");
   const activeRunIds = useMemo(
@@ -6632,7 +6742,12 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
 
   useEffect(() => {
     if (refreshedChat) {
-      setChat(refreshedChat);
+      setChat((current) => {
+        if (!current || current.id !== refreshedChat.id) {
+          scrollToBottomRef.current = true;
+        }
+        return mergeRefreshedRockyChat(current, refreshedChat);
+      });
     }
   }, [refreshedChat]);
 
@@ -6775,9 +6890,74 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     return () => window.clearInterval(timer);
   }, [chat?.id, hasActiveOrchestration, refetchRockyChat]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [visibleMessageCount, transcriptRefreshMarker]);
+  const loadPreviousMessages = async () => {
+    if (
+      !chat?.id ||
+      !hasPreviousMessages ||
+      rockyChatMessagesMutation.isPending ||
+      loadingPreviousMessagesRef.current
+    ) {
+      return;
+    }
+
+    const before = chat.messagePage?.nextBefore ?? chat.messages[0]?.id ?? null;
+    if (!before) {
+      return;
+    }
+
+    const scrollContainer = messageScrollRef.current;
+    pendingPrependScrollRef.current = scrollContainer
+      ? {
+          scrollHeight: scrollContainer.scrollHeight,
+          scrollTop: scrollContainer.scrollTop,
+        }
+      : null;
+
+    try {
+      loadingPreviousMessagesRef.current = true;
+      const page = await rockyChatMessagesMutation.mutateAsync({
+        before,
+        limit: ROCKY_CHAT_MESSAGE_PAGE_LIMIT,
+      });
+      setChat((current) =>
+        current?.id === chat.id
+          ? prependRockyChatMessagePage(current, page)
+          : current
+      );
+    } catch (error) {
+      pendingPrependScrollRef.current = null;
+      toast.error("?댁쟾 ??붾? 遺덈윭?ㅼ? 紐삵뻽?듬땲??", {
+        description: getErrorMessage(error, "?좎떆 ???ㅼ떆 ?쒕룄??二쇱꽭??"),
+      });
+    } finally {
+      loadingPreviousMessagesRef.current = false;
+    }
+  };
+
+  const handleMessageScroll = () => {
+    const scrollContainer = messageScrollRef.current;
+    if (!scrollContainer || scrollContainer.scrollTop > 240) {
+      return;
+    }
+
+    void loadPreviousMessages();
+  };
+
+  useLayoutEffect(() => {
+    const scrollContainer = messageScrollRef.current;
+    const pendingPrepend = pendingPrependScrollRef.current;
+    if (scrollContainer && pendingPrepend) {
+      const heightDelta = scrollContainer.scrollHeight - pendingPrepend.scrollHeight;
+      scrollContainer.scrollTop = pendingPrepend.scrollTop + heightDelta;
+      pendingPrependScrollRef.current = null;
+      return;
+    }
+
+    if (scrollToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ block: "end" });
+      scrollToBottomRef.current = false;
+    }
+  }, [chat?.id, visibleMessageCount]);
 
   const sendRockyInput = async (
     inputMessage: string,
@@ -6792,6 +6972,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     const trimmedMessage = inputMessage.trim();
     if (chat && trimmedMessage) {
       const createdAt = new Date().toISOString();
+      scrollToBottomRef.current = true;
       setOptimisticUserMessage(
         buildOptimisticUserMessage(chat, trimmedMessage, createdAt)
       );
@@ -6810,6 +6991,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
         ? await sendMessageMutation.mutateAsync(input)
         : await createChatMutation.mutateAsync(input);
 
+      scrollToBottomRef.current = true;
       setChat(nextChat);
       setOptimisticUserMessage(null);
       setFiles([]);
@@ -6966,7 +7148,11 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
             </Button>
           </div>
         ) : null}
-        <main className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
+        <main
+          ref={messageScrollRef}
+          onScroll={handleMessageScroll}
+          className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8"
+        >
           {isTaskDetail && !chat ? (
             <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center text-center">
               <div className="text-sm font-medium text-foreground">

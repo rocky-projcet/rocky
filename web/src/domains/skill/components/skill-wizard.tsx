@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   AlertCircle,
@@ -26,6 +27,7 @@ import {
   type SkillStep,
   type SkillTemplate,
 } from "../lib/skill-template-catalog";
+import { hasAvailableInstagramPublishCapability } from "../lib/instagram-publish-gate";
 
 type AnswerValue =
   | string
@@ -280,7 +282,16 @@ function SkillFieldView({
   return (
     <FieldShell label={field.label} helper={field.helper}>
       {field.kind === "single-select" ? (
-        <SingleSelectField field={field} value={value} onChange={onChange} />
+        field.id === "autoPublish" ? (
+          <PublishModeField
+            field={field}
+            value={value}
+            answers={answers}
+            onChange={onChange}
+          />
+        ) : (
+          <SingleSelectField field={field} value={value} onChange={onChange} />
+        )
       ) : field.kind === "single-select-with-detail" ? (
         <SingleSelectWithDetail field={field} value={value} onChange={onChange} />
       ) : field.kind === "multi-select" ? (
@@ -381,6 +392,86 @@ function resolveChannelConnector(answers: SkillWizardAnswers): ChannelConnector 
   return { provider: null, label: "발행 계정" };
 }
 
+function PublishModeField({
+  field,
+  value,
+  answers,
+  onChange,
+}: {
+  field: SkillField;
+  value: AnswerValue;
+  answers: SkillWizardAnswers;
+  onChange: (value: AnswerValue) => void;
+}) {
+  const selected = typeof value === "string" ? value : "";
+  const channel = resolveChannelConnector(answers);
+  const instagramSelected = channel.provider === "instagram";
+  const instagramStateQuery = useQuery({
+    queryKey: ["connector", "instagram", "publish-gate"],
+    queryFn: () => agentEngineClient.getConnectorState("instagram"),
+    enabled: instagramSelected,
+    staleTime: 10_000,
+  });
+  const publishAvailable = hasAvailableInstagramPublishCapability(
+    instagramStateQuery.data,
+  );
+
+  function optionDisabled(option: SkillFieldOption): boolean {
+    if (option.disabled) {
+      return true;
+    }
+    if (!instagramSelected || option.id === "draft-only") {
+      return false;
+    }
+    return option.id === "schedule" || !publishAvailable;
+  }
+
+  useEffect(() => {
+    if (!instagramSelected || !selected) {
+      return;
+    }
+    const option = field.options?.find((entry) => entry.id === selected);
+    if (option && optionDisabled(option)) {
+      onChange("draft-only");
+    }
+  }, [field.options, instagramSelected, onChange, publishAvailable, selected]);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        {(field.options ?? []).map((option) => {
+          const disabled = optionDisabled(option);
+          const description =
+            instagramSelected && option.id === "review-then-publish" && !publishAvailable
+              ? "검증된 Instagram 발행 실행 스킬과 계정이 준비되면 선택할 수 있습니다."
+              : instagramSelected && option.id === "schedule"
+                ? "예약 발행은 후속 범위입니다."
+                : option.description;
+          return (
+            <ChoicePill
+              key={option.id}
+              label={option.label}
+              description={description}
+              active={selected === option.id}
+              disabled={disabled}
+              onClick={() => onChange(option.id)}
+            />
+          );
+        })}
+      </div>
+      {instagramSelected ? (
+        <p className="text-xs leading-5 text-muted-foreground">
+          {publishAvailable
+            ? "Instagram 발행 실행 스킬의 가능한 작업이 확인되었습니다. 실제 발행은 실행 직전 승인 후 진행됩니다."
+            : instagramStateQuery.isLoading
+              ? "Instagram 발행 실행 스킬의 가능한 작업을 확인하는 중입니다."
+              : "Instagram은 발행 실행 스킬과 이 스킬에 사용할 계정이 준비될 때까지 초안만 만들 수 있습니다."}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function AccountConnectField({
   value,
   answers,
@@ -434,7 +525,9 @@ function AccountConnectField({
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        연결한 세션은 기기에 안전하게 저장되어 다음 작업부터 자동으로 사용됩니다.
+        {channel.provider === "instagram"
+          ? "계정을 연결하면 이 스킬에 사용할 계정과 가능한 작업을 확인합니다."
+          : "연결한 세션은 기기에 안전하게 저장되어 다음 작업부터 자동으로 사용됩니다."}
       </p>
       {channel.provider ? (
         <ConnectorDialog

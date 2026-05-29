@@ -95,6 +95,10 @@ import { useAgentQuery } from "@/domains/agent/hooks";
 import { useAgentEmoji } from "@/domains/agent/lib/agent-avatar-store";
 import { useTaskAgentId } from "@/domains/agent/lib/task-agent-store";
 import { AgentAvatar } from "@/domains/agent/components/agent-avatar";
+import {
+  buildRockyAttachmentInputs,
+  shouldCreateTmpfilesPublicMediaUrls,
+} from "@/domains/agent/lib/agent-task-upload";
 import type {
   RockyAttachmentRecord,
   RockyChatRecord,
@@ -332,28 +336,6 @@ function encodeUtf8Base64(value: string): string {
   }
 
   return btoa(binary);
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onerror = () => {
-      reject(new Error(`Failed to read file: ${file.name}`));
-    };
-
-    reader.onload = () => {
-      if (typeof reader.result !== "string") {
-        reject(new Error(`Failed to encode file: ${file.name}`));
-        return;
-      }
-
-      const [, payload = ""] = reader.result.split(",", 2);
-      resolve(payload);
-    };
-
-    reader.readAsDataURL(file);
-  });
 }
 
 function openPopupLocation(popup: Window | null, href: string): void {
@@ -6815,14 +6797,11 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       );
     }
     try {
-      const attachments = await Promise.all(
-        inputFiles.map(async (file) => ({
-          name: file.name,
-          contentType: file.type || null,
-          size: file.size,
-          contentBase64: await fileToBase64(file),
-        }))
-      );
+      const attachments = await buildRockyAttachmentInputs(inputFiles, undefined, {
+        createPublicMediaUrls: shouldCreateTmpfilesPublicMediaUrls({
+          message: trimmedMessage,
+        }),
+      });
       const input = {
         message: trimmedMessage,
         attachments,
@@ -6841,6 +6820,11 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
       return true;
     } catch (error) {
       setOptimisticUserMessage(null);
+      if (error instanceof Error && /tmpfiles\.org/iu.test(error.message)) {
+        toast.error("tmpfiles.org upload failed.", {
+          description: getErrorMessage(error, "Try again."),
+        });
+      }
       throw error;
     } finally {
       submitInFlightRef.current = false;

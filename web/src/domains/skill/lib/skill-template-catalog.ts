@@ -237,15 +237,15 @@ const CONTENT_TEMPLATE: SkillTemplate = {
       id: "content-publish-account",
       title: "어느 계정으로 올릴까요?",
       helper:
-        "골라주신 채널에 로그인이 필요해요. 처음이면 이 단계에서 계정을 연결해 주세요. 초안만 받고 직접 올리실 거면 건너뛰셔도 돼요.",
+        "초안만 만들 때는 계정 연결이 없어도 됩니다. 발행까지 연결하려면 이 스킬에 사용할 계정과 발행 실행 스킬의 가능한 작업을 확인합니다.",
       skippable: true,
       fields: [
         {
           id: "publishAccount",
           kind: "account-connect",
-          label: "발행할 계정",
+          label: "이 스킬에 사용할 계정",
           helper:
-            "예) Instagram @brand, 네이버 블로그 ID, 뉴스레터 발송 계정. 연결된 계정이 없으면 '계정 연결하기'를 눌러주세요.",
+            "예) Instagram @brand, 네이버 블로그 ID, 뉴스레터 발송 계정. 초안만 만들 거면 비워둘 수 있습니다.",
           optional: true,
         },
         {
@@ -254,7 +254,7 @@ const CONTENT_TEMPLATE: SkillTemplate = {
           label: "발행 방식",
           options: [
             { id: "draft-only", label: "초안만 만들기 (직접 올림)" },
-            { id: "review-then-publish", label: "확인 후 자동 발행" },
+            { id: "review-then-publish", label: "발행까지 연결하기 (확인 후 실행)" },
             { id: "schedule", label: "예약 발행" },
           ],
         },

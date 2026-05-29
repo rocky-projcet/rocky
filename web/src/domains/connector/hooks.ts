@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type {
-  ConnectorOAuthSettingsInput,
   ConnectorProvider,
   ConnectorState,
   ConnectorTesterRequestInput,
@@ -10,8 +9,6 @@ import type {
 
 const STATE_KEY = (provider: ConnectorProvider) =>
   ["connector", provider] as const;
-const OAUTH_SETTINGS_KEY = (provider: ConnectorProvider) =>
-  ["connector", provider, "oauth-settings"] as const;
 const DIAGNOSTICS_KEY = ["connector-diagnostics"] as const;
 
 export function useConnectorDiagnosticsQuery(enabled = true) {
@@ -34,37 +31,6 @@ export function useConnectorStateQuery(provider: ConnectorProvider) {
       return state.loginMode === "external-browser" ? false : 1500;
     },
     refetchIntervalInBackground: false,
-  });
-}
-
-export function useConnectorOAuthSettingsQuery(provider: ConnectorProvider) {
-  return useQuery({
-    queryKey: OAUTH_SETTINGS_KEY(provider),
-    queryFn: () => agentEngineClient.getConnectorOAuthSettings(provider),
-    enabled: provider === "instagram",
-  });
-}
-
-export function useConnectorOAuthSettingsMutation(provider: ConnectorProvider) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: ConnectorOAuthSettingsInput) =>
-      agentEngineClient.saveConnectorOAuthSettings(provider, input),
-    onSuccess: (settings) => {
-      queryClient.setQueryData(OAUTH_SETTINGS_KEY(provider), settings);
-      void queryClient.invalidateQueries({ queryKey: STATE_KEY(provider) });
-    },
-  });
-}
-
-export function useConnectorOAuthSettingsDeleteMutation(provider: ConnectorProvider) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => agentEngineClient.deleteConnectorOAuthSettings(provider),
-    onSuccess: (settings) => {
-      queryClient.setQueryData(OAUTH_SETTINGS_KEY(provider), settings);
-      void queryClient.invalidateQueries({ queryKey: STATE_KEY(provider) });
-    },
   });
 }
 

@@ -5,12 +5,9 @@ import {
   CircleDashed,
   ExternalLink,
   Hourglass,
-  KeyRound,
   Loader2,
   Lock,
-  Save,
   ShieldCheck,
-  Trash2,
   Unplug,
   UserPlus,
   X,
@@ -31,7 +28,6 @@ import {
 import { cn } from "@/shared/lib/utils";
 import type {
   ConnectorCapabilityRecord,
-  ConnectorOAuthSettingsRecord,
   ConnectorProvider,
   ConnectorReadinessRecord,
   ConnectorState,
@@ -43,9 +39,6 @@ import {
   useConnectorDisconnectMutation,
   useConnectorGraphDiscoveryMutation,
   useConnectorLoginMutation,
-  useConnectorOAuthSettingsDeleteMutation,
-  useConnectorOAuthSettingsMutation,
-  useConnectorOAuthSettingsQuery,
   useConnectorTesterRequestMutation,
   useConnectorStateQuery,
 } from "./hooks";
@@ -66,10 +59,6 @@ export function ConnectorDialog({
   onConnected,
 }: ConnectorDialogProps) {
   const stateQuery = useConnectorStateQuery(provider);
-  const oauthSettingsQuery = useConnectorOAuthSettingsQuery(provider);
-  const oauthSettingsMutation = useConnectorOAuthSettingsMutation(provider);
-  const oauthSettingsDeleteMutation =
-    useConnectorOAuthSettingsDeleteMutation(provider);
   const loginMutation = useConnectorLoginMutation(provider);
   const graphDiscoveryMutation = useConnectorGraphDiscoveryMutation(provider);
   const testerRequestMutation = useConnectorTesterRequestMutation(provider);
@@ -94,8 +83,6 @@ export function ConnectorDialog({
     if (!open) {
       loginMutation.reset();
       graphDiscoveryMutation.reset();
-      oauthSettingsMutation.reset();
-      oauthSettingsDeleteMutation.reset();
       testerRequestMutation.reset();
       cancelMutation.reset();
       disconnectMutation.reset();
@@ -156,15 +143,7 @@ export function ConnectorDialog({
         <DialogContent className="flex max-h-[min(92vh,760px)] flex-col gap-5 overflow-y-auto sm:max-w-2xl">
           <InstagramGraphApiView
             state={state}
-            oauthSettings={oauthSettingsQuery.data}
-            oauthSettingsLoading={oauthSettingsQuery.isLoading}
             providerLabel={providerLabel}
-            onSaveOAuthSettings={(input) => oauthSettingsMutation.mutate(input)}
-            oauthSettingsSaving={oauthSettingsMutation.isPending}
-            oauthSettingsSaveError={oauthSettingsMutation.error}
-            onDeleteOAuthSettings={() => oauthSettingsDeleteMutation.mutate()}
-            oauthSettingsDeleting={oauthSettingsDeleteMutation.isPending}
-            oauthSettingsDeleteError={oauthSettingsDeleteMutation.error}
             onGraphDiscovery={startGraphDiscovery}
             graphStarting={graphDiscoveryMutation.isPending}
             onTesterRequest={submitTesterRequest}
@@ -235,15 +214,7 @@ export function ConnectorDialog({
 
 function InstagramGraphApiView({
   state,
-  oauthSettings,
-  oauthSettingsLoading,
   providerLabel,
-  onSaveOAuthSettings,
-  oauthSettingsSaving,
-  oauthSettingsSaveError,
-  onDeleteOAuthSettings,
-  oauthSettingsDeleting,
-  oauthSettingsDeleteError,
   onGraphDiscovery,
   graphStarting,
   onTesterRequest,
@@ -258,19 +229,7 @@ function InstagramGraphApiView({
   onClose,
 }: {
   state: ConnectorState | undefined;
-  oauthSettings: ConnectorOAuthSettingsRecord | undefined;
-  oauthSettingsLoading: boolean;
   providerLabel: string;
-  onSaveOAuthSettings: (input: {
-    clientId: string;
-    clientSecret: string;
-    redirectUri?: string | null;
-  }) => void;
-  oauthSettingsSaving: boolean;
-  oauthSettingsSaveError: Error | null;
-  onDeleteOAuthSettings: () => void;
-  oauthSettingsDeleting: boolean;
-  oauthSettingsDeleteError: Error | null;
   onGraphDiscovery: () => void;
   graphStarting: boolean;
   onTesterRequest: (
@@ -305,8 +264,6 @@ function InstagramGraphApiView({
   const busy =
     graphStarting ||
     browserStarting ||
-    oauthSettingsSaving ||
-    oauthSettingsDeleting ||
     testerRequesting ||
     cancelling ||
     disconnecting;
@@ -382,18 +339,6 @@ function InstagramGraphApiView({
           )}
         </div>
       </div>
-
-      <OAuthSettingsPanel
-        settings={oauthSettings}
-        loading={oauthSettingsLoading}
-        disabled={busy || connecting}
-        saving={oauthSettingsSaving}
-        deleting={oauthSettingsDeleting}
-        saveError={oauthSettingsSaveError}
-        deleteError={oauthSettingsDeleteError}
-        onSave={onSaveOAuthSettings}
-        onDelete={onDeleteOAuthSettings}
-      />
 
       {testerBlocked || state?.testerRequest ? (
         <TesterRequestPanel
@@ -502,145 +447,6 @@ function InstagramGraphApiView({
         </div>
       </DialogFooter>
     </>
-  );
-}
-
-function OAuthSettingsPanel({
-  settings,
-  loading,
-  disabled,
-  saving,
-  deleting,
-  saveError,
-  deleteError,
-  onSave,
-  onDelete,
-}: {
-  settings: ConnectorOAuthSettingsRecord | undefined;
-  loading: boolean;
-  disabled: boolean;
-  saving: boolean;
-  deleting: boolean;
-  saveError: Error | null;
-  deleteError: Error | null;
-  onSave: (input: {
-    clientId: string;
-    clientSecret: string;
-    redirectUri?: string | null;
-  }) => void;
-  onDelete: () => void;
-}) {
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [redirectUri, setRedirectUri] = useState(settings?.redirectUri ?? "");
-  const configured = settings?.configured === true;
-  const canSave = Boolean(clientId.trim() && clientSecret.trim()) && !disabled;
-
-  useEffect(() => {
-    setClientId("");
-    setClientSecret("");
-    setRedirectUri(settings?.redirectUri ?? "");
-  }, [settings?.updatedAt, settings?.redirectUri]);
-
-  return (
-    <form
-      className="rounded-xl border border-border/70 p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!canSave) return;
-        onSave({
-          clientId: clientId.trim(),
-          clientSecret: clientSecret.trim(),
-          redirectUri: redirectUri.trim() || null,
-        });
-      }}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <KeyRound className="size-4" />
-            자체 Meta 앱 설정 (선택)
-          </p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {configured
-              ? `저장됨 · Client ID ${settings?.clientIdMasked ?? "****"}`
-              : "기본값은 Rocky 관리 OAuth 브로커입니다. 자체 Meta 앱을 쓸 때만 입력하세요."}
-          </p>
-        </div>
-        <Badge variant="outline">
-          {loading ? "확인 중" : configured ? "저장됨" : "미설정"}
-        </Badge>
-      </div>
-
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="grid gap-2">
-          <Label htmlFor="instagram-client-id" className="text-xs">
-            Client ID
-          </Label>
-          <Input
-            id="instagram-client-id"
-            value={clientId}
-            onChange={(event) => setClientId(event.currentTarget.value)}
-            placeholder={settings?.clientIdMasked ?? "1234567890"}
-            disabled={disabled || loading}
-            autoComplete="off"
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="instagram-client-secret" className="text-xs">
-            Client Secret
-          </Label>
-          <Input
-            id="instagram-client-secret"
-            type="password"
-            value={clientSecret}
-            onChange={(event) => setClientSecret(event.currentTarget.value)}
-            placeholder={settings?.clientSecretMasked ?? "••••••••"}
-            disabled={disabled || loading}
-            autoComplete="new-password"
-          />
-        </div>
-      </div>
-
-      <div className="mt-3 grid gap-2">
-        <Label htmlFor="instagram-redirect-uri" className="text-xs">
-          Redirect URI
-        </Label>
-        <Input
-          id="instagram-redirect-uri"
-          value={redirectUri}
-          onChange={(event) => setRedirectUri(event.currentTarget.value)}
-          placeholder="http://127.0.0.1:3000/connectors/instagram/graph/oauth/callback"
-          disabled={disabled || loading}
-          autoComplete="off"
-        />
-      </div>
-
-      {saveError || deleteError ? (
-        <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          {(saveError ?? deleteError)?.message ?? "Meta 앱 설정을 처리하지 못했습니다."}
-        </p>
-      ) : null}
-
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
-        {configured ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onDelete}
-            disabled={disabled || deleting}
-            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-            설정 삭제
-          </Button>
-        ) : null}
-        <Button type="submit" disabled={!canSave || saving}>
-          {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-          설정 저장
-        </Button>
-      </div>
-    </form>
   );
 }
 
@@ -861,7 +667,7 @@ function formatBlockerAction(
     return "Meta Business 설정에서 Instagram 계정과 앱 권한을 확인하세요.";
   }
   if (code === "meta_app_required") {
-    return "Meta 앱 Client ID와 Secret을 설정한 뒤 Graph API 연결을 다시 시작하세요.";
+    return "Rocky 관리 OAuth 브로커 설정을 확인한 뒤 Graph API 연결을 다시 시작하세요.";
   }
   if (code === "app_access_required") {
     return fallback;

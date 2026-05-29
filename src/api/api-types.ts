@@ -265,6 +265,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   runtimeRegistry?: RuntimeRegistryLike;
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
+  publicWorkspaceBaseUrl?: string | null;
   skillTemplateStore?: SkillTemplateStore;
   ecountConnectionTester?: EcountConnectionTester;
   ecountLookupService?: EcountLookupServiceLike;

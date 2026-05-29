@@ -122,7 +122,10 @@ function formatAttachments(attachments: RockyAttachmentRecord[]): string {
       const workspacePath = attachment.workspacePath
         ? `, workspace path: ${attachment.workspacePath}`
         : "";
-      return `- ${attachment.name} (${contentType}, ${size}${workspacePath})`;
+      const publicUrl = attachment.publicUrl
+        ? `, public url: ${attachment.publicUrl}`
+        : "";
+      return `- ${attachment.name} (${contentType}, ${size}${workspacePath}${publicUrl})`;
     })
     .join("\n");
 }
@@ -665,6 +668,8 @@ export function buildAgentTurnSystemInstructions(input: {
           "Do not ask the user for connector passwords, two-factor authentication codes, browser cookies, session storage, OAuth tokens, or API keys in chat.",
           "For Instagram, execute only Graph API native capabilities marked status=available; if blockers are listed, create drafts or plans only and explain the blocker codes and setup steps.",
           "For Instagram, do not invent or attempt follower/following account-list reads when no such available Graph API capability is listed; report the official support limitation and use only prepared official results.",
+          "For approved Instagram feed or Reels publishing, create or update `instagram-publish-request.json` in the task output directory with final approval fields, media file or public media URL, and caption data; Rocky server performs Graph prepare/publish after the turn when approval is recorded.",
+          "If uploaded media metadata includes a public url, use that HTTPS URL as `image_url` or `video_url` in `instagram-publish-request.json` instead of the local workspace path.",
         ]
       : []),
     ...(input.hasServerManagedConnectorContext

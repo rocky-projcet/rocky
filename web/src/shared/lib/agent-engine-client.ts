@@ -1309,6 +1309,14 @@ export interface RockyMessageRecord {
   createdAt: string;
 }
 
+export interface RockyChatMessagePageRecord {
+  messages: RockyMessageRecord[];
+  limit: number;
+  totalCount: number;
+  hasPrevious: boolean;
+  nextBefore: string | null;
+}
+
 export interface RockyChatRecord {
   id: string;
   title: string;
@@ -1323,6 +1331,7 @@ export interface RockyChatRecord {
   executionStarted: boolean;
   createdAt: string;
   updatedAt: string;
+  messagePage?: RockyChatMessagePageRecord;
 }
 
 export interface RockyCoreSettingsRecord {
@@ -2421,9 +2430,38 @@ export class AgentEngineClient {
     });
   }
 
-  getRockyChat(chatId: string): Promise<RockyChatRecord> {
+  getRockyChat(
+    chatId: string,
+    options: { limit?: number | null } = {}
+  ): Promise<RockyChatRecord> {
+    const search = new URLSearchParams();
+    if (options.limit) {
+      search.set("limit", String(options.limit));
+    }
+
     return this.request<RockyChatRecord>(
-      `/rocky/chats/${encodeURIComponent(chatId)}`
+      search.size > 0
+        ? `/rocky/chats/${encodeURIComponent(chatId)}?${search.toString()}`
+        : `/rocky/chats/${encodeURIComponent(chatId)}`
+    );
+  }
+
+  getRockyChatMessages(
+    chatId: string,
+    options: { before?: string | null; limit?: number | null } = {}
+  ): Promise<RockyChatMessagePageRecord> {
+    const search = new URLSearchParams();
+    if (options.before) {
+      search.set("before", options.before);
+    }
+    if (options.limit) {
+      search.set("limit", String(options.limit));
+    }
+
+    return this.request<RockyChatMessagePageRecord>(
+      search.size > 0
+        ? `/rocky/chats/${encodeURIComponent(chatId)}/messages?${search.toString()}`
+        : `/rocky/chats/${encodeURIComponent(chatId)}/messages`
     );
   }
 

@@ -5,6 +5,7 @@ import { sendJson } from "../http/reply.js";
 import type {
   RockyCoreSettingsUpdateInput,
   RockyAttachmentInput,
+  RockyChatMessagePageInput,
   RockyChatServiceLike,
   RockyTemplateDraft,
   RockyTemplateInterviewAnswer,
@@ -28,6 +29,7 @@ interface RockyChatRoutesOptions extends FastifyPluginOptions {
 
 const ROCKY_CHAT_BODY_LIMIT = Number.MAX_SAFE_INTEGER;
 const SKILL_ID_PATTERN = /^[A-Za-z0-9._-]+$/u;
+const MAX_ROCKY_CHAT_MESSAGE_PAGE_LIMIT = 100;
 
 function badRequest(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), {
@@ -232,6 +234,49 @@ function parseMessageBody(body: unknown): {
     attachments,
     agentId,
     skillId,
+  };
+}
+
+function parsePositiveInteger(
+  value: unknown,
+  fieldName: string
+): number | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    throw badRequest(`${fieldName} must be a positive integer.`);
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw badRequest(`${fieldName} must be a positive integer.`);
+  }
+
+  return Math.min(parsed, MAX_ROCKY_CHAT_MESSAGE_PAGE_LIMIT);
+}
+
+function parseMessagePageQuery(
+  query: Record<string, unknown> | undefined
+): RockyChatMessagePageInput {
+  const beforeValue = query?.before;
+  if (Array.isArray(beforeValue)) {
+    throw badRequest("before must be a message cursor string.");
+  }
+  if (
+    beforeValue !== null &&
+    beforeValue !== undefined &&
+    typeof beforeValue !== "string"
+  ) {
+    throw badRequest("before must be a message cursor string.");
+  }
+
+  return {
+    limit: parsePositiveInteger(query?.limit ?? query?.messageLimit, "limit"),
+    before: typeof beforeValue === "string" ? beforeValue.trim() || null : null,
   };
 }
 
@@ -444,11 +489,31 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
     }
   );
 
-  server.get<{ Params: { chatId: string } }>(
+  server.get<{
+    Params: { chatId: string };
+    Querystring: Record<string, unknown>;
+  }>(
     "/rocky/chats/:chatId",
     async (request, reply) => {
-      const chat = await options.rockyChatService.getChat(request.params.chatId);
+      const chat = await options.rockyChatService.getChat(
+        request.params.chatId,
+        parseMessagePageQuery(request.query)
+      );
       sendJson(reply, 200, chat);
+    }
+  );
+
+  server.get<{
+    Params: { chatId: string };
+    Querystring: Record<string, unknown>;
+  }>(
+    "/rocky/chats/:chatId/messages",
+    async (request, reply) => {
+      const page = await options.rockyChatService.getChatMessages(
+        request.params.chatId,
+        parseMessagePageQuery(request.query)
+      );
+      sendJson(reply, 200, page);
     }
   );
 

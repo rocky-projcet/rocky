@@ -64,6 +64,8 @@ import type {
   RockyChatCreateInput,
   RockyChatDomain,
   RockyChatMessageInput,
+  RockyChatMessagePageInput,
+  RockyChatMessagePageRecord,
   RockyChatRecord,
   RockyCoreManagementRecord,
   RockyCoreSettingsRecord,
@@ -524,6 +526,8 @@ function ecountProductLookupWorkspacePath(chatId: string): string {
 }
 
 const DEFAULT_ATTACHMENT_MESSAGE = "Please review the attached file.";
+const DEFAULT_ROCKY_CHAT_MESSAGE_PAGE_LIMIT = 50;
+const MAX_ROCKY_CHAT_MESSAGE_PAGE_LIMIT = 100;
 const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 주세요.";
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
 const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
@@ -546,6 +550,44 @@ function requestMessageOrAttachmentDefault(input: {
   }
 
   throw badRequest("message or attachments are required.");
+}
+
+function normalizeMessagePageLimit(value: number | null | undefined): number {
+  if (value === null || value === undefined) {
+    return DEFAULT_ROCKY_CHAT_MESSAGE_PAGE_LIMIT;
+  }
+  if (!Number.isInteger(value) || value < 1) {
+    throw badRequest("message limit must be a positive integer.");
+  }
+
+  return Math.min(value, MAX_ROCKY_CHAT_MESSAGE_PAGE_LIMIT);
+}
+
+function pageRockyMessages(
+  messages: RockyMessageRecord[],
+  input: RockyChatMessagePageInput = {}
+): RockyChatMessagePageRecord {
+  const limit = normalizeMessagePageLimit(input.limit);
+  const before = input.before?.trim() || null;
+  const endIndex = before
+    ? messages.findIndex((message) => message.id === before)
+    : messages.length;
+
+  if (endIndex < 0) {
+    throw badRequest(`Unknown Rocky message cursor: ${before}`);
+  }
+
+  const startIndex = Math.max(0, endIndex - limit);
+  const pageMessages = messages.slice(startIndex, endIndex);
+  const hasPrevious = startIndex > 0;
+
+  return {
+    messages: pageMessages,
+    limit,
+    totalCount: messages.length,
+    hasPrevious,
+    nextBefore: hasPrevious ? pageMessages[0]?.id ?? null : null,
+  };
 }
 
 function isActiveOrchestrationStatus(
@@ -1621,11 +1663,27 @@ export class RockyChatService {
     };
 
     await this.writeChat(chat);
-    return chat;
+    return this.toPagedChat(chat);
   }
 
-  async getChat(chatId: string): Promise<RockyChatRecord> {
-    return this.refreshChat(await this.requireChat(chatId), { persist: true });
+  async getChat(
+    chatId: string,
+    page: RockyChatMessagePageInput = {}
+  ): Promise<RockyChatRecord> {
+    const refreshed = await this.refreshChat(await this.requireChat(chatId), {
+      persist: true,
+    });
+    return this.toPagedChat(refreshed, page);
+  }
+
+  async getChatMessages(
+    chatId: string,
+    page: RockyChatMessagePageInput = {}
+  ): Promise<RockyChatMessagePageRecord> {
+    const refreshed = await this.refreshChat(await this.requireChat(chatId), {
+      persist: true,
+    });
+    return pageRockyMessages(refreshed.messages, page);
   }
 
   async listChats(): Promise<RockyChatRecord[]> {
@@ -1645,7 +1703,7 @@ export class RockyChatService {
         ) ||
         right.createdAt.localeCompare(left.createdAt) ||
         left.id.localeCompare(right.id)
-    );
+    ).map((chat) => this.toPagedChat(chat));
   }
 
   async cancelChat(chatId: string): Promise<RockyChatRecord> {
@@ -1699,7 +1757,7 @@ export class RockyChatService {
     };
 
     await this.writeChat(chat);
-    return chat;
+    return this.toPagedChat(chat);
   }
 
   async getCoreManagement(): Promise<RockyCoreManagementRecord> {
@@ -1909,7 +1967,7 @@ export class RockyChatService {
     };
 
     await this.writeChat(chat);
-    return chat;
+    return this.toPagedChat(chat);
   }
 
   async deleteChat(chatId: string): Promise<void> {
@@ -4470,13 +4528,27 @@ export class RockyChatService {
     return this.hydrateChat(chat);
   }
 
+  private toPagedChat(
+    chat: RockyChatRecord,
+    page: RockyChatMessagePageInput = {}
+  ): RockyChatRecord {
+    const messagePage = pageRockyMessages(chat.messages, page);
+
+    return {
+      ...chat,
+      messages: messagePage.messages,
+      messagePage,
+    };
+  }
+
   private async writeChat(chat: RockyChatRecord): Promise<void> {
+    const { messagePage: _messagePage, ...persistedChat } = chat;
     await writeRockyChatRecord(
       resolveRockyChatPaths({
         stateRoot: this.stateRoot,
         chatId: chat.id,
       }),
-      chat
+      persistedChat
     );
   }
 }

@@ -351,6 +351,162 @@ test("Rocky replies expose natural completed progress markdown", async ({ page }
   await expect(page.getByText("npm test")).toHaveCount(0);
 });
 
+test("Rocky task conversation loads older messages when scrolled to the top", async ({
+  page,
+}) => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const chatId = "message-page-scroll-test";
+  let olderRequests = 0;
+  const messages = Array.from({ length: 60 }, (_, index) => ({
+    id: `message-${index}`,
+    chatId,
+    role: index % 2 === 0 ? "user" : "rocky",
+    intent: "conversation",
+    text: `Message ${String(index).padStart(2, "0")}\n\n${"filler line\n".repeat(6)}`,
+    attachmentIds: [],
+    domain: "general",
+    workerId: null,
+    skillCandidateIds: [],
+    usedSkills: [],
+    dispatchId: null,
+    createdAt: new Date(Date.parse(now) + index * 1000).toISOString(),
+  }));
+  const chat = {
+    id: chatId,
+    title: "Message page scroll test",
+    intent: "conversation",
+    domain: "general",
+    worker: null,
+    attachments: [],
+    messages: messages.slice(10),
+    messagePage: {
+      messages: messages.slice(10),
+      limit: 50,
+      totalCount: messages.length,
+      hasPrevious: true,
+      nextBefore: "message-10",
+    },
+    skillCandidates: [],
+    dispatches: [],
+    orchestration: null,
+    executionStarted: false,
+    createdAt: now,
+    updatedAt: messages.at(-1)!.createdAt,
+  };
+
+  await page.route(`**/api/rocky/chats/${chatId}/messages**`, async (route) => {
+    olderRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        messages: messages.slice(0, 10),
+        limit: 50,
+        totalCount: messages.length,
+        hasPrevious: false,
+        nextBefore: null,
+      }),
+    });
+  });
+  await page.route(`**/api/rocky/chats/${chatId}**`, async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/messages")) {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(chat),
+    });
+  });
+  await page.route("**/api/skills", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+  await page.route("**/api/account/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        updatedAt: now,
+        providers: [
+          {
+            provider: "codex",
+            providerLabel: "Codex CLI",
+            status: "authenticated",
+            statusText: "Authenticated",
+            homePath: null,
+            updatedAt: now,
+            accountInfo: {
+              label: "Test Codex",
+              email: null,
+              name: null,
+              userId: null,
+              planType: null,
+              organizationTitle: null,
+              authMode: null,
+            },
+            loginMethods: [],
+            primaryLoginMethodId: null,
+            diagnostics: {
+              command: "codex",
+              resolvedPath: "codex",
+              installStatus: "installed",
+              installMethod: "unknown",
+              currentVersion: "test",
+              rawVersionText: "test",
+              checkedAt: now,
+              latestVersion: null,
+              latestStatus: "unknown",
+              latestCheckedAt: null,
+              latestSource: null,
+              statusText: "installed",
+            },
+            update: {
+              status: "idle",
+              supported: false,
+              installMethod: "unknown",
+              commandPreview: null,
+              startedAt: null,
+              completedAt: null,
+              output: [],
+              lastError: null,
+            },
+            codexBin: "codex",
+            deviceAuth: {
+              status: "idle",
+              mode: null,
+              startedAt: null,
+              completedAt: null,
+              output: [],
+              verificationUri: null,
+              userCode: null,
+              instructions: null,
+              lastError: null,
+            },
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(`/tasks/${chatId}`);
+
+  await expect(page.getByText("Message 59")).toBeVisible();
+  await expect(page.getByText("Message 00")).toHaveCount(0);
+
+  await page.locator("main.custom-scrollbar").evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+
+  await expect.poll(() => olderRequests).toBe(1);
+  await expect(page.getByText("Message 00")).toHaveCount(1);
+});
+
 test("right file preview does not reload while Rocky is answering", async ({ page }) => {
   const now = "2026-01-01T00:00:00.000Z";
   const chatId = "preview-refresh-test";

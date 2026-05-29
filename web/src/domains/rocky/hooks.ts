@@ -4,14 +4,18 @@ import { agentEngineClient } from "@/shared/lib/api-client";
 
 import type {
   RockyChatCreateInput,
+  RockyChatMessagePageRecord,
   RockyChatRecord,
   RockyCoreSettingsUpdateInput,
 } from "@/domains/rocky/types";
+
+export const ROCKY_CHAT_MESSAGE_PAGE_LIMIT = 50;
 
 export const rockyQueryKeys = {
   abilities: ["rocky-abilities"] as const,
   chats: ["rocky-chats"] as const,
   chat: (chatId: string) => ["rocky-chat", chatId] as const,
+  chatMessages: (chatId: string) => ["rocky-chat-messages", chatId] as const,
   coreManagement: ["rocky-core-management"] as const,
 };
 
@@ -88,8 +92,29 @@ export function useSyncRockyCoreSkillsMutation() {
 export function useRockyChatQuery(chatId: string | null) {
   return useQuery({
     queryKey: rockyQueryKeys.chat(chatId ?? "new"),
-    queryFn: () => agentEngineClient.getRockyChat(chatId!),
+    queryFn: () =>
+      agentEngineClient.getRockyChat(chatId!, {
+        limit: ROCKY_CHAT_MESSAGE_PAGE_LIMIT,
+      }),
     enabled: Boolean(chatId),
+  });
+}
+
+export function useRockyChatMessagesMutation(chatId: string | null) {
+  return useMutation({
+    mutationFn: (input: {
+      before?: string | null;
+      limit?: number | null;
+    }): Promise<RockyChatMessagePageRecord> => {
+      if (!chatId) {
+        throw new Error("Rocky chat id is required.");
+      }
+
+      return agentEngineClient.getRockyChatMessages(chatId, {
+        before: input.before ?? null,
+        limit: input.limit ?? ROCKY_CHAT_MESSAGE_PAGE_LIMIT,
+      });
+    },
   });
 }
 

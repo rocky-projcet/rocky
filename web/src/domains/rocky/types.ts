@@ -5,6 +5,7 @@ export type {
   RockyAttachmentRecord,
   RockyChatCreateInput,
   RockyChatDomain,
+  RockyChatMessagePageRecord,
   RockyChatRecord,
   RockyCoreManagementRecord,
   RockyCoreSettingsRecord,

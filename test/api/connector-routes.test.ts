@@ -24,6 +24,50 @@ const INSTAGRAM_GRAPH_ENV = {
     "instagram_basic,pages_show_list,instagram_content_publish,instagram_manage_insights",
 };
 
+const INSTAGRAM_BROKER_LOGIN_URL =
+  "https://www.instagram.com/oauth/authorize?state=broker-state";
+const INSTAGRAM_BROKER_TOKEN_PAYLOAD = {
+  access_token: "instagram-long-lived-token",
+  token_type: "bearer",
+  expires_in: 5_184_000,
+  scope:
+    "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+};
+
+function isInstagramBrokerStartUrl(url: string): boolean {
+  return url.includes("/api/oauth-broker/instagram/graph/start");
+}
+
+function isInstagramBrokerRedeemUrl(url: string): boolean {
+  return url.includes("/api/oauth-broker/instagram/graph/redeem");
+}
+
+function instagramBrokerStartResponse(
+  loginUrl = INSTAGRAM_BROKER_LOGIN_URL,
+): Response {
+  return jsonResponse({
+    ok: true,
+    provider: "instagram",
+    loginUrl,
+    message: "Instagram Graph OAuth broker URL is ready.",
+  });
+}
+
+function instagramBrokerRedeemResponse(
+  tokenPayload: Record<string, unknown> = INSTAGRAM_BROKER_TOKEN_PAYLOAD,
+): Response {
+  return jsonResponse({
+    ok: true,
+    provider: "instagram",
+    tokenPayload,
+    message: "Instagram Graph broker handoff redeemed.",
+  });
+}
+
+function instagramBrokerCallbackUrl(handoffCode = "broker-handoff"): string {
+  return `/connectors/instagram/graph/broker/callback?handoff_code=${encodeURIComponent(handoffCode)}`;
+}
+
 test("Facebook connector browser login connects without OAuth credentials", async () => {
   let onEvent: ((event: ConnectorRunnerEvent) => void) | null = null;
   let profileReaderCalls = 0;
@@ -389,7 +433,7 @@ test("Instagram Graph API readiness becomes available from configured environmen
   }
 });
 
-test("Instagram connector accepts OAuth client id as Meta app readiness", async () => {
+test("Instagram connector ignores local OAuth client id as Meta app readiness", async () => {
   const {
     ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID: _metaAppId,
     ...graphEnvWithoutMetaAppId
@@ -399,6 +443,7 @@ test("Instagram connector accepts OAuth client id as Meta app readiness", async 
     stateRoot,
     connectorBaseEnv: {
       ...graphEnvWithoutMetaAppId,
+      ROCKY_CONNECTOR_DISABLE_DEFAULT_OAUTH_BROKER: "1",
       ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
       ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
     },
@@ -415,15 +460,17 @@ test("Instagram connector accepts OAuth client id as Meta app readiness", async 
       state.readiness.blockers.some(
         (blocker) => blocker.code === "meta_app_required",
       ),
-      false,
+      true,
     );
   } finally {
     await server.close();
   }
 });
 
-test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () => {
+test("Instagram Graph discovery uses the managed broker even with local Meta credentials", async () => {
   let openedUrl: string | null = null;
+  let brokerStartUrl: string | null = null;
+  let brokerStartBody: Record<string, unknown> | null = null;
   let browserStarted = false;
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
@@ -447,6 +494,14 @@ test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () =>
       browserStarted = true;
       throw new Error("Graph discovery must not launch browser assist");
     },
+    connectorFetch: async (input, init) => {
+      brokerStartUrl = input instanceof URL ? input.toString() : String(input);
+      brokerStartBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      return instagramBrokerStartResponse();
+    },
   });
 
   try {
@@ -460,21 +515,17 @@ test("Instagram Graph discovery starts a dedicated Meta OAuth flow", async () =>
     assert.equal(state.loginMode, "oauth");
     assert.equal(state.graphDiscovery?.status, "not-started");
     assert.equal(browserStarted, false);
-    assert.equal(openedUrl, state.loginUrl);
-    assert.ok(state.loginUrl);
-    const loginUrl = new URL(state.loginUrl ?? "");
-    assert.equal(loginUrl.hostname, "www.instagram.com");
-    assert.equal(loginUrl.searchParams.get("client_id"), "meta-client-id");
-    assert.match(
-      loginUrl.searchParams.get("redirect_uri") ?? "",
-      /\/connectors\/instagram\/graph\/oauth\/callback$/u,
+    assert.equal(openedUrl, INSTAGRAM_BROKER_LOGIN_URL);
+    assert.equal(state.loginUrl, INSTAGRAM_BROKER_LOGIN_URL);
+    assert.equal(
+      brokerStartUrl,
+      "https://connect.blip.rocks/api/oauth-broker/instagram/graph/start",
     );
     assert.equal(
-      loginUrl.searchParams.get("scope"),
-      "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+      brokerStartBody?.returnUrl,
+      "http://localhost:80/api/connectors/instagram/graph/broker/callback",
     );
-    assert.equal(loginUrl.searchParams.get("enable_fb_login"), "0");
-    assert.doesNotMatch(state.loginUrl ?? "", /meta-client-secret/u);
+    assert.doesNotMatch(state.loginUrl ?? "", /meta-client-id|meta-client-secret|redirect_uri/u);
   } finally {
     await server.close();
   }
@@ -494,6 +545,7 @@ test("Instagram Graph discovery can defer OAuth URL opening to the current brows
       opened = true;
       throw new Error("Graph discovery should not open the OS default browser");
     },
+    connectorFetch: async () => instagramBrokerStartResponse(),
   });
 
   try {
@@ -510,7 +562,7 @@ test("Instagram Graph discovery can defer OAuth URL opening to the current brows
     assert.equal(state.loginMode, "oauth");
     assert.equal(opened, false);
     assert.ok(state.loginUrl);
-    assert.equal(new URL(state.loginUrl ?? "").hostname, "www.instagram.com");
+    assert.equal(state.loginUrl, INSTAGRAM_BROKER_LOGIN_URL);
     assert.equal(state.lastError, null);
     assert.match(state.message, /URL is ready/u);
   } finally {
@@ -620,6 +672,55 @@ test("Instagram Graph discovery uses an explicit broker URL override", async () 
   }
 });
 
+test("Instagram Graph discovery requires managed broker when the default broker is disabled", async () => {
+  let fetchCalled = false;
+  let opened = false;
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    connectorBaseEnv: {
+      ROCKY_CONNECTOR_DISABLE_DEFAULT_OAUTH_BROKER: "1",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID: "meta-client-id",
+      ROCKY_CONNECTOR_INSTAGRAM_CLIENT_SECRET: "meta-client-secret",
+      ROCKY_CONNECTOR_OAUTH_BASE_URL: "http://127.0.0.1:3333",
+    },
+    nativeUrlOpener: async () => {
+      opened = true;
+      throw new Error("Graph discovery should not open a direct OAuth URL");
+    },
+    connectorFetch: async () => {
+      fetchCalled = true;
+      throw new Error("Graph discovery should not fall back to local Meta credentials");
+    },
+  });
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/connectors/instagram/graph-discovery",
+      payload: {
+        openExternal: false,
+      },
+    });
+    assert.equal(response.statusCode, 202);
+    const state = response.json<ConnectorState>();
+    assert.equal(state.status, "failed");
+    assert.equal(state.loginUrl, null);
+    assert.equal(state.loginMode, null);
+    assert.match(state.lastError ?? "", /managed Instagram Graph OAuth broker/i);
+    assert.equal(fetchCalled, false);
+    assert.equal(opened, false);
+    assert.ok(
+      state.readiness.blockers.some(
+        (blocker) => blocker.code === "meta_app_required",
+      ),
+    );
+    assert.doesNotMatch(JSON.stringify(state), /redirect_uri|meta-client-secret/u);
+  } finally {
+    await server.close();
+  }
+});
+
 test("Instagram OAuth broker rejects external return URLs", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
@@ -699,7 +800,8 @@ test("Instagram OAuth broker expires pending authorization state", async () => {
   }
 });
 
-test("Instagram OAuth app settings are encrypted and used for Graph discovery", async () => {
+test("Instagram OAuth app settings endpoint is deprecated and ignored for Graph discovery", async () => {
+  let brokerStartUrl: string | null = null;
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "connector-routes-"));
   const server = createAgentEngineServer({
     stateRoot,
@@ -707,6 +809,10 @@ test("Instagram OAuth app settings are encrypted and used for Graph discovery", 
     connectorBaseEnv: {},
     nativeUrlOpener: async () => {
       throw new Error("Graph discovery should use the current browser in this test");
+    },
+    connectorFetch: async (input) => {
+      brokerStartUrl = input instanceof URL ? input.toString() : String(input);
+      return instagramBrokerStartResponse();
     },
   });
 
@@ -720,7 +826,7 @@ test("Instagram OAuth app settings are encrypted and used for Graph discovery", 
       },
     });
     assert.equal(saveResponse.statusCode, 200);
-    assert.equal(saveResponse.json().configured, true);
+    assert.equal(saveResponse.json().configured, false);
     assert.equal(JSON.stringify(saveResponse.json()).includes("meta-client-secret"), false);
     assert.equal(JSON.stringify(saveResponse.json()).includes("meta-client-id"), false);
 
@@ -729,28 +835,15 @@ test("Instagram OAuth app settings are encrypted and used for Graph discovery", 
       url: "/connectors/instagram/oauth-settings",
     });
     assert.equal(settingsResponse.statusCode, 200);
-    assert.equal(settingsResponse.json().configured, true);
+    assert.equal(settingsResponse.json().configured, false);
     assert.equal(JSON.stringify(settingsResponse.json()).includes("meta-client-secret"), false);
     assert.equal(JSON.stringify(settingsResponse.json()).includes("meta-client-id"), false);
 
-    const storedFile = await readFile(
-      path.join(stateRoot, "connectors", "instagram", "oauth-settings.json"),
-      "utf8",
-    );
-    assert.equal(storedFile.includes("meta-client-secret"), false);
-    assert.equal(storedFile.includes("meta-client-id"), false);
-
-    const stateResponse = await server.inject({
-      method: "GET",
-      url: "/connectors/instagram/state",
-    });
-    assert.equal(stateResponse.statusCode, 200);
-    const state = stateResponse.json<ConnectorState>();
-    assert.equal(
-      state.readiness.blockers.some(
-        (blocker) => blocker.code === "meta_app_required",
+    await assert.rejects(
+      readFile(
+        path.join(stateRoot, "connectors", "instagram", "oauth-settings.json"),
+        "utf8",
       ),
-      false,
     );
 
     const discoveryResponse = await server.inject({
@@ -762,11 +855,12 @@ test("Instagram OAuth app settings are encrypted and used for Graph discovery", 
     });
     assert.equal(discoveryResponse.statusCode, 202);
     const discoveryState = discoveryResponse.json<ConnectorState>();
-    assert.ok(discoveryState.loginUrl);
-    const loginUrl = new URL(discoveryState.loginUrl ?? "");
-    assert.equal(loginUrl.hostname, "www.instagram.com");
-    assert.equal(loginUrl.searchParams.get("client_id"), "meta-client-id");
-    assert.doesNotMatch(discoveryState.loginUrl ?? "", /meta-client-secret/u);
+    assert.equal(
+      brokerStartUrl,
+      "https://connect.blip.rocks/api/oauth-broker/instagram/graph/start",
+    );
+    assert.equal(discoveryState.loginUrl, INSTAGRAM_BROKER_LOGIN_URL);
+    assert.doesNotMatch(discoveryState.loginUrl ?? "", /meta-client-id|meta-client-secret|redirect_uri/u);
 
     const deleteResponse = await server.inject({
       method: "DELETE",
@@ -799,20 +893,11 @@ test("Instagram Graph discovery reports actionable blockers when no account is d
     connectorFetch: async (input, init) => {
       const url = input instanceof URL ? input.toString() : String(input);
       fetchCalls.push(url);
-      if (url.includes("/oauth/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-user-token",
-          token_type: "bearer",
-        });
+      if (isInstagramBrokerStartUrl(url)) {
+        return instagramBrokerStartResponse();
       }
-      if (url.includes("/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-long-lived-token",
-          token_type: "bearer",
-          expires_in: 5_184_000,
-          scope:
-            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
-        });
+      if (isInstagramBrokerRedeemUrl(url)) {
+        return instagramBrokerRedeemResponse();
       }
       assert.equal(
         (init?.headers as Record<string, string> | undefined)?.Authorization,
@@ -836,13 +921,10 @@ test("Instagram Graph discovery reports actionable blockers when no account is d
       url: "/connectors/instagram/graph-discovery",
     });
     assert.equal(startResponse.statusCode, 202);
-    const started = startResponse.json<ConnectorState>();
-    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
-    assert.ok(state);
 
     const callbackResponse = await server.inject({
       method: "GET",
-      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      url: instagramBrokerCallbackUrl(),
     });
     assert.equal(callbackResponse.statusCode, 400);
 
@@ -890,20 +972,11 @@ test("Instagram Graph discovery records app-access blockers and can retry", asyn
     }),
     connectorFetch: async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);
-      if (url.includes("/oauth/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-user-token",
-          token_type: "bearer",
-        });
+      if (isInstagramBrokerStartUrl(url)) {
+        return instagramBrokerStartResponse();
       }
-      if (url.includes("/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-long-lived-token",
-          token_type: "bearer",
-          expires_in: 5_184_000,
-          scope:
-            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
-        });
+      if (isInstagramBrokerRedeemUrl(url)) {
+        return instagramBrokerRedeemResponse();
       }
       return jsonResponse(
         {
@@ -923,13 +996,10 @@ test("Instagram Graph discovery records app-access blockers and can retry", asyn
       url: "/connectors/instagram/graph-discovery",
     });
     assert.equal(startResponse.statusCode, 202);
-    const started = startResponse.json<ConnectorState>();
-    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
-    assert.ok(state);
 
     const callbackResponse = await server.inject({
       method: "GET",
-      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      url: instagramBrokerCallbackUrl(),
     });
     assert.equal(callbackResponse.statusCode, 400);
 
@@ -976,20 +1046,11 @@ test("Instagram Graph discovery maps Korean developer-role errors to tester bloc
     }),
     connectorFetch: async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);
-      if (url.includes("/oauth/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-user-token",
-          token_type: "bearer",
-        });
+      if (isInstagramBrokerStartUrl(url)) {
+        return instagramBrokerStartResponse();
       }
-      if (url.includes("/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-long-lived-token",
-          token_type: "bearer",
-          expires_in: 5_184_000,
-          scope:
-            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
-        });
+      if (isInstagramBrokerRedeemUrl(url)) {
+        return instagramBrokerRedeemResponse();
       }
       return jsonResponse(
         {
@@ -1008,13 +1069,10 @@ test("Instagram Graph discovery maps Korean developer-role errors to tester bloc
       url: "/connectors/instagram/graph-discovery",
     });
     assert.equal(startResponse.statusCode, 202);
-    const started = startResponse.json<ConnectorState>();
-    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
-    assert.ok(state);
 
     const callbackResponse = await server.inject({
       method: "GET",
-      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      url: instagramBrokerCallbackUrl(),
     });
     assert.equal(callbackResponse.statusCode, 400);
 
@@ -1056,20 +1114,11 @@ test("Instagram tester request records pending and accepted state without secret
     }),
     connectorFetch: async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);
-      if (url.includes("/oauth/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-user-token",
-          token_type: "bearer",
-        });
+      if (isInstagramBrokerStartUrl(url)) {
+        return instagramBrokerStartResponse();
       }
-      if (url.includes("/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-long-lived-token",
-          token_type: "bearer",
-          expires_in: 5_184_000,
-          scope:
-            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
-        });
+      if (isInstagramBrokerRedeemUrl(url)) {
+        return instagramBrokerRedeemResponse();
       }
       return jsonResponse(
         {
@@ -1088,13 +1137,11 @@ test("Instagram tester request records pending and accepted state without secret
       method: "POST",
       url: "/connectors/instagram/graph-discovery",
     });
-    const started = startResponse.json<ConnectorState>();
-    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
-    assert.ok(state);
+    assert.equal(startResponse.statusCode, 202);
 
     const callbackResponse = await server.inject({
       method: "GET",
-      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      url: instagramBrokerCallbackUrl(),
     });
     assert.equal(callbackResponse.statusCode, 400);
 
@@ -1222,20 +1269,11 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
     }),
     connectorFetch: async (input, init) => {
       const url = input instanceof URL ? input.toString() : String(input);
-      if (url.includes("/oauth/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-user-token",
-          token_type: "bearer",
-        });
+      if (isInstagramBrokerStartUrl(url)) {
+        return instagramBrokerStartResponse();
       }
-      if (url.includes("/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-long-lived-token",
-          token_type: "bearer",
-          expires_in: 5_184_000,
-          scope:
-            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
-        });
+      if (isInstagramBrokerRedeemUrl(url)) {
+        return instagramBrokerRedeemResponse();
       }
       assert.equal(
         (init?.headers as Record<string, string> | undefined)?.Authorization,
@@ -1271,13 +1309,10 @@ test("Instagram Graph discovery stores a single discovered account as a safe can
       url: "/connectors/instagram/graph-discovery",
     });
     assert.equal(startResponse.statusCode, 202);
-    const started = startResponse.json<ConnectorState>();
-    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
-    assert.ok(state);
 
     const callbackResponse = await server.inject({
       method: "GET",
-      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      url: instagramBrokerCallbackUrl(),
     });
     assert.equal(callbackResponse.statusCode, 200);
 
@@ -1383,19 +1418,13 @@ test("Instagram OAuth-bound readiness refreshes stale tokens", async () => {
     }),
     connectorFetch: async (input, init) => {
       const url = input instanceof URL ? input.toString() : String(input);
-      if (url.includes("/oauth/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-user-token",
-          token_type: "bearer",
-        });
+      if (isInstagramBrokerStartUrl(url)) {
+        return instagramBrokerStartResponse();
       }
-      if (url.includes("/access_token")) {
-        return jsonResponse({
-          access_token: "instagram-long-lived-token",
-          token_type: "bearer",
+      if (isInstagramBrokerRedeemUrl(url)) {
+        return instagramBrokerRedeemResponse({
+          ...INSTAGRAM_BROKER_TOKEN_PAYLOAD,
           expires_in: 60,
-          scope:
-            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
         });
       }
       if (url.includes("/refresh_access_token")) {
@@ -1426,13 +1455,11 @@ test("Instagram OAuth-bound readiness refreshes stale tokens", async () => {
       method: "POST",
       url: "/connectors/instagram/graph-discovery",
     });
-    const started = startResponse.json<ConnectorState>();
-    const state = new URL(started.loginUrl ?? "").searchParams.get("state");
-    assert.ok(state);
+    assert.equal(startResponse.statusCode, 202);
 
     const callbackResponse = await server.inject({
       method: "GET",
-      url: `/connectors/instagram/graph/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
+      url: instagramBrokerCallbackUrl(),
     });
     assert.equal(callbackResponse.statusCode, 200);
 

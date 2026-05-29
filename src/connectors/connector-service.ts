@@ -242,6 +242,9 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<ConnectorOAuthSettingsRecord> {
     await this.ensureHydrated();
     this.assertSupported(provider);
+    if (provider === "instagram") {
+      return emptyOAuthSettingsRecord();
+    }
     this.assertOAuthSettingsSupported(provider);
     return this.buildPublicOAuthSettings(provider);
   }
@@ -252,6 +255,14 @@ export class ConnectorService implements ConnectorServiceLike {
   ): Promise<ConnectorOAuthSettingsRecord> {
     await this.ensureHydrated();
     this.assertSupported(provider);
+    if (provider === "instagram") {
+      void input;
+      this.oauthSettings.delete(provider);
+      await rm(path.join(this.providerDir(provider), OAUTH_SETTINGS_FILE), {
+        force: true,
+      });
+      return emptyOAuthSettingsRecord();
+    }
     this.assertOAuthSettingsSupported(provider);
     const settings = normalizeOAuthSettingsInput(input, this.now());
     await this.persistOAuthSettings(provider, settings);
@@ -401,22 +412,7 @@ export class ConnectorService implements ConnectorServiceLike {
       });
       return this.decorateState(provider);
     }
-    const discoveryOAuth: Extract<ConnectorOAuthConfig, { supported: true }> = {
-      ...oauth,
-      authorizationUrl: "https://www.instagram.com/oauth/authorize",
-      tokenUrl: "https://api.instagram.com/oauth/access_token",
-      scopes: INSTAGRAM_GRAPH_OAUTH_SCOPES,
-      scopeSeparator: ",",
-      extraAuthParams: {
-        enable_fb_login: "0",
-        force_authentication: "1",
-      },
-    };
-
-    const brokerBaseUrl = this.resolveInstagramOAuthBrokerBaseUrl(
-      provider,
-      discoveryOAuth,
-    );
+    const brokerBaseUrl = this.resolveInstagramOAuthBrokerBaseUrl();
     if (brokerBaseUrl) {
       return this.startBrokeredInstagramGraphDiscovery(
         provider,
@@ -425,86 +421,19 @@ export class ConnectorService implements ConnectorServiceLike {
       );
     }
 
-    const credentials = this.resolveOAuthCredentials(
-      provider,
-      discoveryOAuth,
-      input.redirectBaseUrl ?? null,
-      {
-        callbackPath: "graph/oauth/callback",
-        redirectEnvKeys: [
-          "ROCKY_CONNECTOR_INSTAGRAM_GRAPH_REDIRECT_URI",
-          "ROCKY_CONNECTOR_INSTAGRAM_META_REDIRECT_URI",
-          "ROCKY_INSTAGRAM_GRAPH_REDIRECT_URI",
-        ],
-        useGenericRedirectEnv: false,
-      },
-    );
-    if (credentials.ok === false) {
-      const blockers = instagramDiscoverySetupBlockers();
-      this.transition(provider, {
-        status: "failed",
-        message: "Instagram Graph discovery needs user-owned Meta app credentials.",
-        accountLabel: null,
-        connectedAt: null,
-        loginUrl: null,
-        loginMode: null,
-        lastError: credentials.message,
-        failureKind: "authentication",
-        graphConnection: null,
-        graphDiscovery: buildBlockedGraphDiscovery(this.now(), blockers),
-      });
-      return this.decorateState(provider);
-    }
-
-    await this.cancelActiveBrowserSession(provider);
-    const state = randomUrlSafe(32);
-    const codeVerifier = discoveryOAuth.pkce ? randomUrlSafe(64) : null;
-    const loginUrl = buildAuthorizationUrl({
-      config: discoveryOAuth,
-      credentials: credentials.value,
-      state,
-      codeChallenge: codeVerifier ? pkceChallenge(codeVerifier) : null,
-    });
-
-    this.pendingOAuth.set(state, {
-      provider,
-      config: discoveryOAuth,
-      credentials: credentials.value,
-      state,
-      codeVerifier,
-      createdAt: this.now(),
-      purpose: "instagram-graph-discovery",
-    });
-
-    const shouldOpenExternal = input.openExternal !== false;
-    let openError: string | null =
-      shouldOpenExternal && !this.openExternalUrl
-        ? "Default browser opening is unavailable in this environment."
-        : null;
-    if (shouldOpenExternal && this.openExternalUrl) {
-      try {
-        await this.openExternalUrl(loginUrl);
-      } catch (error) {
-        openError = error instanceof Error ? error.message : String(error);
-      }
-    }
-
+    const blockers = instagramDiscoverySetupBlockers();
     this.transition(provider, {
-      status: "connecting",
-      message: openError
-        ? "Open the Instagram Graph discovery URL to authorize your Meta app."
-        : shouldOpenExternal
-          ? "Instagram Graph discovery opened in the default browser."
-          : "Instagram Graph discovery URL is ready. Open it from this browser to authorize your Meta app.",
+      status: "failed",
+      message: "Instagram Graph discovery requires the managed OAuth broker.",
       accountLabel: null,
       connectedAt: null,
-      loginUrl,
-      loginMode: "oauth",
-      lastError: openError,
+      loginUrl: null,
+      loginMode: null,
+      lastError: "Managed Instagram Graph OAuth broker is required.",
+      failureKind: "authentication",
       graphConnection: null,
-      graphDiscovery: emptyGraphDiscovery(),
+      graphDiscovery: buildBlockedGraphDiscovery(this.now(), blockers),
     });
-
     return this.decorateState(provider);
   }
 
@@ -1067,8 +996,8 @@ export class ConnectorService implements ConnectorServiceLike {
     this.transition(provider, {
       status: "connecting",
       message: openError
-        ? "Open the Instagram Graph broker URL to authorize your Meta app."
-        : "Instagram Graph broker URL is ready. Open it from this browser to authorize your Meta app.",
+        ? "Open the Instagram Graph broker URL to authorize Rocky access."
+        : "Instagram Graph broker URL is ready. Open it from this browser to authorize Rocky access.",
       accountLabel: null,
       connectedAt: null,
       loginUrl: payload.loginUrl,
@@ -1274,7 +1203,7 @@ export class ConnectorService implements ConnectorServiceLike {
     if (provider !== "instagram") {
       throw Object.assign(new Error("Graph broker callback is only supported for Instagram."), { statusCode: 400 });
     }
-    const brokerBaseUrl = this.resolveInstagramOAuthBrokerBaseUrl(provider);
+    const brokerBaseUrl = this.resolveInstagramOAuthBrokerBaseUrl();
     if (!brokerBaseUrl) {
       const message = "Instagram Graph OAuth broker base URL is not configured.";
       return {
@@ -1332,81 +1261,106 @@ export class ConnectorService implements ConnectorServiceLike {
         state: this.decorateState(provider),
       };
     }
-    const candidates = await this.discoverInstagramGraphAccounts(accessToken);
-    const checkedAt = this.now();
-    if (candidates.length === 0) {
-      const blockers = instagramDiscoveryNoAccountBlockers();
+    try {
+      const candidates = await this.discoverInstagramGraphAccounts(accessToken);
+      const checkedAt = this.now();
+      if (candidates.length === 0) {
+        const blockers = instagramDiscoveryNoAccountBlockers();
+        this.transition(provider, {
+          status: "failed",
+          message:
+            "Instagram Graph discovery did not find a connected Professional Instagram account.",
+          accountLabel: null,
+          connectedAt: null,
+          loginUrl: null,
+          loginMode: null,
+          lastError: blockers.map((blocker) => blocker.nextAction).join(" "),
+          failureKind: "authentication",
+          graphConnection: null,
+          graphDiscovery: buildBlockedGraphDiscovery(checkedAt, blockers),
+        });
+        return {
+          ok: false,
+          provider,
+          title: "Instagram Graph setup blocked",
+          message: "No Instagram Business or Creator account was found for this login.",
+          state: this.decorateState(provider),
+        };
+      }
+      const grantedScopes = readGrantedScopes(tokenPayload, INSTAGRAM_GRAPH_OAUTH_SCOPES);
+      const token = buildTokenMetadata(tokenPayload, checkedAt, checkedAt);
+      const scopedCandidates = candidates.map((record) => ({ ...record, grantedScopes }));
+      const candidate = scopedCandidates[0];
+      const graphConnection = buildInstagramGraphConnection({
+        candidate,
+        grantedScopes,
+        token,
+        checkedAt,
+      });
+      const graphDiscovery = buildCandidateGraphDiscovery(
+        checkedAt,
+        scopedCandidates.length,
+        candidate,
+      );
+      const testerRequest = await this.completeTesterRequestIfPresent(provider, checkedAt);
+      await this.persistOAuthToken(provider, {
+        provider,
+        accountLabel: candidate.instagramAccountLabel,
+        connectedAt: checkedAt,
+        tokenPayload,
+        scopes: grantedScopes,
+        graphConnection,
+        graphDiscovery,
+      });
+      this.transition(provider, {
+        status: "connected",
+        message:
+          candidates.length === 1
+            ? "Instagram Graph discovery found one connection candidate."
+            : "Instagram Graph discovery found multiple connection candidates.",
+        accountLabel: candidate.instagramAccountLabel,
+        connectedAt: checkedAt,
+        loginUrl: null,
+        loginMode: "oauth",
+        lastError: null,
+        graphConnection,
+        graphDiscovery,
+        testerRequest,
+      });
+      return {
+        ok: true,
+        provider,
+        title: "Instagram Graph discovery complete",
+        message:
+          candidates.length === 1
+            ? `${candidate.instagramAccountLabel} can be used as a Graph API connection candidate.`
+            : `${candidates.length} Instagram Graph connection candidates were discovered.`,
+        state: this.decorateState(provider),
+      };
+    } catch (error) {
+      const message =
+        sanitizeConnectorPublicText(
+          error instanceof Error ? error.message : String(error),
+        ) ?? "Instagram Graph discovery failed.";
+      const blockers = instagramDiscoveryFailureBlockers(message);
       this.transition(provider, {
         status: "failed",
-        message:
-          "Instagram Graph discovery did not find a connected Professional Instagram account.",
-        accountLabel: null,
-        connectedAt: null,
+        message: "Instagram Graph discovery failed.",
         loginUrl: null,
         loginMode: null,
-        lastError: blockers.map((blocker) => blocker.nextAction).join(" "),
+        lastError: message,
         failureKind: "authentication",
         graphConnection: null,
-        graphDiscovery: buildBlockedGraphDiscovery(checkedAt, blockers),
+        graphDiscovery: buildBlockedGraphDiscovery(this.now(), blockers),
       });
       return {
         ok: false,
         provider,
-        title: "Instagram Graph setup blocked",
-        message: "No Instagram Business or Creator account was found for this login.",
+        title: "Instagram Graph discovery failed",
+        message,
         state: this.decorateState(provider),
       };
     }
-    const grantedScopes = readGrantedScopes(tokenPayload, INSTAGRAM_GRAPH_OAUTH_SCOPES);
-    const token = buildTokenMetadata(tokenPayload, checkedAt, checkedAt);
-    const scopedCandidates = candidates.map((record) => ({ ...record, grantedScopes }));
-    const candidate = scopedCandidates[0];
-    const graphConnection = buildInstagramGraphConnection({
-      candidate,
-      grantedScopes,
-      token,
-      checkedAt,
-    });
-    const graphDiscovery = buildCandidateGraphDiscovery(
-      checkedAt,
-      scopedCandidates.length,
-      candidate,
-    );
-    const testerRequest = await this.completeTesterRequestIfPresent(provider, checkedAt);
-    await this.persistOAuthToken(provider, {
-      provider,
-      accountLabel: candidate.instagramAccountLabel,
-      connectedAt: checkedAt,
-      tokenPayload,
-      scopes: grantedScopes,
-      graphConnection,
-      graphDiscovery,
-    });
-    this.transition(provider, {
-      status: "connected",
-      message:
-        candidates.length === 1
-          ? "Instagram Graph discovery found one connection candidate."
-          : "Instagram Graph discovery found multiple connection candidates.",
-      accountLabel: candidate.instagramAccountLabel,
-      connectedAt: checkedAt,
-      loginUrl: null,
-      loginMode: "oauth",
-      lastError: null,
-      graphConnection,
-      graphDiscovery,
-      testerRequest,
-    });
-    return {
-      ok: true,
-      provider,
-      title: "Instagram Graph discovery complete",
-      message:
-        candidates.length === 1
-          ? `${candidate.instagramAccountLabel} can be used as a Graph API connection candidate.`
-          : `${candidates.length} Instagram Graph connection candidates were discovered.`,
-      state: this.decorateState(provider),
-    };
   }
 
   async publishDraft(
@@ -2857,7 +2811,7 @@ export class ConnectorService implements ConnectorServiceLike {
         continue;
       }
       const oauthSettings = await this.readStoredOAuthSettings(provider);
-      if (oauthSettings) {
+      if (oauthSettings && provider !== "instagram") {
         this.oauthSettings.set(provider, oauthSettings);
       }
       const testerRequest = await this.readStoredTesterRequest(provider);
@@ -2988,10 +2942,7 @@ export class ConnectorService implements ConnectorServiceLike {
     return path.join(this.providerDir(provider), BROWSER_PROFILE_DIR);
   }
 
-  private resolveInstagramOAuthBrokerBaseUrl(
-    provider: ConnectorProvider,
-    config?: Extract<ConnectorOAuthConfig, { supported: true }>,
-  ): string | null {
+  private resolveInstagramOAuthBrokerBaseUrl(): string | null {
     const explicitBrokerBaseUrl = readEnv(
       this.baseEnv,
       "ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL",
@@ -3002,26 +2953,7 @@ export class ConnectorService implements ConnectorServiceLike {
     if (isTruthyEnv(this.baseEnv.ROCKY_CONNECTOR_DISABLE_DEFAULT_OAUTH_BROKER)) {
       return null;
     }
-    if (config && this.hasOAuthClientCredentials(provider, config)) {
-      return null;
-    }
     return DEFAULT_INSTAGRAM_OAUTH_BROKER_BASE_URL;
-  }
-
-  private hasOAuthClientCredentials(
-    provider: ConnectorProvider,
-    config: Extract<ConnectorOAuthConfig, { supported: true }>,
-  ): boolean {
-    const prefix = `ROCKY_CONNECTOR_${config.envPrefix}`;
-    const storedSettings = this.oauthSettings.get(provider);
-    const clientId =
-      storedSettings?.clientId ??
-      readEnv(this.baseEnv, `${prefix}_CLIENT_ID`) ??
-      readEnv(this.baseEnv, `${prefix}_CLIENT_KEY`);
-    const clientSecret =
-      storedSettings?.clientSecret ??
-      readEnv(this.baseEnv, `${prefix}_CLIENT_SECRET`);
-    return Boolean(clientId && clientSecret);
   }
 
   private pruneBrokerOAuthSessions(): void {
@@ -3052,7 +2984,8 @@ export class ConnectorService implements ConnectorServiceLike {
     | { ok: true; value: OAuthCredentials }
     | { ok: false; message: string } {
     const prefix = `ROCKY_CONNECTOR_${config.envPrefix}`;
-    const storedSettings = this.oauthSettings.get(provider);
+    const storedSettings =
+      provider === "instagram" ? null : this.oauthSettings.get(provider);
     const clientId =
       storedSettings?.clientId ??
       readEnv(this.baseEnv, `${prefix}_CLIENT_ID`) ??
@@ -3920,13 +3853,10 @@ function buildInstagramGraphReadiness(
   );
   const hasMetaApp = Boolean(
     hasManagedBroker ||
-    oauthSettings?.clientId ||
     readEnvAny(baseEnv, [
       "ROCKY_INSTAGRAM_META_APP_ID",
       "ROCKY_CONNECTOR_INSTAGRAM_META_APP_ID",
-      "ROCKY_CONNECTOR_INSTAGRAM_CLIENT_ID",
       "INSTAGRAM_META_APP_ID",
-      "INSTAGRAM_CLIENT_ID",
     ]),
   );
 
@@ -4072,8 +4002,8 @@ function instagramDiscoverySetupBlockers(): ConnectorReadinessBlockerRecord[] {
   return [
     readinessBlocker(
       "meta_app_required",
-      "Instagram Graph discovery requires a user-owned Meta app.",
-      "Add the Meta app client id and client secret for the Instagram connector, then start Graph API discovery again.",
+      "Instagram Graph discovery requires the managed Rocky OAuth broker.",
+      "Enable the managed OAuth broker or configure ROCKY_CONNECTOR_OAUTH_BROKER_BASE_URL, then start Graph API discovery again.",
     ),
   ];
 }

@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -530,6 +538,7 @@ const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
 const TISTORY_DRAFT_PUBLISH_MARKER = "<!-- rocky-tistory-draft-publish:";
 const INSTAGRAM_MEDIA_PUBLISH_MARKER = "<!-- rocky-instagram-media-publish:";
 const INSTAGRAM_PUBLISH_REQUEST_FILE = "instagram-publish-request.json";
+const INSTAGRAM_PUBLISH_REQUEST_CLAIM_FILE = `${INSTAGRAM_PUBLISH_REQUEST_FILE}.lock`;
 const INSTAGRAM_MEDIA_CONTAINER_MAX_POLLS = 30;
 const INSTAGRAM_MEDIA_CONTAINER_POLL_INTERVAL_MS = 2_000;
 
@@ -767,6 +776,7 @@ interface TistoryPublishReadyDraft {
 interface InstagramPublishReadyRequest {
   workspacePath: string;
   absolutePath: string;
+  claimPath: string;
   payload: Record<string, unknown>;
   args: Record<string, unknown>;
 }
@@ -982,6 +992,15 @@ function readRecordBoolean(
     }
   }
   return null;
+}
+
+function hasFilesystemErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
 
 function isInstagramPublishRequestApproved(
@@ -2553,6 +2572,7 @@ export class RockyChatService {
       };
     } finally {
       this.instagramPublishRequestClaims.delete(request.absolutePath);
+      await this.releaseInstagramPublishRequestFileClaim(request.claimPath);
     }
   }
 
@@ -2651,8 +2671,37 @@ export class RockyChatService {
       return null;
     }
     this.instagramPublishRequestClaims.add(absolutePath);
+    let claimPath: string | null = null;
 
     try {
+      const publishExecutionId = randomUUID();
+      claimPath = await this.tryClaimInstagramPublishRequestFile({
+        absolutePath,
+        workspacePath,
+        chatId: input.chatId,
+        publishExecutionId,
+      });
+      if (!claimPath) {
+        this.instagramPublishRequestClaims.delete(absolutePath);
+        return null;
+      }
+
+      const reparsed = JSON.parse(await readFile(absolutePath, "utf8")) as unknown;
+      if (!reparsed || typeof reparsed !== "object" || Array.isArray(reparsed)) {
+        await this.releaseInstagramPublishRequestFileClaim(claimPath);
+        this.instagramPublishRequestClaims.delete(absolutePath);
+        return null;
+      }
+      payload = reparsed as Record<string, unknown>;
+      if (
+        !isInstagramPublishRequestApproved(payload) ||
+        isTerminalInstagramPublishRequest(payload)
+      ) {
+        await this.releaseInstagramPublishRequestFileClaim(claimPath);
+        this.instagramPublishRequestClaims.delete(absolutePath);
+        return null;
+      }
+
       const caption = await this.readInstagramPublishCaption({
         agent: input.agent,
         payload,
@@ -2667,7 +2716,7 @@ export class RockyChatService {
       const claimedPayload = {
         ...payload,
         status: "publishing",
-        publish_execution_id: randomUUID(),
+        publish_execution_id: publishExecutionId,
         publish_started_at: this.now(),
       };
       await writeFile(
@@ -2679,12 +2728,64 @@ export class RockyChatService {
       return {
         workspacePath,
         absolutePath,
+        claimPath,
         payload: claimedPayload,
         args,
       };
     } catch (error) {
+      if (claimPath) {
+        await this.releaseInstagramPublishRequestFileClaim(claimPath);
+      }
       this.instagramPublishRequestClaims.delete(absolutePath);
       throw error;
+    }
+  }
+
+  private async tryClaimInstagramPublishRequestFile(input: {
+    absolutePath: string;
+    workspacePath: string;
+    chatId: string;
+    publishExecutionId: string;
+  }): Promise<string | null> {
+    const claimPath = path.join(
+      path.dirname(input.absolutePath),
+      INSTAGRAM_PUBLISH_REQUEST_CLAIM_FILE
+    );
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(claimPath, "wx");
+      await handle.writeFile(
+        `${JSON.stringify(
+          {
+            chat_id: input.chatId,
+            request_path: input.workspacePath,
+            publish_execution_id: input.publishExecutionId,
+            claimed_at: this.now(),
+            process_id: process.pid,
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+      return claimPath;
+    } catch (error) {
+      if (hasFilesystemErrorCode(error, "EEXIST")) {
+        return null;
+      }
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  }
+
+  private async releaseInstagramPublishRequestFileClaim(
+    claimPath: string
+  ): Promise<void> {
+    try {
+      await unlink(claimPath);
+    } catch {
+      // Leaving a stale claim is safer than risking a duplicate external publish.
     }
   }
 

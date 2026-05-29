@@ -15,7 +15,7 @@ function printUsage(): void {
 
 Options:
   --prompt <text>           Prompt to send to Codex. Required unless passed as the first positional argument.
-  --pptx-smoke              Run the v0.1.1 PPTX artifact creation smoke prompt.
+  --pptx-smoke              Run the v0.1.2 PPTX artifact creation smoke prompt.
   --workspace <path>        Workspace root to run in. Defaults to the current directory.
   --runtime-home <path>     Isolated runtime home. Defaults to .runtime/manual-smoke under the workspace.
   --sandbox <mode>          Codex sandbox mode. Defaults to read-only.

@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -534,6 +542,7 @@ const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
 const TISTORY_DRAFT_PUBLISH_MARKER = "<!-- rocky-tistory-draft-publish:";
 const INSTAGRAM_MEDIA_PUBLISH_MARKER = "<!-- rocky-instagram-media-publish:";
 const INSTAGRAM_PUBLISH_REQUEST_FILE = "instagram-publish-request.json";
+const INSTAGRAM_PUBLISH_REQUEST_CLAIM_FILE = `${INSTAGRAM_PUBLISH_REQUEST_FILE}.lock`;
 const INSTAGRAM_MEDIA_CONTAINER_MAX_POLLS = 30;
 const INSTAGRAM_MEDIA_CONTAINER_POLL_INTERVAL_MS = 2_000;
 
@@ -809,6 +818,7 @@ interface TistoryPublishReadyDraft {
 interface InstagramPublishReadyRequest {
   workspacePath: string;
   absolutePath: string;
+  claimPath: string;
   payload: Record<string, unknown>;
   args: Record<string, unknown>;
 }
@@ -841,6 +851,34 @@ function shouldAttemptTistoryDraftPublish(input: {
       request
     );
   return tistorySignal && publishIntent && !negativeIntent;
+}
+
+function shouldAttemptInstagramMediaPublish(input: {
+  request: string;
+  output: string | null;
+}): boolean {
+  if (!input.output || input.output.includes(INSTAGRAM_MEDIA_PUBLISH_MARKER)) {
+    return false;
+  }
+
+  const request = compactText(input.request).toLowerCase();
+  const statusCheckIntent =
+    /(?:\uAC8C\uC2DC|\uBC1C\uD589|publish|post).*(?:\uB410|\uB418\uC5C8|\uC644\uB8CC|\uD655\uC778|done|status)|(?:\uC9C4\uD589).*(?:\uB410|\uB418\uC5C8|\uC644\uB8CC)/iu.test(
+      request
+    );
+  if (statusCheckIntent) {
+    return false;
+  }
+
+  const publishIntent =
+    /\uAC8C\uC2DC|\uBC1C\uD589|\uC5C5\uB85C\uB4DC|\uC62C\uB824|\uD3EC\uC2A4\uD305|\uC2B9\uC778|\uC7AC\uC2DC\uB3C4|publish|post|upload|approve|retry|again/iu.test(
+      request
+    );
+  const negativeIntent =
+    /\uD558\uC9C0\s*\uB9C8|\uD558\uC9C0\s*\uB9D0|\uAE08\uC9C0|\uCDE8\uC18C|do not|don't|dont|no\s+(?:publish|upload|post)/iu.test(
+      request
+    );
+  return publishIntent && !negativeIntent;
 }
 
 function extractMarkdownWorkspacePaths(text: string): string[] {
@@ -998,6 +1036,15 @@ function readRecordBoolean(
   return null;
 }
 
+function hasFilesystemErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
 function isInstagramPublishRequestApproved(
   payload: Record<string, unknown>
 ): boolean {
@@ -1014,6 +1061,8 @@ function isTerminalInstagramPublishRequest(
   return (
     status === "published" ||
     status === "publish_failed" ||
+    status === "publishing" ||
+    status === "publish_in_progress" ||
     Boolean(readRecordString(payload, ["media_id", "mediaId"]))
   );
 }
@@ -1394,6 +1443,7 @@ export class RockyChatService {
   private readonly ecountLookupService: EcountLookupServiceLike;
   private readonly connectorService: ConnectorServiceLike | null;
   private readonly publicWorkspaceBaseUrl: string | null;
+  private readonly instagramPublishRequestClaims = new Set<string>();
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
@@ -2388,12 +2438,16 @@ export class RockyChatService {
   private async maybePublishInstagramMediaAfterAgentTurn(input: {
     agent: AgentRecord;
     chatId: string;
+    request: string;
     orchestration: RockyOrchestrationRecord;
   }): Promise<RockyOrchestrationRecord> {
     if (
       !this.connectorService ||
       input.orchestration.status !== "completed" ||
-      input.orchestration.output?.includes(INSTAGRAM_MEDIA_PUBLISH_MARKER)
+      !shouldAttemptInstagramMediaPublish({
+        request: input.request,
+        output: input.orchestration.output,
+      })
     ) {
       return input.orchestration;
     }
@@ -2574,6 +2628,9 @@ export class RockyChatService {
         }),
         updatedAt: result.checkedAt,
       };
+    } finally {
+      this.instagramPublishRequestClaims.delete(request.absolutePath);
+      await this.releaseInstagramPublishRequestFileClaim(request.claimPath);
     }
   }
 
@@ -2668,24 +2725,126 @@ export class RockyChatService {
     ) {
       return null;
     }
+    if (this.instagramPublishRequestClaims.has(absolutePath)) {
+      return null;
+    }
+    this.instagramPublishRequestClaims.add(absolutePath);
+    let claimPath: string | null = null;
 
-    const caption = await this.readInstagramPublishCaption({
-      agent: input.agent,
-      payload,
-    });
-    const args = buildInstagramMediaPrepareArgs({ payload, caption });
-    await this.attachPublicWorkspaceMediaUrl({
-      agent: input.agent,
-      payload,
-      args,
-    });
+    try {
+      const publishExecutionId = randomUUID();
+      claimPath = await this.tryClaimInstagramPublishRequestFile({
+        absolutePath,
+        workspacePath,
+        chatId: input.chatId,
+        publishExecutionId,
+      });
+      if (!claimPath) {
+        this.instagramPublishRequestClaims.delete(absolutePath);
+        return null;
+      }
 
-    return {
-      workspacePath,
-      absolutePath,
-      payload,
-      args,
-    };
+      const reparsed = JSON.parse(await readFile(absolutePath, "utf8")) as unknown;
+      if (!reparsed || typeof reparsed !== "object" || Array.isArray(reparsed)) {
+        await this.releaseInstagramPublishRequestFileClaim(claimPath);
+        this.instagramPublishRequestClaims.delete(absolutePath);
+        return null;
+      }
+      payload = reparsed as Record<string, unknown>;
+      if (
+        !isInstagramPublishRequestApproved(payload) ||
+        isTerminalInstagramPublishRequest(payload)
+      ) {
+        await this.releaseInstagramPublishRequestFileClaim(claimPath);
+        this.instagramPublishRequestClaims.delete(absolutePath);
+        return null;
+      }
+
+      const caption = await this.readInstagramPublishCaption({
+        agent: input.agent,
+        payload,
+      });
+      const args = buildInstagramMediaPrepareArgs({ payload, caption });
+      await this.attachPublicWorkspaceMediaUrl({
+        agent: input.agent,
+        payload,
+        args,
+      });
+
+      const claimedPayload = {
+        ...payload,
+        status: "publishing",
+        publish_execution_id: publishExecutionId,
+        publish_started_at: this.now(),
+      };
+      await writeFile(
+        absolutePath,
+        `${JSON.stringify(claimedPayload, null, 2)}\n`,
+        "utf8"
+      );
+
+      return {
+        workspacePath,
+        absolutePath,
+        claimPath,
+        payload: claimedPayload,
+        args,
+      };
+    } catch (error) {
+      if (claimPath) {
+        await this.releaseInstagramPublishRequestFileClaim(claimPath);
+      }
+      this.instagramPublishRequestClaims.delete(absolutePath);
+      throw error;
+    }
+  }
+
+  private async tryClaimInstagramPublishRequestFile(input: {
+    absolutePath: string;
+    workspacePath: string;
+    chatId: string;
+    publishExecutionId: string;
+  }): Promise<string | null> {
+    const claimPath = path.join(
+      path.dirname(input.absolutePath),
+      INSTAGRAM_PUBLISH_REQUEST_CLAIM_FILE
+    );
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(claimPath, "wx");
+      await handle.writeFile(
+        `${JSON.stringify(
+          {
+            chat_id: input.chatId,
+            request_path: input.workspacePath,
+            publish_execution_id: input.publishExecutionId,
+            claimed_at: this.now(),
+            process_id: process.pid,
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+      return claimPath;
+    } catch (error) {
+      if (hasFilesystemErrorCode(error, "EEXIST")) {
+        return null;
+      }
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  }
+
+  private async releaseInstagramPublishRequestFileClaim(
+    claimPath: string
+  ): Promise<void> {
+    try {
+      await unlink(claimPath);
+    } catch {
+      // Leaving a stale claim is safer than risking a duplicate external publish.
+    }
   }
 
   private async readInstagramPublishCaption(input: {
@@ -2786,6 +2945,7 @@ export class RockyChatService {
     return this.maybePublishInstagramMediaAfterAgentTurn({
       agent: input.agent,
       chatId: input.chatId,
+      request: input.request,
       orchestration: afterTistory,
     });
   }
@@ -3517,7 +3677,12 @@ export class RockyChatService {
         hasPreparedIntegrationResults: preparedIntegrations.length > 0,
       }),
     });
-    const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);
+    const currentOrchestration = isActiveOrchestrationStatus(
+      startedOrchestration.status
+    )
+      ? startedOrchestration
+      : await this.orchestrator.refresh(startedOrchestration);
+    const sanitized = this.sanitizeOrchestrationOutput(currentOrchestration);
     const finalizedOrchestration = await this.finalizeServerManagedPublishesAfterAgentTurn({
       agent: input.agent,
       chatId: input.chatId,
@@ -4428,15 +4593,7 @@ export class RockyChatService {
           dispatch.orchestration
         );
         const sanitized = this.sanitizeOrchestrationOutput(refreshedOrchestration);
-        const agent = await this.findAgentById(sanitized.orchestration.agentId);
-        const orchestration = agent
-          ? await this.finalizeServerManagedPublishesAfterAgentTurn({
-              agent,
-              chatId: hydrated.id,
-              request: dispatch.originalRequest,
-              orchestration: sanitized.orchestration,
-            })
-          : sanitized.orchestration;
+        const orchestration = sanitized.orchestration;
         if (JSON.stringify(orchestration) !== JSON.stringify(dispatch.orchestration)) {
           changed = true;
         }

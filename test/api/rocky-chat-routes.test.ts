@@ -2397,14 +2397,14 @@ test("rocky chat executes approved Instagram publish request with public media U
       runtimeHome,
     }),
   );
-  completedRunSummaries.push("Prepared an approved Instagram publish request.");
+  completedRunSummaries.push("Initial Instagram task ready.");
 
   try {
     const response = await server.inject({
       method: "POST",
       url: "/rocky/chats",
       payload: {
-        message: "Create and publish an Instagram feed post.",
+        message: "Create an Instagram feed draft.",
         agentId: "instagram-agent",
       },
     });
@@ -2441,13 +2441,32 @@ test("rocky chat executes approved Instagram publish request with public media U
       "utf8",
     );
 
-    const refreshedResponse = await server.inject({
+    const readOnlyResponse = await server.inject({
       method: "GET",
       url: `/rocky/chats/${created.id}`,
     });
-    assert.equal(refreshedResponse.statusCode, 200);
-    const refreshed = refreshedResponse.json<RockyChatRecord>();
-    const rockyReply = refreshed.messages[1]?.text ?? "";
+    assert.equal(readOnlyResponse.statusCode, 200);
+    assert.equal(graphCalls.length, 0);
+    const readOnlyPersisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    assert.equal(
+      readOnlyPersisted.status,
+      "publish_approved_pending_server_execution",
+    );
+
+    completedRunSummaries.push("Prepared an approved Instagram publish request.");
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: {
+        message: "Publish the approved Instagram feed post.",
+      },
+    });
+    assert.equal(publishResponse.statusCode, 201);
+    const published = publishResponse.json<RockyChatRecord>();
+    const rockyReply = published.messages.at(-1)?.text ?? "";
 
     assert.equal(graphCalls.length, 4);
     assert.match(graphCalls[0]?.url ?? "", /\/17841400000000001\/media$/u);
@@ -2493,6 +2512,218 @@ test("rocky chat executes approved Instagram publish request with public media U
   }
 });
 
+test("rocky chat does not publish approved Instagram request from status-check turns", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace",
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home",
+  );
+  agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram agent",
+      workspaceRoot,
+      runtimeHome,
+    }),
+  );
+  completedRunSummaries.push("Initial Instagram task ready.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "Create an Instagram feed draft.",
+        agentId: "instagram-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const outputDir = path.join(workspaceRoot, ...rockyTaskOutputDirectory(created.id).split("/"));
+    await mkdir(outputDir, { recursive: true });
+    const requestPath = path.join(outputDir, "instagram-publish-request.json");
+    await writeFile(
+      requestPath,
+      `${JSON.stringify(
+        {
+          account: "rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "publish_approved_pending_server_execution",
+          image_url: "https://tmpfiles.org/dl/example/rocky-feed.png",
+          caption: "Status check should not publish",
+          requires_final_publish_approval: false,
+          final_publish_approval_received: true,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    completedRunSummaries.push("Checked the publish status.");
+    const statusResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: {
+        message: "게시 됐어?",
+      },
+    });
+    assert.equal(statusResponse.statusCode, 201);
+    const statusChat = statusResponse.json<RockyChatRecord>();
+    const rockyReply = statusChat.messages.at(-1)?.text ?? "";
+    const persisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(graphCalls, 0);
+    assert.equal(
+      persisted.status,
+      "publish_approved_pending_server_execution",
+    );
+    assert.doesNotMatch(rockyReply, /Instagram publish result/u);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat skips Instagram publish request claimed by another process", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace",
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home",
+  );
+  agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram agent",
+      workspaceRoot,
+      runtimeHome,
+    }),
+  );
+  completedRunSummaries.push("Initial Instagram task ready.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "Create an Instagram feed draft.",
+        agentId: "instagram-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const outputDir = path.join(workspaceRoot, ...rockyTaskOutputDirectory(created.id).split("/"));
+    await mkdir(outputDir, { recursive: true });
+    const requestPath = path.join(outputDir, "instagram-publish-request.json");
+    await writeFile(
+      requestPath,
+      `${JSON.stringify(
+        {
+          account: "rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "publish_approved_pending_server_execution",
+          image_url: "https://tmpfiles.org/dl/example/rocky-feed.png",
+          caption: "Claimed request should not publish",
+          requires_final_publish_approval: false,
+          final_publish_approval_received: true,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      `${requestPath}.lock`,
+      `${JSON.stringify(
+        {
+          chat_id: created.id,
+          request_path: path.posix.join(
+            rockyTaskOutputDirectory(created.id),
+            "instagram-publish-request.json",
+          ),
+          publish_execution_id: "already-claimed",
+          claimed_at: "2026-04-21T00:00:00.000Z",
+          process_id: 12345,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    completedRunSummaries.push("Prepared an approved Instagram publish request.");
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: {
+        message: "Publish the approved Instagram feed post.",
+      },
+    });
+    assert.equal(publishResponse.statusCode, 201);
+    const published = publishResponse.json<RockyChatRecord>();
+    const rockyReply = published.messages.at(-1)?.text ?? "";
+    const persisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(graphCalls, 0);
+    assert.equal(
+      persisted.status,
+      "publish_approved_pending_server_execution",
+    );
+    assert.doesNotMatch(rockyReply, /Instagram publish result/u);
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat records Instagram publish blocker for local-only media files", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   let graphCalls = 0;
@@ -2529,14 +2760,14 @@ test("rocky chat records Instagram publish blocker for local-only media files", 
       runtimeHome,
     }),
   );
-  completedRunSummaries.push("Prepared an approved Instagram publish request.");
+  completedRunSummaries.push("Initial Instagram task ready.");
 
   try {
     const response = await server.inject({
       method: "POST",
       url: "/rocky/chats",
       payload: {
-        message: "Publish the approved Instagram feed post.",
+        message: "Create an Instagram feed draft.",
         agentId: "instagram-agent",
       },
     });
@@ -2566,13 +2797,17 @@ test("rocky chat records Instagram publish blocker for local-only media files", 
       "utf8",
     );
 
-    const refreshedResponse = await server.inject({
-      method: "GET",
-      url: `/rocky/chats/${created.id}`,
+    completedRunSummaries.push("Prepared an approved Instagram publish request.");
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: {
+        message: "Publish the approved Instagram feed post.",
+      },
     });
-    assert.equal(refreshedResponse.statusCode, 200);
-    const refreshed = refreshedResponse.json<RockyChatRecord>();
-    const rockyReply = refreshed.messages[1]?.text ?? "";
+    assert.equal(publishResponse.statusCode, 201);
+    const published = publishResponse.json<RockyChatRecord>();
+    const rockyReply = published.messages.at(-1)?.text ?? "";
     const persisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<
       string,
       unknown
@@ -2628,14 +2863,14 @@ test("rocky chat records Instagram publish fetch failures without breaking task 
       runtimeHome,
     }),
   );
-  completedRunSummaries.push("Prepared an approved Instagram publish request.");
+  completedRunSummaries.push("Initial Instagram task ready.");
 
   try {
     const response = await server.inject({
       method: "POST",
       url: "/rocky/chats",
       payload: {
-        message: "Publish the approved Instagram feed post.",
+        message: "Create an Instagram feed draft.",
         agentId: "instagram-agent",
       },
     });
@@ -2662,13 +2897,17 @@ test("rocky chat records Instagram publish fetch failures without breaking task 
       "utf8",
     );
 
-    const refreshedResponse = await server.inject({
-      method: "GET",
-      url: `/rocky/chats/${created.id}`,
+    completedRunSummaries.push("Prepared an approved Instagram publish request.");
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: {
+        message: "Publish the approved Instagram feed post.",
+      },
     });
-    assert.equal(refreshedResponse.statusCode, 200);
-    const refreshed = refreshedResponse.json<RockyChatRecord>();
-    const rockyReply = refreshed.messages[1]?.text ?? "";
+    assert.equal(publishResponse.statusCode, 201);
+    const published = publishResponse.json<RockyChatRecord>();
+    const rockyReply = published.messages.at(-1)?.text ?? "";
     const persisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<
       string,
       unknown

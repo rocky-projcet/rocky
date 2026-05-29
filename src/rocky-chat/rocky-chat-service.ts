@@ -101,6 +101,7 @@ import {
   type EcountLookupServiceLike,
 } from "../integrations/ecount-connection-service.js";
 import type {
+  ConnectorExecuteCapabilityResult,
   ConnectorPublishDraftInput,
   ConnectorPublishDraftResult,
   ConnectorProvider,
@@ -113,6 +114,7 @@ export interface RockyChatServiceOptions {
   stateRoot?: string;
   now?: () => string;
   idGenerator?: () => string;
+  publicWorkspaceBaseUrl?: string | null;
   agentService?: RockyAgentServiceLike;
   sessionService?: RockySessionServiceLike;
   skillTemplateStore?: SkillTemplateStore;
@@ -526,6 +528,10 @@ const SKILL_DELETE_FOLLOWUP_MARKER = "삭제할 agent-local 스킬을 지정해 
 const TEMPLATE_INTERVIEW_AGENT_WAIT_TIMEOUT_MS = 60_000;
 const TEMPLATE_INTERVIEW_AGENT_POLL_INTERVAL_MS = 750;
 const TISTORY_DRAFT_PUBLISH_MARKER = "<!-- rocky-tistory-draft-publish:";
+const INSTAGRAM_MEDIA_PUBLISH_MARKER = "<!-- rocky-instagram-media-publish:";
+const INSTAGRAM_PUBLISH_REQUEST_FILE = "instagram-publish-request.json";
+const INSTAGRAM_MEDIA_CONTAINER_MAX_POLLS = 30;
+const INSTAGRAM_MEDIA_CONTAINER_POLL_INTERVAL_MS = 2_000;
 
 function requestMessageOrAttachmentDefault(input: {
   message: string;
@@ -758,6 +764,24 @@ interface TistoryPublishReadyDraft {
   input: ConnectorPublishDraftInput;
 }
 
+interface InstagramPublishReadyRequest {
+  workspacePath: string;
+  absolutePath: string;
+  payload: Record<string, unknown>;
+  args: Record<string, unknown>;
+}
+
+interface InstagramPublishExecutionResult {
+  status: "published" | "publish_failed";
+  requestPath: string;
+  checkedAt: string;
+  message: string;
+  creationId: string | null;
+  mediaId: string | null;
+  permalink: string | null;
+  publishedAt: string | null;
+}
+
 function shouldAttemptTistoryDraftPublish(input: {
   request: string;
   output: string | null;
@@ -903,6 +927,317 @@ function appendTistoryDraftPublishResult(input: {
   return lines.join("\n");
 }
 
+function readRecordString(
+  record: Record<string, unknown> | null | undefined,
+  keys: string[]
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function readRecordBoolean(
+  record: Record<string, unknown>,
+  keys: string[]
+): boolean | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function isInstagramPublishRequestApproved(
+  payload: Record<string, unknown>
+): boolean {
+  return (
+    readRecordBoolean(payload, ["final_publish_approval_received"]) === true &&
+    readRecordBoolean(payload, ["requires_final_publish_approval"]) === false
+  );
+}
+
+function isTerminalInstagramPublishRequest(
+  payload: Record<string, unknown>
+): boolean {
+  const status = readRecordString(payload, ["status"])?.toLowerCase() ?? "";
+  return (
+    status === "published" ||
+    status === "publish_failed" ||
+    Boolean(readRecordString(payload, ["media_id", "mediaId"]))
+  );
+}
+
+function buildInstagramMediaPrepareArgs(input: {
+  payload: Record<string, unknown>;
+  caption: string | null;
+}): Record<string, unknown> {
+  const imageUrl = readRecordString(input.payload, [
+    "imageUrl",
+    "image_url",
+    "publicImageUrl",
+    "public_image_url",
+    "mediaUrl",
+    "media_url",
+    "publicMediaUrl",
+    "public_media_url",
+    "url",
+  ]);
+  const videoUrl = readRecordString(input.payload, [
+    "videoUrl",
+    "video_url",
+    "publicVideoUrl",
+    "public_video_url",
+  ]);
+  const imageFile = readRecordString(input.payload, [
+    "imageFile",
+    "image_file",
+    "mediaFile",
+    "media_file",
+    "file",
+  ]);
+  const mediaType = readRecordString(input.payload, ["mediaType", "media_type"]);
+  const args: Record<string, unknown> = {
+    approved: true,
+  };
+
+  if (imageUrl) {
+    args.imageUrl = imageUrl;
+  }
+  if (videoUrl) {
+    args.videoUrl = videoUrl;
+  }
+  if (!imageUrl && !videoUrl && imageFile) {
+    args.imageFile = imageFile;
+  }
+  if (mediaType) {
+    args.mediaType = mediaType;
+  }
+  if (input.caption) {
+    args.caption = input.caption;
+  }
+
+  return args;
+}
+
+function normalizePublicWorkspaceBaseUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || isLocalOrPrivateHost(url.hostname)) {
+    return null;
+  }
+  url.hash = "";
+  url.search = "";
+  url.pathname = url.pathname.replace(/\/+$/u, "");
+  return url.toString().replace(/\/$/u, "");
+}
+
+function isLocalOrPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    /^10\./u.test(host) ||
+    /^192\.168\./u.test(host) ||
+    /^172\.(?:1[6-9]|2\d|3[0-1])\./u.test(host)
+  );
+}
+
+function buildPublicWorkspaceFileUrl(input: {
+  publicWorkspaceBaseUrl: string;
+  agentId: string;
+  workspacePath: string;
+}): string {
+  const base = input.publicWorkspaceBaseUrl.endsWith("/")
+    ? input.publicWorkspaceBaseUrl
+    : `${input.publicWorkspaceBaseUrl}/`;
+  const url = new URL(
+    `agents/${encodeURIComponent(input.agentId)}/workspace/file/content`,
+    base
+  );
+  url.searchParams.set("path", input.workspacePath);
+  return url.toString();
+}
+
+function readCapabilityDataString(
+  result: ConnectorExecuteCapabilityResult,
+  keys: string[]
+): string | null {
+  return readRecordString(result.data ?? null, keys);
+}
+
+function readInstagramMediaContainerStatus(
+  result: ConnectorExecuteCapabilityResult
+): string | null {
+  const rawStatus = readCapabilityDataString(result, [
+    "status_code",
+    "statusCode",
+    "status",
+  ]);
+  if (!rawStatus) {
+    return null;
+  }
+
+  const normalized = rawStatus.trim().toUpperCase().replace(/[\s-]+/gu, "_");
+  if (normalized.includes("FINISH")) {
+    return "FINISHED";
+  }
+  if (normalized.includes("ERROR") || normalized.includes("FAILED")) {
+    return "ERROR";
+  }
+  if (normalized.includes("EXPIRE")) {
+    return "EXPIRED";
+  }
+  if (
+    normalized.includes("IN_PROGRESS") ||
+    normalized.includes("PROCESS") ||
+    normalized.includes("PENDING")
+  ) {
+    return "IN_PROGRESS";
+  }
+  return normalized;
+}
+
+function instagramPublishFailure(input: {
+  requestPath: string;
+  checkedAt: string;
+  message: string;
+  creationId?: string | null;
+  mediaId?: string | null;
+}): InstagramPublishExecutionResult {
+  return {
+    status: "publish_failed",
+    requestPath: input.requestPath,
+    checkedAt: input.checkedAt,
+    message: input.message,
+    creationId: input.creationId ?? null,
+    mediaId: input.mediaId ?? null,
+    permalink: null,
+    publishedAt: null,
+  };
+}
+
+function formatUnexpectedInstagramPublishError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Instagram media publish failed unexpectedly.";
+  }
+
+  const message = error.message.trim() || error.name;
+  const cause = formatErrorCause((error as { cause?: unknown }).cause);
+  if (!cause || cause === message) {
+    return message;
+  }
+
+  return `${message} (${cause})`;
+}
+
+function formatErrorCause(cause: unknown): string | null {
+  if (!cause) {
+    return null;
+  }
+
+  if (cause instanceof Error) {
+    const code = readErrorCode(cause);
+    const message = cause.message.trim() || cause.name;
+    return code ? `${code}: ${message}` : message;
+  }
+
+  if (typeof cause === "string") {
+    return cause.trim() || null;
+  }
+
+  if (typeof cause === "object") {
+    const record = cause as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code.trim() : "";
+    const message =
+      typeof record.message === "string" ? record.message.trim() : "";
+    if (code && message) {
+      return `${code}: ${message}`;
+    }
+    return code || message || null;
+  }
+
+  return null;
+}
+
+function readErrorCode(error: Error): string | null {
+  const code = (error as Error & { code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code.trim() : null;
+}
+
+function appendInstagramMediaPublishResult(input: {
+  output: string;
+  result: InstagramPublishExecutionResult;
+}): string {
+  const lines = [
+    input.output.trimEnd(),
+    "",
+    "---",
+    "",
+    "Instagram publish result:",
+    `- Status: ${input.result.status === "published" ? "published" : "failed"}`,
+    `- Request: ${input.result.requestPath}`,
+    input.result.creationId ? `- Creation ID: ${input.result.creationId}` : null,
+    input.result.mediaId ? `- Media ID: ${input.result.mediaId}` : null,
+    input.result.permalink ? `- Permalink: ${input.result.permalink}` : null,
+    input.result.publishedAt
+      ? `- Published at: ${input.result.publishedAt}`
+      : null,
+    `- Message: ${input.result.message}`,
+    `${INSTAGRAM_MEDIA_PUBLISH_MARKER} ${input.result.checkedAt} -->`,
+  ].filter((line): line is string => line !== null);
+
+  return lines.join("\n");
+}
+
+function mergeInstagramPublishResult(
+  payload: Record<string, unknown>,
+  result: InstagramPublishExecutionResult
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {
+    ...payload,
+    status: result.status,
+    checked_at: result.checkedAt,
+    publish_message: result.message,
+  };
+
+  if (result.creationId) {
+    next.creation_id = result.creationId;
+  }
+  if (result.mediaId) {
+    next.media_id = result.mediaId;
+  }
+  if (result.permalink) {
+    next.permalink = result.permalink;
+  }
+  if (result.publishedAt) {
+    next.published_at = result.publishedAt;
+  }
+  if (result.status === "publish_failed") {
+    next.publish_error_message = result.message;
+  }
+
+  return next;
+}
+
 function extractUsedSkillRefs(text: string): {
   text: string;
   refs: string[];
@@ -1016,11 +1351,18 @@ export class RockyChatService {
   private readonly ecountSettingsService: EcountSettingsServiceLike;
   private readonly ecountLookupService: EcountLookupServiceLike;
   private readonly connectorService: ConnectorServiceLike | null;
+  private readonly publicWorkspaceBaseUrl: string | null;
 
   constructor(options: RockyChatServiceOptions = {}) {
     this.stateRoot = options.stateRoot;
     this.now = options.now ?? (() => new Date().toISOString());
     this.idGenerator = options.idGenerator ?? randomUUID;
+    this.publicWorkspaceBaseUrl = normalizePublicWorkspaceBaseUrl(
+      options.publicWorkspaceBaseUrl ??
+        process.env.ROCKY_CONNECTOR_PUBLIC_WORKSPACE_BASE_URL ??
+        process.env.ROCKY_PUBLIC_WORKSPACE_BASE_URL ??
+        null
+    );
     this.agentService = options.agentService;
     this.sessionService = options.sessionService;
     this.skillTemplateStore =
@@ -1605,6 +1947,7 @@ export class RockyChatService {
             ? attachment.size
             : null,
         workspacePath: null,
+        publicUrl: attachment.publicUrl?.trim() || null,
         contentBase64: attachment.contentBase64?.trim() || null,
         addedAt,
       }));
@@ -1982,6 +2325,411 @@ export class RockyChatService {
     }
 
     return null;
+  }
+
+  private async maybePublishInstagramMediaAfterAgentTurn(input: {
+    agent: AgentRecord;
+    chatId: string;
+    orchestration: RockyOrchestrationRecord;
+  }): Promise<RockyOrchestrationRecord> {
+    if (
+      !this.connectorService ||
+      input.orchestration.status !== "completed" ||
+      input.orchestration.output?.includes(INSTAGRAM_MEDIA_PUBLISH_MARKER)
+    ) {
+      return input.orchestration;
+    }
+
+    const request = await this.findInstagramPublishReadyRequest({
+      agent: input.agent,
+      chatId: input.chatId,
+    });
+    if (!request) {
+      return input.orchestration;
+    }
+
+    try {
+    const prepareResult = await this.connectorService.executeCapability("instagram", {
+      capabilityId: "instagram.media.prepare",
+      args: request.args,
+    });
+    if (!prepareResult.ok) {
+      const result = instagramPublishFailure({
+        requestPath: request.workspacePath,
+        checkedAt: prepareResult.checkedAt,
+        message: prepareResult.message,
+      });
+      await this.writeInstagramPublishRequestResult(request, result);
+      return {
+        ...input.orchestration,
+        output: appendInstagramMediaPublishResult({
+          output: input.orchestration.output ?? "",
+          result,
+        }),
+        updatedAt: result.checkedAt,
+      };
+    }
+
+    const creationId = readCapabilityDataString(prepareResult, [
+      "id",
+      "creation_id",
+      "creationId",
+    ]);
+    if (!creationId) {
+      const result = instagramPublishFailure({
+        requestPath: request.workspacePath,
+        checkedAt: prepareResult.checkedAt,
+        message:
+          "Instagram media.prepare completed without returning a creation_id.",
+      });
+      await this.writeInstagramPublishRequestResult(request, result);
+      return {
+        ...input.orchestration,
+        output: appendInstagramMediaPublishResult({
+          output: input.orchestration.output ?? "",
+          result,
+        }),
+        updatedAt: result.checkedAt,
+      };
+    }
+
+    const containerFailure = await this.waitForInstagramMediaContainerReady({
+      creationId,
+      requestPath: request.workspacePath,
+    });
+    if (containerFailure) {
+      await this.writeInstagramPublishRequestResult(request, containerFailure);
+      return {
+        ...input.orchestration,
+        output: appendInstagramMediaPublishResult({
+          output: input.orchestration.output ?? "",
+          result: containerFailure,
+        }),
+        updatedAt: containerFailure.checkedAt,
+      };
+    }
+
+    const publishResult = await this.connectorService.executeCapability("instagram", {
+      capabilityId: "instagram.media.publish",
+      args: {
+        approved: true,
+        creationId,
+      },
+    });
+    if (!publishResult.ok) {
+      const result = instagramPublishFailure({
+        requestPath: request.workspacePath,
+        checkedAt: publishResult.checkedAt,
+        message: publishResult.message,
+        creationId,
+      });
+      await this.writeInstagramPublishRequestResult(request, result);
+      return {
+        ...input.orchestration,
+        output: appendInstagramMediaPublishResult({
+          output: input.orchestration.output ?? "",
+          result,
+        }),
+        updatedAt: result.checkedAt,
+      };
+    }
+
+    const mediaId = readCapabilityDataString(publishResult, [
+      "id",
+      "media_id",
+      "mediaId",
+    ]);
+    if (!mediaId) {
+      const result = instagramPublishFailure({
+        requestPath: request.workspacePath,
+        checkedAt: publishResult.checkedAt,
+        message:
+          "Instagram media.publish completed without returning a media_id.",
+        creationId,
+      });
+      await this.writeInstagramPublishRequestResult(request, result);
+      return {
+        ...input.orchestration,
+        output: appendInstagramMediaPublishResult({
+          output: input.orchestration.output ?? "",
+          result,
+        }),
+        updatedAt: result.checkedAt,
+      };
+    }
+
+    let permalink: string | null = null;
+    let publishedAt: string | null = null;
+    let checkedAt = publishResult.checkedAt;
+    let message = publishResult.message;
+
+    const statusResult = await this.connectorService.executeCapability(
+      "instagram",
+      {
+        capabilityId: "instagram.media.status.read",
+        args: { mediaId },
+      }
+    );
+    checkedAt = statusResult.checkedAt;
+    if (statusResult.ok) {
+      permalink = readCapabilityDataString(statusResult, ["permalink"]);
+      publishedAt = readCapabilityDataString(statusResult, [
+        "timestamp",
+        "published_at",
+        "publishedAt",
+      ]);
+    } else {
+      message = `${publishResult.message} Status verification failed: ${statusResult.message}`;
+    }
+
+    const result: InstagramPublishExecutionResult = {
+      status: "published",
+      requestPath: request.workspacePath,
+      checkedAt,
+      message,
+      creationId,
+      mediaId,
+      permalink,
+      publishedAt,
+    };
+    await this.writeInstagramPublishRequestResult(request, result);
+    return {
+      ...input.orchestration,
+      output: appendInstagramMediaPublishResult({
+        output: input.orchestration.output ?? "",
+        result,
+      }),
+      updatedAt: result.checkedAt,
+    };
+    } catch (error) {
+      const result = instagramPublishFailure({
+        requestPath: request.workspacePath,
+        checkedAt: this.now(),
+        message: formatUnexpectedInstagramPublishError(error),
+      });
+      await this.writeInstagramPublishRequestResult(request, result);
+      return {
+        ...input.orchestration,
+        output: appendInstagramMediaPublishResult({
+          output: input.orchestration.output ?? "",
+          result,
+        }),
+        updatedAt: result.checkedAt,
+      };
+    }
+  }
+
+  private async waitForInstagramMediaContainerReady(input: {
+    creationId: string;
+    requestPath: string;
+  }): Promise<InstagramPublishExecutionResult | null> {
+    if (!this.connectorService) {
+      return instagramPublishFailure({
+        requestPath: input.requestPath,
+        checkedAt: this.now(),
+        message: "Instagram connector is unavailable.",
+        creationId: input.creationId,
+      });
+    }
+
+    let lastCheckedAt = this.now();
+    let lastStatus = "unknown";
+    for (let attempt = 0; attempt < INSTAGRAM_MEDIA_CONTAINER_MAX_POLLS; attempt += 1) {
+      const statusResult = await this.connectorService.executeCapability("instagram", {
+        capabilityId: "instagram.media.status.read",
+        args: { creationId: input.creationId },
+      });
+      lastCheckedAt = statusResult.checkedAt;
+
+      if (!statusResult.ok) {
+        return instagramPublishFailure({
+          requestPath: input.requestPath,
+          checkedAt: statusResult.checkedAt,
+          message: `Instagram media container status check failed: ${statusResult.message}`,
+          creationId: input.creationId,
+        });
+      }
+
+      const status = readInstagramMediaContainerStatus(statusResult);
+      if (status === "FINISHED") {
+        return null;
+      }
+      if (status === "ERROR" || status === "EXPIRED") {
+        return instagramPublishFailure({
+          requestPath: input.requestPath,
+          checkedAt: statusResult.checkedAt,
+          message: `Instagram media container status is ${status}.`,
+          creationId: input.creationId,
+        });
+      }
+
+      lastStatus = status ?? "missing";
+      if (attempt < INSTAGRAM_MEDIA_CONTAINER_MAX_POLLS - 1) {
+        await sleep(INSTAGRAM_MEDIA_CONTAINER_POLL_INTERVAL_MS);
+      }
+    }
+
+    return instagramPublishFailure({
+      requestPath: input.requestPath,
+      checkedAt: lastCheckedAt,
+      message: `Instagram media container did not finish processing before timeout. Last status: ${lastStatus}.`,
+      creationId: input.creationId,
+    });
+  }
+
+  private async findInstagramPublishReadyRequest(input: {
+    agent: AgentRecord;
+    chatId: string;
+  }): Promise<InstagramPublishReadyRequest | null> {
+    const workspacePath = path.posix.join(
+      rockyTaskOutputDirectory(input.chatId),
+      INSTAGRAM_PUBLISH_REQUEST_FILE
+    );
+    const absolutePath = this.workspaceAbsolutePath(
+      input.agent.workspaceRoot,
+      workspacePath
+    );
+    if (!absolutePath) {
+      return null;
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return null;
+      }
+      payload = parsed as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+
+    if (
+      !isInstagramPublishRequestApproved(payload) ||
+      isTerminalInstagramPublishRequest(payload)
+    ) {
+      return null;
+    }
+
+    const caption = await this.readInstagramPublishCaption({
+      agent: input.agent,
+      payload,
+    });
+    const args = buildInstagramMediaPrepareArgs({ payload, caption });
+    await this.attachPublicWorkspaceMediaUrl({
+      agent: input.agent,
+      payload,
+      args,
+    });
+
+    return {
+      workspacePath,
+      absolutePath,
+      payload,
+      args,
+    };
+  }
+
+  private async readInstagramPublishCaption(input: {
+    agent: AgentRecord;
+    payload: Record<string, unknown>;
+  }): Promise<string | null> {
+    const captionPath = readRecordString(input.payload, [
+      "captionFile",
+      "caption_file",
+    ]);
+    if (captionPath) {
+      const relativePath = normalizeWorkspaceRelativePath(captionPath);
+      const absolutePath = relativePath
+        ? this.workspaceAbsolutePath(input.agent.workspaceRoot, relativePath)
+        : null;
+      if (absolutePath) {
+        try {
+          const caption = (await readFile(absolutePath, "utf8")).trimEnd();
+          if (caption) {
+            return caption;
+          }
+        } catch {
+          // Fall back to inline caption when the referenced file is unavailable.
+        }
+      }
+    }
+
+    return readRecordString(input.payload, ["caption", "content", "text"]);
+  }
+
+  private async attachPublicWorkspaceMediaUrl(input: {
+    agent: AgentRecord;
+    payload: Record<string, unknown>;
+    args: Record<string, unknown>;
+  }): Promise<void> {
+    if (
+      !this.publicWorkspaceBaseUrl ||
+      readRecordString(input.args, ["imageUrl", "videoUrl"])
+    ) {
+      return;
+    }
+
+    const videoFile = readRecordString(input.payload, [
+      "videoFile",
+      "video_file",
+    ]);
+    const imageFile = readRecordString(input.payload, [
+      "imageFile",
+      "image_file",
+      "mediaFile",
+      "media_file",
+      "file",
+    ]);
+    const localFile = videoFile ?? imageFile;
+    if (!localFile) {
+      return;
+    }
+
+    const relativePath = normalizeWorkspaceRelativePath(localFile);
+    const absolutePath = relativePath
+      ? this.workspaceAbsolutePath(input.agent.workspaceRoot, relativePath)
+      : null;
+    if (!relativePath || !absolutePath || !(await this.fileExists(absolutePath))) {
+      return;
+    }
+
+    const publicUrl = buildPublicWorkspaceFileUrl({
+      publicWorkspaceBaseUrl: this.publicWorkspaceBaseUrl,
+      agentId: input.agent.id,
+      workspacePath: relativePath,
+    });
+    if (videoFile) {
+      input.args.videoUrl = publicUrl;
+    } else {
+      input.args.imageUrl = publicUrl;
+    }
+    delete input.args.imageFile;
+  }
+
+  private async writeInstagramPublishRequestResult(
+    request: InstagramPublishReadyRequest,
+    result: InstagramPublishExecutionResult
+  ): Promise<void> {
+    await writeFile(
+      request.absolutePath,
+      `${JSON.stringify(mergeInstagramPublishResult(request.payload, result), null, 2)}\n`,
+      "utf8"
+    );
+  }
+
+  private async finalizeServerManagedPublishesAfterAgentTurn(input: {
+    agent: AgentRecord;
+    chatId: string;
+    request: string;
+    orchestration: RockyOrchestrationRecord;
+  }): Promise<RockyOrchestrationRecord> {
+    const afterTistory = await this.maybePublishTistoryDraftAfterAgentTurn(input);
+    return this.maybePublishInstagramMediaAfterAgentTurn({
+      agent: input.agent,
+      chatId: input.chatId,
+      orchestration: afterTistory,
+    });
   }
 
   private async listMarkdownWorkspacePaths(
@@ -2712,7 +3460,7 @@ export class RockyChatService {
       }),
     });
     const sanitized = this.sanitizeOrchestrationOutput(startedOrchestration);
-    const finalizedOrchestration = await this.maybePublishTistoryDraftAfterAgentTurn({
+    const finalizedOrchestration = await this.finalizeServerManagedPublishesAfterAgentTurn({
       agent: input.agent,
       chatId: input.chatId,
       request: input.message,
@@ -2875,6 +3623,7 @@ export class RockyChatService {
           contentType: attachment.contentType,
           size: attachment.size,
           workspacePath: attachment.workspacePath ?? null,
+          publicUrl: attachment.publicUrl ?? null,
           addedAt: attachment.addedAt,
         } satisfies RockyAttachmentRecord;
 
@@ -3610,7 +4359,10 @@ export class RockyChatService {
         if (!dispatch.orchestration) {
           return dispatch;
         }
-        if (dispatch.orchestration.output?.includes(TISTORY_DRAFT_PUBLISH_MARKER)) {
+        if (
+          dispatch.orchestration.output?.includes(TISTORY_DRAFT_PUBLISH_MARKER) ||
+          dispatch.orchestration.output?.includes(INSTAGRAM_MEDIA_PUBLISH_MARKER)
+        ) {
           return dispatch;
         }
 
@@ -3620,7 +4372,7 @@ export class RockyChatService {
         const sanitized = this.sanitizeOrchestrationOutput(refreshedOrchestration);
         const agent = await this.findAgentById(sanitized.orchestration.agentId);
         const orchestration = agent
-          ? await this.maybePublishTistoryDraftAfterAgentTurn({
+          ? await this.finalizeServerManagedPublishesAfterAgentTurn({
               agent,
               chatId: hydrated.id,
               request: dispatch.originalRequest,

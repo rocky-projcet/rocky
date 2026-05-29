@@ -121,6 +121,7 @@ export function createAgentEngineServer(
       ecountSettingsService: options.ecountSettingsService,
       ecountLookupService: options.ecountLookupService,
       connectorService,
+      publicWorkspaceBaseUrl: options.publicWorkspaceBaseUrl,
       now: options.now,
       idGenerator: options.idGenerator,
     });

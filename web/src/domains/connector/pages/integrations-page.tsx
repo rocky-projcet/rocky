@@ -1212,7 +1212,7 @@ function formatInstagramBlockerAction(
     return "Instagram 계정을 Business 또는 Creator로 전환한 뒤 다시 연결하세요.";
   }
   if (code === "meta_app_required") {
-    return "Meta 앱 Client ID와 Secret을 설정한 뒤 Graph API 연결을 다시 시작하세요.";
+    return "Rocky 관리 OAuth 브로커 설정을 확인한 뒤 Graph API 연결을 다시 시작하세요.";
   }
   if (code === "app_access_required") {
     return "Meta/Instagram에서 Rocky 앱 테스트 사용자 또는 앱 역할 초대를 수락한 뒤 다시 연결하세요.";

@@ -70,3 +70,29 @@ test("ECOUNT skill settings do not include connection-test credential fields", (
     false
   );
 });
+
+test("content skill keeps Instagram draft creation independent from publish account setup", () => {
+  const contentTemplate = SKILL_TEMPLATES.content;
+  const publishStep = contentTemplate.steps.find(
+    (step) => step.id === "content-publish-account",
+  );
+  const accountField = publishStep?.fields.find(
+    (field) => field.id === "publishAccount",
+  );
+  const publishModeField = publishStep?.fields.find(
+    (field) => field.id === "autoPublish",
+  );
+
+  assert.equal(publishStep?.skippable, true);
+  assert.equal(accountField?.optional, true);
+  assert.match(publishStep?.helper ?? "", /계정 연결이 없어도/u);
+  assert.equal(accountField?.label, "이 스킬에 사용할 계정");
+  assert.deepEqual(
+    publishModeField?.options?.map((option) => [option.id, option.label]),
+    [
+      ["draft-only", "초안만 만들기 (직접 올림)"],
+      ["review-then-publish", "발행까지 연결하기 (확인 후 실행)"],
+      ["schedule", "예약 발행"],
+    ],
+  );
+});

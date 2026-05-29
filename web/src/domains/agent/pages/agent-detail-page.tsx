@@ -83,7 +83,10 @@ import { AgentAvatar } from "../components/agent-avatar";
 import { AgentEmojiPicker } from "../components/agent-emoji-picker";
 import type { AgentLocalSkillRecord } from "../types";
 import { agentEngineClient } from "@/shared/lib/api-client";
-import { buildAgentTaskChatInput } from "../lib/agent-task-upload";
+import {
+  buildAgentTaskChatInput,
+  shouldCreateTmpfilesPublicMediaUrls,
+} from "../lib/agent-task-upload";
 
 type EquippedSkillItem = {
   record: AgentLocalSkillRecord;
@@ -584,6 +587,12 @@ export function AgentDetailPage() {
                 message: composedMessage,
                 skillId: skill?.skill.id ?? null,
                 files,
+                createPublicMediaUrls: shouldCreateTmpfilesPublicMediaUrls({
+                  message: composedMessage,
+                  skillId: skill?.skill.id ?? null,
+                  skillTitle: skill?.title ?? null,
+                  skillInstructions: skill?.defaultInstructions ?? null,
+                }),
               });
               const chat = await createChatMutation.mutateAsync(chatInput);
               void queryClient.invalidateQueries({

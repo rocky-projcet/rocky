@@ -1221,6 +1221,7 @@ export interface RockyAttachmentInput {
   contentType?: string | null;
   size?: number | null;
   contentBase64?: string | null;
+  publicUrl?: string | null;
 }
 
 export interface RockyAttachmentRecord {
@@ -1229,6 +1230,7 @@ export interface RockyAttachmentRecord {
   contentType: string | null;
   size: number | null;
   workspacePath: string | null;
+  publicUrl?: string | null;
   addedAt: string;
 }
 

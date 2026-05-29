@@ -150,8 +150,35 @@ function parseAttachments(value: unknown): RockyAttachmentInput[] {
         typeof record.contentBase64 === "string" && record.contentBase64.trim()
           ? record.contentBase64.trim()
           : null,
+      publicUrl: parsePublicAttachmentUrl(record.publicUrl ?? record.public_url),
     };
   });
+}
+
+function parsePublicAttachmentUrl(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw badRequest("attachment publicUrl must be an HTTPS URL or null.");
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw badRequest("attachment publicUrl must be an HTTPS URL or null.");
+  }
+  if (url.protocol !== "https:") {
+    throw badRequest("attachment publicUrl must be an HTTPS URL or null.");
+  }
+  url.hash = "";
+  return url.toString();
 }
 
 function parseMessageBody(body: unknown): {

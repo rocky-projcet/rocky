@@ -1,59 +1,65 @@
-# Issue 34 Instagram Draft/Publish Completion Plan
+# Issue 34 Instagram Draft/Publish Completion Scope
 
-## Context
+## Product Decision
 
-Issue #34 is not functionally complete yet. The current branch passes type checks,
-unit tests, and web build checks, but the implementation still needs to close the
-product requirements around external publish execution skills, server-owned user
-approval, draft-only behavior, and sensitive-data handling.
+Issue #34 no longer requires real Instagram publishing to be delegated to a
+verified external public execution skill.
 
-## Plan
+Rocky's native Instagram Graph API integration is now the accepted execution
+owner for the MVP because the Graph API account connection and server-managed
+publish capabilities are available.
 
-1. Clarify the publish execution owner.
-   - Keep the issue #34 requirement that real publishing is allowed only through a verified external public Instagram publish execution skill.
-   - If the product decision is to keep Rocky backend native Graph publishing instead, update issue #34 acceptance criteria before marking the issue complete.
+The stronger server-owned approval flow is moved to a follow-up issue. The
+current MVP may rely on the existing publish request handoff as long as the
+remaining #34 behavior is documented clearly and sensitive data stays protected.
 
-2. Add a server-owned user approval model.
-   - Do not execute publish actions solely from boolean fields written by an agent in `instagram-publish-request.json`.
-   - Have Rocky create and store an approval request state.
-   - Execute publishing only after the user explicitly approves through UI/API.
-   - Recheck approval state, request/media/caption identity, approval expiry, connected account state, and publish capability state immediately before execution.
+## What Can Close Issue #34
 
-3. Re-align the publish gate with verified external execution skills.
-   - Stop treating any available `instagram.media.publish` backend capability as sufficient for the template publish option.
-   - Gate `발행까지 연결하기` on a verified external public skill, account binding readiness, manifest safety checks, endpoint allowlists, and per-run approval policy.
-   - Keep `초안만 만들기` available regardless of Instagram account state.
+Issue #34 can be treated as functionally complete when this branch demonstrates:
 
-4. Separate public media upload from draft creation.
-   - Do not upload media to `tmpfiles.org` from Instagram/feed/reels keywords alone.
-   - Draft creation should use local workspace attachments only.
-   - Create public media URLs only when the user has selected publish connection and entered the approval flow.
-   - Public media URL preparation failures must not block draft-only generation.
+1. Instagram feed/Reels draft creation works without requiring an Instagram
+   account connection.
+2. Publish connection is available only when Rocky reports an available native
+   Instagram Graph API publish capability.
+3. Publishing goes through Rocky's server-managed Graph API capability, not an
+   agent-run local script or raw connector endpoint call.
+4. Publish success returns only safe status fields and public result URLs.
+5. Publish failures are understandable and do not expose tokens, env values,
+   raw requests/responses, cookies, storage state, or browser profile paths.
+6. Backend/API/Web tests cover the draft and publish MVP behavior.
 
-5. Tighten sensitive-data handling.
-   - Verify that tokens, env values, raw requests/responses, cookies, storage state, and browser profile paths do not appear in UI responses, prompts, logs, artifacts, or publish request/result files.
-   - Keep error messages actionable by separating auth, permission, manifest validation, API execution, and public media preparation failures without exposing secrets.
+## Follow-Up Issue
 
-6. Strengthen tests.
-   - Server approval absent: no Instagram write action runs even if `instagram-publish-request.json` exists.
-   - Agent-authored approval booleans alone do not trigger publishing.
-   - No verified external publish execution skill: UI disables publish connection and server keeps draft-only behavior.
-   - Draft-only Instagram request with media does not upload to `tmpfiles.org`.
-   - Publish approval flow prepares a public media URL or reports a safe, specific preparation failure.
-   - Publish success and failure return only safe status/URL fields and do not expose sensitive data.
+Create a separate follow-up issue for explicit user approval hardening.
 
-7. Clean and validate before publication.
-   - Exclude transient files such as `.pi-agent/` and `debug.log`.
-   - Run `npm run typecheck`.
-   - Run `npm run web:typecheck`.
-   - Run `npm test`.
-   - Run `npm run web:build`.
+That follow-up should include:
 
-## Definition of Done
+1. Add a server-owned publish approval request state.
+2. Do not execute Instagram write actions solely from boolean fields written by
+   an agent in `instagram-publish-request.json`.
+3. Require a user UI/API approval event before final publish execution.
+4. Recheck approval state, request/media/caption identity, approval expiry,
+   connected account state, and publish capability state immediately before
+   execution.
+5. Move public media URL preparation fully into the publish approval flow so
+   draft-only requests do not depend on `tmpfiles.org` uploads.
 
-Issue #34 can be marked functionally complete only when:
+## Publication Notes
 
-- Instagram feed/Reels drafts can be created without an account, external publish skill, or public upload.
-- Real publishing is possible only after a verified external execution skill and server-owned user approval are present.
-- Sensitive data is not exposed through UI, API, prompts, logs, or artifacts.
-- The behavior is covered by backend/API/Web tests.
+Before closing #34, update the issue or PR description to record the scope
+change:
+
+- Removed requirement: verified external public execution skill.
+- Accepted replacement: Rocky native Instagram Graph API execution.
+- Deferred hardening: server-owned explicit publish approval follow-up.
+
+Keep transient files such as `.pi-agent/` and `debug.log` out of commits.
+
+## Validation
+
+Use the standard checks:
+
+- `npm run typecheck`
+- `npm run web:typecheck`
+- `npm test`
+- `npm run web:build`

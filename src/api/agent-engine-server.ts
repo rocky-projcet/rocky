@@ -8,6 +8,7 @@ import { CodexStatusService } from "../account/codex-status-service.js";
 import { AuthProfileService } from "../auth/auth-profile-service.js";
 import { AgentMessengerService } from "../messenger/agent-messenger-service.js";
 import type { AgentMessengerServiceLike } from "../messenger/messenger-types.js";
+import { TmpfilesTemporaryMediaHost } from "../rocky-chat/media-host.js";
 import { RockyChatService } from "../rocky-chat/rocky-chat-service.js";
 import { SessionService } from "../sessions/session-service.js";
 import { TaskService } from "../tasks/task-service.js";
@@ -111,6 +112,11 @@ export function createAgentEngineServer(
     baseEnv: options.connectorBaseEnv,
     fetchImpl: options.connectorFetch,
   });
+  const instagramTemporaryMediaHost =
+    options.instagramTemporaryMediaHost ??
+    new TmpfilesTemporaryMediaHost({
+      now: options.now,
+    });
   const rockyChatService =
     options.rockyChatService ??
     new RockyChatService({
@@ -122,6 +128,7 @@ export function createAgentEngineServer(
       ecountLookupService: options.ecountLookupService,
       connectorService,
       publicWorkspaceBaseUrl: options.publicWorkspaceBaseUrl,
+      instagramTemporaryMediaHost,
       now: options.now,
       idGenerator: options.idGenerator,
     });

@@ -1238,6 +1238,25 @@ export interface RockyInstagramPublishDraftPreviewRecord {
   updatedAt: string;
 }
 
+export type RockyInstagramPublishApprovalStatus =
+  | "publishing"
+  | "published"
+  | "publish_failed"
+  | "blocked";
+
+export interface RockyInstagramPublishApprovalRecord {
+  provider: "instagram";
+  status: RockyInstagramPublishApprovalStatus;
+  publishType: RockyInstagramPublishType;
+  targetAccountLabel: string;
+  permalink: string | null;
+  publishedAt: string | null;
+  message: string;
+  approvedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export interface RockyAttachmentInput {
   name: string;
   contentType?: string | null;
@@ -2497,6 +2516,17 @@ export class AgentEngineClient {
       {
         method: "POST",
         body: JSON.stringify(input),
+      }
+    );
+  }
+
+  approveInstagramPublishDraft(
+    chatId: string
+  ): Promise<RockyInstagramPublishApprovalRecord> {
+    return this.request<RockyInstagramPublishApprovalRecord>(
+      `/rocky/chats/${encodeURIComponent(chatId)}/instagram/publish/approve`,
+      {
+        method: "POST",
       }
     );
   }

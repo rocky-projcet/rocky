@@ -6,6 +6,7 @@ import {
   open,
   readdir,
   readFile,
+  stat,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -80,6 +81,8 @@ import type {
   RockyCoreSettingsUpdateInput,
   RockyCoreSkillRecord,
   RockyDispatchRecord,
+  RockyInstagramPublishDraftPreviewMediaRecord,
+  RockyInstagramPublishDraftPreviewRecord,
   RockyMessageRecord,
   RockyOrchestrationRecord,
   RockyRoutingIntent,
@@ -95,6 +98,7 @@ import type {
   RuntimeReasoningEffort,
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
+import { contentTypeForArtifactPath } from "../runtime/runtime-artifact-metadata.js";
 import type { AgentSessionRecord } from "../sessions/session-types.js";
 import { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type { RuntimeSkillTemplateRecord } from "../skills/skill-template-store.js";
@@ -543,6 +547,7 @@ const TISTORY_DRAFT_PUBLISH_MARKER = "<!-- rocky-tistory-draft-publish:";
 const INSTAGRAM_MEDIA_PUBLISH_MARKER = "<!-- rocky-instagram-media-publish:";
 const INSTAGRAM_PUBLISH_REQUEST_FILE = "instagram-publish-request.json";
 const INSTAGRAM_PUBLISH_REQUEST_CLAIM_FILE = `${INSTAGRAM_PUBLISH_REQUEST_FILE}.lock`;
+const INSTAGRAM_PUBLISH_DRAFT_JSON_PATTERN = /instagram[-_].*(?:publish|draft|post).*[.]json$/iu;
 const INSTAGRAM_MEDIA_CONTAINER_MAX_POLLS = 30;
 const INSTAGRAM_MEDIA_CONTAINER_POLL_INTERVAL_MS = 2_000;
 
@@ -1065,6 +1070,196 @@ function isTerminalInstagramPublishRequest(
     status === "publish_in_progress" ||
     Boolean(readRecordString(payload, ["media_id", "mediaId"]))
   );
+}
+
+function hasInstagramDraftMedia(payload: Record<string, unknown>): boolean {
+  return Boolean(
+    readRecordString(payload, [
+      "imageFile",
+      "image_file",
+      "videoFile",
+      "video_file",
+      "mediaFile",
+      "media_file",
+      "file",
+      "imageUrl",
+      "image_url",
+      "videoUrl",
+      "video_url",
+      "publicImageUrl",
+      "public_image_url",
+      "publicVideoUrl",
+      "public_video_url",
+      "mediaUrl",
+      "media_url",
+      "publicMediaUrl",
+      "public_media_url",
+      "url",
+    ])
+  );
+}
+
+function isInstagramPublishDraftPayload(input: {
+  payload: Record<string, unknown>;
+  workspacePath: string;
+}): boolean {
+  const basename = path.posix.basename(input.workspacePath);
+  const pathSignal =
+    basename === INSTAGRAM_PUBLISH_REQUEST_FILE ||
+    INSTAGRAM_PUBLISH_DRAFT_JSON_PATTERN.test(basename);
+  const payloadSignal = [
+    readRecordString(input.payload, ["provider", "platform", "channel"]),
+    readRecordString(input.payload, ["content_type", "contentType"]),
+    readRecordString(input.payload, ["publish_type", "publishType", "post_type", "postType"]),
+    readRecordString(input.payload, ["media_type", "mediaType"]),
+    readRecordString(input.payload, ["status"]),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  const instagramSignal = /instagram|insta|reels?|feed|피드|릴스|인스타/iu.test(
+    payloadSignal
+  );
+
+  return (
+    (pathSignal || instagramSignal) &&
+    (hasInstagramDraftMedia(input.payload) ||
+      Boolean(readRecordString(input.payload, ["caption", "caption_file", "captionFile"])))
+  );
+}
+
+function isActiveInstagramPublishDraftPayload(input: {
+  payload: Record<string, unknown>;
+  workspacePath: string;
+}): boolean {
+  if (!isInstagramPublishDraftPayload(input)) {
+    return false;
+  }
+  if (isTerminalInstagramPublishRequest(input.payload)) {
+    return false;
+  }
+  const status =
+    readRecordString(input.payload, ["status", "state"])
+      ?.toLowerCase()
+      .replace(/[\s-]+/gu, "_") ?? "";
+  return ![
+    "failed",
+    "failure",
+    "cancelled",
+    "canceled",
+    "expired",
+    "deleted",
+  ].includes(status);
+}
+
+function readInstagramDraftPublishType(
+  payload: Record<string, unknown>
+): "feed" | "reels" {
+  const signal = [
+    readRecordString(payload, ["content_type", "contentType"]),
+    readRecordString(payload, ["publish_type", "publishType", "post_type", "postType"]),
+    readRecordString(payload, ["media_type", "mediaType"]),
+    readRecordString(payload, ["type"]),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  return /reels?|릴스/iu.test(signal) ? "reels" : "feed";
+}
+
+function readInstagramDraftTargetAccount(
+  payload: Record<string, unknown>
+): string | null {
+  return readRecordString(payload, [
+    "accountLabel",
+    "account_label",
+    "targetAccountLabel",
+    "target_account_label",
+    "targetAccount",
+    "target_account",
+    "instagramAccount",
+    "instagram_account",
+    "instagramUsername",
+    "instagram_username",
+    "account",
+  ]);
+}
+
+function readInstagramDraftMediaReference(
+  payload: Record<string, unknown>
+):
+  | { kind: "image" | "video" | "unknown"; source: "workspace" | "external"; value: string }
+  | null {
+  const videoFile = readRecordString(payload, ["videoFile", "video_file"]);
+  if (videoFile) {
+    return { kind: "video", source: "workspace", value: videoFile };
+  }
+  const imageFile = readRecordString(payload, [
+    "imageFile",
+    "image_file",
+    "mediaFile",
+    "media_file",
+    "file",
+  ]);
+  if (imageFile) {
+    const extension = path.extname(imageFile).toLowerCase();
+    return {
+      kind: [".mp4", ".mov", ".m4v", ".webm", ".ogv"].includes(extension)
+        ? "video"
+        : "image",
+      source: "workspace",
+      value: imageFile,
+    };
+  }
+  const videoUrl = readRecordString(payload, [
+    "videoUrl",
+    "video_url",
+    "publicVideoUrl",
+    "public_video_url",
+  ]);
+  if (videoUrl) {
+    return { kind: "video", source: "external", value: videoUrl };
+  }
+  const imageUrl = readRecordString(payload, [
+    "imageUrl",
+    "image_url",
+    "publicImageUrl",
+    "public_image_url",
+    "mediaUrl",
+    "media_url",
+    "publicMediaUrl",
+    "public_media_url",
+    "url",
+  ]);
+  if (imageUrl) {
+    return { kind: "image", source: "external", value: imageUrl };
+  }
+  return null;
+}
+
+function workspaceFileContentPath(agentId: string, searchPath: string): string {
+  const search = new URLSearchParams();
+  search.set("path", searchPath);
+  return `/agents/${encodeURIComponent(agentId)}/workspace/file/content?${search.toString()}`;
+}
+
+function sanitizeInstagramPublishUserText(text: string): string {
+  return text
+    .replace(
+      /(?:[\w.-]+[/\\])*instagram[-_][\w.-]*(?:publish|draft|post)[\w.-]*[.]json/giu,
+      "Instagram Publish draft"
+    )
+    .replace(
+      /\binstagram[.]media[.](?:prepare|publish|status[.]read)\b|\binstagram[.](?:automation[.]prepare|account[.]read|insights[.]read)\b/giu,
+      "Instagram connector"
+    )
+    .replace(/https:\/\/(?:graph[.]facebook|graph[.]instagram)[.]com\/[^\s)"'<>`]+/giu, "Instagram API")
+    .replace(/https:\/\/tmpfiles[.]org\/[^\s)"'<>`]+/giu, "임시 미디어 링크")
+    .replace(
+      /\b(?:creation[_ -]?id|creationId|containerId|media[_ -]?id|mediaId)\b\s*[:=]\s*[^\s,;\])}]+/giu,
+      "발행 식별자는 숨겼습니다"
+    )
+    .replace(/\b(?:creation|media)-[A-Za-z0-9_-]+\b/gu, "발행 식별자");
 }
 
 function buildInstagramMediaPrepareArgs(input: {
@@ -1713,7 +1908,7 @@ export class RockyChatService {
     };
 
     await this.writeChat(chat);
-    return this.toPagedChat(chat);
+    return this.toPagedChatWithPreview(chat);
   }
 
   async getChat(
@@ -1723,7 +1918,7 @@ export class RockyChatService {
     const refreshed = await this.refreshChat(await this.requireChat(chatId), {
       persist: true,
     });
-    return this.toPagedChat(refreshed, page);
+    return this.toPagedChatWithPreview(refreshed, page);
   }
 
   async getChatMessages(
@@ -1746,14 +1941,16 @@ export class RockyChatService {
       chats.map((chat) => this.refreshChat(chat, { persist: true }))
     );
 
-    return refreshed.sort(
+    const sorted = refreshed.sort(
       (left, right) =>
         rockyChatActivityUpdatedAt(right).localeCompare(
           rockyChatActivityUpdatedAt(left)
         ) ||
         right.createdAt.localeCompare(left.createdAt) ||
         left.id.localeCompare(right.id)
-    ).map((chat) => this.toPagedChat(chat));
+    );
+
+    return Promise.all(sorted.map((chat) => this.toPagedChatWithPreview(chat)));
   }
 
   async cancelChat(chatId: string): Promise<RockyChatRecord> {
@@ -1793,7 +1990,7 @@ export class RockyChatService {
     );
 
     if (!changed) {
-      return existing;
+      return this.toPagedChatWithPreview(existing);
     }
 
     const orchestration =
@@ -1807,7 +2004,7 @@ export class RockyChatService {
     };
 
     await this.writeChat(chat);
-    return this.toPagedChat(chat);
+    return this.toPagedChatWithPreview(chat);
   }
 
   async getCoreManagement(): Promise<RockyCoreManagementRecord> {
@@ -2017,7 +2214,7 @@ export class RockyChatService {
     };
 
     await this.writeChat(chat);
-    return this.toPagedChat(chat);
+    return this.toPagedChatWithPreview(chat);
   }
 
   async deleteChat(chatId: string): Promise<void> {
@@ -2875,6 +3072,244 @@ export class RockyChatService {
     return readRecordString(input.payload, ["caption", "content", "text"]);
   }
 
+  private async buildInstagramDraftMediaPreview(input: {
+    agent: AgentRecord;
+    payload: Record<string, unknown>;
+  }): Promise<RockyInstagramPublishDraftPreviewMediaRecord | null> {
+    const media = readInstagramDraftMediaReference(input.payload);
+    if (!media) {
+      return null;
+    }
+
+    if (media.source === "external") {
+      return {
+        kind: media.kind,
+        label:
+          media.kind === "video"
+            ? "외부 영상 링크"
+            : media.kind === "image"
+              ? "외부 이미지 링크"
+              : "외부 미디어 링크",
+        contentType: null,
+        previewUrl: null,
+      };
+    }
+
+    const relativePath = normalizeWorkspaceRelativePath(media.value);
+    const absolutePath = relativePath
+      ? this.workspaceAbsolutePath(input.agent.workspaceRoot, relativePath)
+      : null;
+    const contentType = absolutePath ? contentTypeForArtifactPath(absolutePath) : null;
+    const fileExists = absolutePath ? await this.fileExists(absolutePath) : false;
+    const previewable = Boolean(
+      relativePath &&
+        contentType &&
+        (contentType.startsWith("image/") || contentType.startsWith("video/")) &&
+        absolutePath &&
+        fileExists
+    );
+
+    return {
+      kind: media.kind,
+      label: path.posix.basename(relativePath ?? media.value),
+      contentType,
+      previewUrl: previewable ? workspaceFileContentPath(input.agent.id, relativePath!) : null,
+    };
+  }
+
+  private instagramDraftPreviewBlocker(
+    stateError: unknown,
+    state: Awaited<ReturnType<ConnectorServiceLike["getState"]>> | null
+  ): string | null {
+    if (!this.connectorService) {
+      return "Instagram 연결 상태를 확인할 수 없습니다. 연동 설정에서 Instagram Graph API 연결을 확인해 주세요.";
+    }
+    if (stateError) {
+      return "Instagram 연결 상태를 확인하지 못했습니다. 연동 설정을 확인한 뒤 다시 시도해 주세요.";
+    }
+    if (!state || state.status !== "connected") {
+      return "Instagram Graph API 연결이 필요합니다. 연동 설정에서 Instagram 계정을 연결해 주세요.";
+    }
+
+    const publishCapability = state.capabilities.find(
+      (capability) => capability.id === "instagram.media.publish"
+    );
+    if (!publishCapability) {
+      return "Instagram 발행 기능을 사용할 수 없습니다. 연동 설정에서 계정과 권한을 확인해 주세요.";
+    }
+    if (publishCapability.status === "available" || publishCapability.status === undefined) {
+      return null;
+    }
+    if (publishCapability.status === "planned" || publishCapability.status === "unsupported") {
+      return "Instagram 발행 기능은 아직 사용할 수 없습니다. 현재는 초안 미리보기만 가능합니다.";
+    }
+
+    const nextAction =
+      publishCapability.setupSteps?.find(Boolean) ??
+      publishCapability.blockers?.map((blocker) => blocker.nextAction).find(Boolean) ??
+      "Instagram 계정과 발행 권한을 확인해 주세요.";
+    return `Instagram 발행 준비가 필요합니다. ${nextAction}`;
+  }
+
+  private async findActiveInstagramPublishDraft(input: {
+    agent: AgentRecord;
+    chatId: string;
+  }): Promise<
+    | {
+        payload: Record<string, unknown>;
+        workspacePath: string;
+        updatedAt: string;
+      }
+    | null
+  > {
+    const outputRoot = rockyTaskOutputDirectory(input.chatId);
+    const absoluteRoot = this.workspaceAbsolutePath(input.agent.workspaceRoot, outputRoot);
+    if (!absoluteRoot) {
+      return null;
+    }
+
+    const candidates: Array<{
+      payload: Record<string, unknown>;
+      workspacePath: string;
+      updatedAt: string;
+      mtimeMs: number;
+    }> = [];
+
+    const visit = async (absoluteDirectory: string, relativeDirectory: string) => {
+      let entries;
+      try {
+        entries = await readdir(absoluteDirectory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        const workspacePath = path.posix.join(relativeDirectory, entry.name);
+        const absolutePath = path.join(absoluteDirectory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath, workspacePath);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
+          continue;
+        }
+
+        let payload: Record<string, unknown>;
+        let metadata: Awaited<ReturnType<typeof stat>>;
+        try {
+          const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            continue;
+          }
+          payload = parsed as Record<string, unknown>;
+          metadata = await stat(absolutePath);
+        } catch {
+          continue;
+        }
+
+        if (!isActiveInstagramPublishDraftPayload({ payload, workspacePath })) {
+          continue;
+        }
+        candidates.push({
+          payload,
+          workspacePath,
+          updatedAt: metadata.mtime.toISOString(),
+          mtimeMs: metadata.mtimeMs,
+        });
+      }
+    };
+
+    await visit(absoluteRoot, outputRoot);
+    candidates.sort(
+      (left, right) =>
+        right.mtimeMs - left.mtimeMs || right.workspacePath.localeCompare(left.workspacePath)
+    );
+
+    return candidates[0] ?? null;
+  }
+
+  private async findChatInstagramPublishDraftPreview(
+    chat: RockyChatRecord
+  ): Promise<RockyInstagramPublishDraftPreviewRecord | null> {
+    const agent = await this.findChatDraftAgent(chat);
+    if (!agent) {
+      return null;
+    }
+
+    const draft = await this.findActiveInstagramPublishDraft({
+      agent,
+      chatId: chat.id,
+    });
+    if (!draft) {
+      return null;
+    }
+
+    let connectorState: Awaited<ReturnType<ConnectorServiceLike["getState"]>> | null = null;
+    let connectorStateError: unknown = null;
+    if (this.connectorService) {
+      try {
+        connectorState = await this.connectorService.getState("instagram");
+      } catch (error) {
+        connectorStateError = error;
+      }
+    }
+
+    const blocker = this.instagramDraftPreviewBlocker(
+      connectorStateError,
+      connectorState
+    );
+    const caption = await this.readInstagramPublishCaption({
+      agent,
+      payload: draft.payload,
+    });
+    const media = await this.buildInstagramDraftMediaPreview({
+      agent,
+      payload: draft.payload,
+    });
+    const targetAccountLabel =
+      readInstagramDraftTargetAccount(draft.payload) ??
+      connectorState?.accountLabel ??
+      "Instagram 계정";
+
+    return {
+      provider: "instagram",
+      status: blocker ? "blocked" : "ready",
+      publishType: readInstagramDraftPublishType(draft.payload),
+      targetAccountLabel,
+      media,
+      caption,
+      blocker,
+      updatedAt: draft.updatedAt,
+    };
+  }
+
+  private async findChatDraftAgent(chat: RockyChatRecord): Promise<AgentRecord | null> {
+    const agentId =
+      [...chat.dispatches]
+        .reverse()
+        .find((dispatch) => dispatch.orchestration?.agentId)
+        ?.orchestration?.agentId ??
+      chat.worker?.agentId ??
+      null;
+    return this.findAgentById(agentId);
+  }
+
+  private async attachInstagramPublishDraftPreview(
+    chat: RockyChatRecord
+  ): Promise<RockyChatRecord> {
+    let preview: RockyInstagramPublishDraftPreviewRecord | null = null;
+    try {
+      preview = await this.findChatInstagramPublishDraftPreview(chat);
+    } catch {
+      preview = null;
+    }
+
+    return {
+      ...chat,
+      instagramPublishDraftPreview: preview,
+    };
+  }
+
   private async attachPublicWorkspaceMediaUrl(input: {
     agent: AgentRecord;
     payload: Record<string, unknown>;
@@ -2941,13 +3376,10 @@ export class RockyChatService {
     request: string;
     orchestration: RockyOrchestrationRecord;
   }): Promise<RockyOrchestrationRecord> {
-    const afterTistory = await this.maybePublishTistoryDraftAfterAgentTurn(input);
-    return this.maybePublishInstagramMediaAfterAgentTurn({
-      agent: input.agent,
-      chatId: input.chatId,
-      request: input.request,
-      orchestration: afterTistory,
-    });
+    // #92 exposes Instagram Publish drafts as read-only previews only. Graph
+    // prepare/publish execution and temporary public media hosting are reserved
+    // for the later explicit approval flow.
+    return this.maybePublishTistoryDraftAfterAgentTurn(input);
   }
 
   private async listMarkdownWorkspacePaths(
@@ -3546,13 +3978,14 @@ export class RockyChatService {
     }
 
     const extracted = extractUsedSkillRefs(orchestration.output);
+    const sanitizedText = sanitizeInstagramPublishUserText(extracted.text);
     return {
       orchestration:
-        extracted.text === orchestration.output
+        sanitizedText === orchestration.output
           ? orchestration
           : {
               ...orchestration,
-              output: extracted.text || null,
+              output: sanitizedText || null,
             },
       usedSkillRefs: extracted.refs,
     };
@@ -4685,6 +5118,16 @@ export class RockyChatService {
     return this.hydrateChat(chat);
   }
 
+  private async toPagedChatWithPreview(
+    chat: RockyChatRecord,
+    page: RockyChatMessagePageInput = {}
+  ): Promise<RockyChatRecord> {
+    return this.toPagedChat(
+      await this.attachInstagramPublishDraftPreview(chat),
+      page
+    );
+  }
+
   private toPagedChat(
     chat: RockyChatRecord,
     page: RockyChatMessagePageInput = {}
@@ -4699,7 +5142,11 @@ export class RockyChatService {
   }
 
   private async writeChat(chat: RockyChatRecord): Promise<void> {
-    const { messagePage: _messagePage, ...persistedChat } = chat;
+    const {
+      instagramPublishDraftPreview: _instagramPublishDraftPreview,
+      messagePage: _messagePage,
+      ...persistedChat
+    } = chat;
     await writeRockyChatRecord(
       resolveRockyChatPaths({
         stateRoot: this.stateRoot,

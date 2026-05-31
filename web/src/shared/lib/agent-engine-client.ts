@@ -1216,6 +1216,28 @@ export interface RockyOrchestrationRecord {
   updatedAt: string;
 }
 
+export type RockyInstagramPublishDraftPreviewStatus = "ready" | "blocked";
+export type RockyInstagramPublishDraftPreviewMediaKind = "image" | "video" | "unknown";
+export type RockyInstagramPublishType = "feed" | "reels";
+
+export interface RockyInstagramPublishDraftPreviewMediaRecord {
+  kind: RockyInstagramPublishDraftPreviewMediaKind;
+  label: string;
+  contentType: string | null;
+  previewUrl: string | null;
+}
+
+export interface RockyInstagramPublishDraftPreviewRecord {
+  provider: "instagram";
+  status: RockyInstagramPublishDraftPreviewStatus;
+  publishType: RockyInstagramPublishType;
+  targetAccountLabel: string;
+  media: RockyInstagramPublishDraftPreviewMediaRecord | null;
+  caption: string | null;
+  blocker: string | null;
+  updatedAt: string;
+}
+
 export interface RockyAttachmentInput {
   name: string;
   contentType?: string | null;
@@ -1329,6 +1351,7 @@ export interface RockyChatRecord {
   dispatches: RockyDispatchRecord[];
   orchestration: RockyOrchestrationRecord | null;
   executionStarted: boolean;
+  instagramPublishDraftPreview?: RockyInstagramPublishDraftPreviewRecord | null;
   createdAt: string;
   updatedAt: string;
   messagePage?: RockyChatMessagePageRecord;

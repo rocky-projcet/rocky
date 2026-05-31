@@ -27,6 +27,7 @@ import {
   FileOutput,
   FileText,
   FolderOpen,
+  Image as ImageIcon,
   LayoutTemplate,
   Paperclip,
   PanelRightClose,
@@ -39,6 +40,7 @@ import {
   Send,
   Square,
   Trash2,
+  Video,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -3458,6 +3460,107 @@ function buildOptimisticUserMessage(
   };
 }
 
+function InstagramPublishDraftPreviewCard({
+  preview,
+}: {
+  preview: NonNullable<RockyChatRecord["instagramPublishDraftPreview"]>;
+}) {
+  const mediaHref = preview.media?.previewUrl
+    ? agentEngineClient.resolveApiPath(preview.media.previewUrl)
+    : null;
+  const MediaIcon = preview.media?.kind === "video" ? Video : ImageIcon;
+  const publishTypeLabel = preview.publishType === "reels" ? "릴스" : "피드";
+  const statusLabel = preview.status === "ready" ? "미리보기 준비" : "확인 필요";
+
+  return (
+    <div className="flex w-full justify-start">
+      <article className="w-full max-w-[52rem] rounded-3xl border border-pink-200/70 bg-pink-50/60 p-4 text-sm text-slate-900 shadow-sm dark:border-pink-900/40 dark:bg-pink-950/20 dark:text-pink-50">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-pink-700/80 dark:text-pink-200/80">
+              Instagram Publish draft
+            </div>
+            <h3 className="mt-1 text-base font-semibold text-foreground">
+              발행 초안 미리보기
+            </h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge className="rounded-full bg-pink-500/15 text-pink-700 dark:text-pink-200">
+              {publishTypeLabel}
+            </Badge>
+            <Badge
+              className={cn(
+                "rounded-full",
+                preview.status === "ready"
+                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
+                  : "bg-amber-500/15 text-amber-700 dark:text-amber-200"
+              )}
+            >
+              {statusLabel}
+            </Badge>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-[180px_1fr]">
+          <div className="overflow-hidden rounded-2xl border border-pink-200/70 bg-background/80 dark:border-pink-900/40">
+            {mediaHref && preview.media?.kind === "image" ? (
+              <img
+                alt="Instagram 발행 초안 미디어"
+                className="aspect-square h-full w-full object-cover"
+                src={mediaHref}
+              />
+            ) : mediaHref && preview.media?.kind === "video" ? (
+              <video className="aspect-square h-full w-full object-cover" controls src={mediaHref} />
+            ) : (
+              <div className="flex aspect-square flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
+                <MediaIcon className="size-7" />
+                <span>{preview.media?.label ?? "미디어 정보 없음"}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <div className="grid gap-2 text-xs sm:grid-cols-3">
+              <div className="rounded-2xl bg-background/70 px-3 py-2">
+                <div className="font-medium text-muted-foreground">계정</div>
+                <div className="mt-1 truncate text-foreground">
+                  {preview.targetAccountLabel}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-background/70 px-3 py-2">
+                <div className="font-medium text-muted-foreground">형식</div>
+                <div className="mt-1 text-foreground">{publishTypeLabel}</div>
+              </div>
+              <div className="rounded-2xl bg-background/70 px-3 py-2">
+                <div className="font-medium text-muted-foreground">미디어</div>
+                <div className="mt-1 truncate text-foreground">
+                  {preview.media?.label ?? "미디어 없음"}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-background/70 px-3 py-3">
+              <div className="text-xs font-medium text-muted-foreground">캡션</div>
+              <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+                {preview.caption ?? "캡션이 아직 없습니다."}
+              </p>
+            </div>
+
+            {preview.blocker ? (
+              <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-100">
+                {preview.blocker}
+              </div>
+            ) : null}
+            <p className="text-xs leading-5 text-muted-foreground">
+              이 카드는 초안 미리보기입니다. 아직 발행 승인, 외부 업로드, Instagram 게시를 실행하지 않습니다.
+            </p>
+          </div>
+        </div>
+      </article>
+    </div>
+  );
+}
+
 function MessageList({
   agentWorkspaceRootsByAgentId,
   chat,
@@ -3499,6 +3602,9 @@ function MessageList({
           transcriptsBySessionId={transcriptsBySessionId}
         />
       ))}
+      {chat.instagramPublishDraftPreview ? (
+        <InstagramPublishDraftPreviewCard preview={chat.instagramPublishDraftPreview} />
+      ) : null}
       <div ref={endRef} />
     </div>
   );

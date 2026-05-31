@@ -94,12 +94,12 @@ test("normalizeTmpfilesDownloadUrl leaves existing direct links unchanged", () =
   );
 });
 
-test("shouldCreateTmpfilesPublicMediaUrls requires Instagram publish intent", () => {
+test("shouldCreateTmpfilesPublicMediaUrls stays disabled before publish approval", () => {
   assert.equal(
     shouldCreateTmpfilesPublicMediaUrls({
       message: "인스타그램 피드에 이 이미지를 게시해줘",
     }),
-    true
+    false
   );
   assert.equal(
     shouldCreateTmpfilesPublicMediaUrls({
@@ -133,15 +133,21 @@ test("buildAgentTaskChatInput includes agent, skill, and attachment payloads", a
   });
 });
 
-test("buildAgentTaskChatInput can attach public media URLs", async () => {
+test("buildAgentTaskChatInput does not upload Instagram media before approval", async () => {
   const input = await buildAgentTaskChatInput({
     agentId: "agent-1",
     message: "Post this image to Instagram.",
     skillId: "md-content-instagram",
     files: [file({ name: "feed.png", type: "image/png", size: 22 })],
     encodeFile: async () => "cG5n",
-    createPublicMediaUrls: true,
-    uploadPublicMediaFile: async () => "https://tmpfiles.org/dl/uploaded/feed.png",
+    createPublicMediaUrls: shouldCreateTmpfilesPublicMediaUrls({
+      message: "Post this image to Instagram.",
+      skillId: "md-content-instagram",
+      skillTitle: "Instagram content",
+    }),
+    uploadPublicMediaFile: async () => {
+      throw new Error("tmpfiles upload should not run before approval");
+    },
   });
 
   assert.deepEqual(input, {
@@ -154,7 +160,6 @@ test("buildAgentTaskChatInput can attach public media URLs", async () => {
         contentType: "image/png",
         size: 22,
         contentBase64: "cG5n",
-        publicUrl: "https://tmpfiles.org/dl/uploaded/feed.png",
       },
     ],
   });

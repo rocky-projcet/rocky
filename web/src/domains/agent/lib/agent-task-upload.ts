@@ -9,9 +9,6 @@ export type AgentTaskPublicMediaUploader = (file: File) => Promise<string>;
 
 const TMPFILES_UPLOAD_ENDPOINT = "https://tmpfiles.org/api/v1/upload";
 
-const INSTAGRAM_PATTERN = /instagram|insta|\uC778\uC2A4\uD0C0|\uB9B4\uC2A4|reels?/iu;
-const PUBLISH_PATTERN =
-  /\uAC8C\uC2DC|\uBC1C\uD589|\uC5C5\uB85C\uB4DC|\uC62C\uB824|\uD3EC\uC2A4\uD305|publish|post|upload|reels?|feed/iu;
 const PUBLIC_MEDIA_EXTENSION_PATTERN =
   /\.(?:avif|gif|heic|heif|jpe?g|m4v|mov|mp4|png|webm|webp)$/iu;
 
@@ -86,22 +83,10 @@ export function shouldCreateTmpfilesPublicMediaUrls(input: {
   skillTitle?: string | null;
   skillInstructions?: string | null;
 }): boolean {
-  const instagramSignal = [
-    input.message,
-    input.skillId ?? "",
-    input.skillTitle ?? "",
-    input.skillInstructions ?? "",
-  ].join("\n");
-  const publishSignal = [
-    input.message,
-    input.skillId ?? "",
-    input.skillTitle ?? "",
-  ].join("\n");
-
-  return (
-    INSTAGRAM_PATTERN.test(instagramSignal) &&
-    PUBLISH_PATTERN.test(publishSignal)
-  );
+  void input;
+  // #92 only creates a safe Instagram Publish draft preview. Temporary public
+  // media hosting is reserved for the later explicit approval/publish flow.
+  return false;
 }
 
 export async function buildRockyAttachmentInputs(

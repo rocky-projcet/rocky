@@ -1,0 +1,3 @@
+# Server-owned approval for Instagram publish execution
+
+Rocky will treat Instagram posting as server-owned publish execution, not as an agent-triggered JSON handoff or OAuth broker responsibility. Agents may prepare a single active publish draft for a task, but Rocky must hold the user's explicit publish approval, prepare the temporary public media URL, execute the available Instagram Graph API publish capability, and make repeated publish requests idempotent. This trades the faster workspace-file trigger for a simpler user experience and safer external write boundary; `tmpfiles.org` may be used as the temporary media host until Rocky replaces it with R2.

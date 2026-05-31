@@ -7,6 +7,7 @@ import type {
   RockyChatMessagePageRecord,
   RockyChatRecord,
   RockyCoreSettingsUpdateInput,
+  RockyInstagramPublishApprovalRecord,
 } from "@/domains/rocky/types";
 
 export const ROCKY_CHAT_MESSAGE_PAGE_LIMIT = 50;
@@ -157,6 +158,26 @@ export function useSendRockyMessageMutation(chatId: string | null) {
     },
     onSuccess: async (chat: RockyChatRecord) => {
       queryClient.setQueryData(rockyQueryKeys.chat(chat.id), chat);
+      await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats });
+    },
+  });
+}
+
+export function useApproveInstagramPublishDraftMutation(chatId: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (): Promise<RockyInstagramPublishApprovalRecord> => {
+      if (!chatId) {
+        throw new Error("Rocky chat id is required.");
+      }
+
+      return agentEngineClient.approveInstagramPublishDraft(chatId);
+    },
+    onSuccess: async () => {
+      if (chatId) {
+        await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chat(chatId) });
+      }
       await queryClient.invalidateQueries({ queryKey: rockyQueryKeys.chats });
     },
   });

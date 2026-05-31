@@ -533,6 +533,16 @@ export const registerRockyChatRoutes: FastifyPluginAsync<
   );
 
   server.post<{ Params: { chatId: string } }>(
+    "/rocky/chats/:chatId/instagram/publish/approve",
+    async (request, reply) => {
+      const result = await options.rockyChatService.approveInstagramPublishDraft(
+        request.params.chatId
+      );
+      sendJson(reply, 200, result);
+    }
+  );
+
+  server.post<{ Params: { chatId: string } }>(
     "/rocky/chats/:chatId/cancel",
     async (request, reply) => {
       const chat = await options.rockyChatService.cancelChat(request.params.chatId);

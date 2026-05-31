@@ -51,6 +51,7 @@ import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-prev
 import { RunEventsSource } from "@/domains/run/lib/run-events-source";
 import type { RuntimeEvent } from "@/domains/run/types";
 import {
+  useApproveInstagramPublishDraftMutation,
   useCancelRockyChatMutation,
   useCreateRockyChatMutation,
   ROCKY_CHAT_MESSAGE_PAGE_LIMIT,
@@ -108,6 +109,7 @@ import type {
   RockyAttachmentRecord,
   RockyChatMessagePageRecord,
   RockyChatRecord,
+  RockyInstagramPublishApprovalRecord,
   RockyMessageRecord,
 } from "@/domains/rocky/types";
 import type {
@@ -3461,8 +3463,14 @@ function buildOptimisticUserMessage(
 }
 
 function InstagramPublishDraftPreviewCard({
+  approvalResult,
+  approvePending,
+  onApprove,
   preview,
 }: {
+  approvalResult: RockyInstagramPublishApprovalRecord | null;
+  approvePending: boolean;
+  onApprove: () => void;
   preview: NonNullable<RockyChatRecord["instagramPublishDraftPreview"]>;
 }) {
   const mediaHref = preview.media?.previewUrl
@@ -3471,6 +3479,17 @@ function InstagramPublishDraftPreviewCard({
   const MediaIcon = preview.media?.kind === "video" ? Video : ImageIcon;
   const publishTypeLabel = preview.publishType === "reels" ? "릴스" : "피드";
   const statusLabel = preview.status === "ready" ? "미리보기 준비" : "확인 필요";
+  const approvalStatusLabel =
+    approvalResult?.status === "published"
+      ? "발행 완료"
+      : approvalResult?.status === "publishing"
+        ? "발행 중"
+        : approvalResult?.status === "publish_failed"
+          ? "발행 실패"
+          : approvalResult?.status === "blocked"
+            ? "승인 차단"
+            : null;
+  const canApprove = preview.status === "ready" && !approvePending;
 
   return (
     <div className="flex w-full justify-start">
@@ -3551,9 +3570,36 @@ function InstagramPublishDraftPreviewCard({
                 {preview.blocker}
               </div>
             ) : null}
-            <p className="text-xs leading-5 text-muted-foreground">
-              이 카드는 초안 미리보기입니다. 아직 발행 승인, 외부 업로드, Instagram 게시를 실행하지 않습니다.
-            </p>
+            {approvalResult ? (
+              <div className="rounded-2xl border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+                <div className="font-semibold">{approvalStatusLabel}</div>
+                <div>{approvalResult.message}</div>
+                {approvalResult.permalink ? (
+                  <a
+                    className="mt-1 inline-flex items-center gap-1 underline-offset-4 hover:underline"
+                    href={approvalResult.permalink}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    게시물 열기
+                    <ExternalLink className="size-3" />
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs leading-5 text-muted-foreground">
+                승인하면 Rocky 서버가 임시 공개 미디어 링크를 준비한 뒤 Instagram Graph API 발행을 실행합니다.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canApprove}
+                onClick={onApprove}
+              >
+                {approvePending ? "발행 중..." : "승인 후 발행"}
+              </Button>
+            </div>
           </div>
         </div>
       </article>
@@ -3563,8 +3609,11 @@ function InstagramPublishDraftPreviewCard({
 
 function MessageList({
   agentWorkspaceRootsByAgentId,
+  approvalResult,
+  approvePending,
   chat,
   endRef,
+  onApproveInstagramPublish,
   onOpenConversationFile,
   optimisticMessage,
   runEventsByRunId,
@@ -3573,8 +3622,11 @@ function MessageList({
   transcriptsBySessionId,
 }: {
   agentWorkspaceRootsByAgentId: Record<string, string>;
+  approvalResult: RockyInstagramPublishApprovalRecord | null;
+  approvePending: boolean;
   chat: RockyChatRecord;
   endRef: RefObject<HTMLDivElement | null>;
+  onApproveInstagramPublish: () => void;
   onOpenConversationFile: (target: RockyConversationFileTarget) => void;
   optimisticMessage: RockyMessageRecord | null;
   runEventsByRunId: Record<string, RuntimeEvent[]>;
@@ -3603,7 +3655,12 @@ function MessageList({
         />
       ))}
       {chat.instagramPublishDraftPreview ? (
-        <InstagramPublishDraftPreviewCard preview={chat.instagramPublishDraftPreview} />
+        <InstagramPublishDraftPreviewCard
+          approvalResult={approvalResult}
+          approvePending={approvePending}
+          onApprove={onApproveInstagramPublish}
+          preview={chat.instagramPublishDraftPreview}
+        />
       ) : null}
       <div ref={endRef} />
     </div>
@@ -6508,6 +6565,8 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const [chat, setChat] = useState<RockyChatRecord | null>(null);
   const [optimisticUserMessage, setOptimisticUserMessage] =
     useState<RockyMessageRecord | null>(null);
+  const [instagramPublishApprovalResult, setInstagramPublishApprovalResult] =
+    useState<RockyInstagramPublishApprovalRecord | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const pageDrop = useFileDropZone({
     onFiles: (incoming) => setFiles((current) => [...current, ...incoming]),
@@ -6542,6 +6601,9 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const { userTemplates } = useMdTemplates();
   const createChatMutation = useCreateRockyChatMutation();
   const sendMessageMutation = useSendRockyMessageMutation(chat?.id ?? null);
+  const approveInstagramPublishMutation = useApproveInstagramPublishDraftMutation(
+    chat?.id ?? null
+  );
   const cancelRockyChatMutation = useCancelRockyChatMutation(chat?.id ?? null);
   const rockyChatMessagesMutation = useRockyChatMessagesMutation(chat?.id ?? null);
   const rockyChatQuery = useRockyChatQuery(
@@ -6834,9 +6896,13 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     submitInFlight ||
     createChatMutation.isPending ||
     sendMessageMutation.isPending;
-  const pending = mutationPending || cancelRockyChatMutation.isPending;
+  const pending =
+    mutationPending ||
+    approveInstagramPublishMutation.isPending ||
+    cancelRockyChatMutation.isPending;
   const canSend =
     !mutationPending &&
+    !approveInstagramPublishMutation.isPending &&
     !cancelRockyChatMutation.isPending &&
     !hasActiveOrchestration &&
     (!isTaskDetail || Boolean(chat));
@@ -6847,6 +6913,7 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   const errorMessage =
     createChatMutation.error?.message ??
     sendMessageMutation.error?.message ??
+    approveInstagramPublishMutation.error?.message ??
     cancelRockyChatMutation.error?.message;
 
   useEffect(() => {
@@ -6861,15 +6928,21 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
   }, [refreshedChat]);
 
   useEffect(() => {
+    setInstagramPublishApprovalResult(null);
+  }, [chat?.id, chat?.instagramPublishDraftPreview?.updatedAt]);
+
+  useEffect(() => {
     if (!isTaskDetail) {
       setChat(null);
       setOptimisticUserMessage(null);
+      setInstagramPublishApprovalResult(null);
       setFilePanelSelectionRequest(null);
       return;
     }
 
     setChat((current) => (current?.id === routeTaskId ? current : null));
     setOptimisticUserMessage(null);
+    setInstagramPublishApprovalResult(null);
     setFilePanelSelectionRequest(null);
     setTemplateExecutionTemplate(null);
   }, [isTaskDetail, routeTaskId]);
@@ -7170,6 +7243,30 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     }
   };
 
+  const approveInstagramPublish = async () => {
+    if (!chat?.id || approveInstagramPublishMutation.isPending) {
+      return;
+    }
+
+    try {
+      const result = await approveInstagramPublishMutation.mutateAsync();
+      setInstagramPublishApprovalResult(result);
+      if (result.status === "published") {
+        toast.success("Instagram 발행이 완료되었습니다.");
+      } else if (result.status === "publishing") {
+        toast.message("Instagram 발행을 진행 중입니다.");
+      } else {
+        toast.error("Instagram 발행을 완료하지 못했습니다.", {
+          description: result.message,
+        });
+      }
+    } catch (error) {
+      toast.error("Instagram 발행 승인을 처리하지 못했습니다.", {
+        description: getErrorMessage(error, "잠시 후 다시 시도해 주세요."),
+      });
+    }
+  };
+
   const openConversationFile = (target: RockyConversationFileTarget) => {
     const selectedFile = findPanelFileForConversationTarget(filePanelContext, target);
     const nextId = filePanelSelectionRequestIdRef.current + 1;
@@ -7283,8 +7380,13 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
           ) : chat && visibleMessageCount > 0 ? (
             <MessageList
               agentWorkspaceRootsByAgentId={agentWorkspaceRootsByAgentId}
+              approvalResult={instagramPublishApprovalResult}
+              approvePending={approveInstagramPublishMutation.isPending}
               chat={chat}
               endRef={messagesEndRef}
+              onApproveInstagramPublish={() => {
+                void approveInstagramPublish();
+              }}
               onOpenConversationFile={openConversationFile}
               optimisticMessage={optimisticUserMessage}
               runEventsByRunId={displayRunEventsByRunId}

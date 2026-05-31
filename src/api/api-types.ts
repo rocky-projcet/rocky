@@ -24,6 +24,7 @@ import type {
   AgentTaskUpdateInput,
 } from "../tasks/task-types.js";
 import type { RockyChatServiceLike } from "../rocky-chat/rocky-chat-types.js";
+import type { TemporaryMediaHostLike } from "../rocky-chat/media-host.js";
 import type { SkillTemplateStore } from "../skills/skill-template-store.js";
 import type {
   EcountConnectionTester,
@@ -266,6 +267,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   taskService?: TaskServiceLike;
   rockyChatService?: RockyChatServiceLike;
   publicWorkspaceBaseUrl?: string | null;
+  instagramTemporaryMediaHost?: TemporaryMediaHostLike;
   skillTemplateStore?: SkillTemplateStore;
   ecountConnectionTester?: EcountConnectionTester;
   ecountLookupService?: EcountLookupServiceLike;

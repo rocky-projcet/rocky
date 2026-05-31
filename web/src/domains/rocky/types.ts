@@ -13,6 +13,8 @@ export type {
   RockyCoreSessionHealthRecord,
   RockyCoreSkillRecord,
   RockyDispatchRecord,
+  RockyInstagramPublishApprovalRecord,
+  RockyInstagramPublishApprovalStatus,
   RockyInstagramPublishDraftPreviewMediaKind,
   RockyInstagramPublishDraftPreviewMediaRecord,
   RockyInstagramPublishDraftPreviewRecord,

@@ -854,6 +854,8 @@ interface InstagramPublishApprovalState {
   result: RockyInstagramPublishApprovalRecord;
 }
 
+type InstagramPublishChatAction = "approve" | "status";
+
 function shouldAttemptTistoryDraftPublish(input: {
   request: string;
   output: string | null;
@@ -899,6 +901,51 @@ function shouldAttemptInstagramMediaPublish(input: {
       request
     );
   return publishIntent && !negativeIntent;
+}
+
+function classifyInstagramPublishChatAction(message: string): InstagramPublishChatAction | null {
+  const request = compactText(message).toLowerCase();
+  if (!request) {
+    return null;
+  }
+
+  const statusCheckIntent =
+    /(?:게시|발행|업로드|포스팅|publish|published|post|posted|upload|uploaded).*(?:됐|되었|완료됐|완료되었|끝났|상태|확인|결과|성공|실패|done|status|complete|completed|finished|success|failed|live)/iu.test(
+      request
+    ) ||
+    /(?:did|has|have|is|was|status).*(?:publish|published|post|posted|upload|uploaded|live|done)/iu.test(
+      request
+    ) ||
+    /(?:됐|되었|완료됐|완료되었|끝났|done|status|complete|completed|finished).*(?:게시|발행|업로드|포스팅|publish|post|upload)/iu.test(
+      request
+    ) ||
+    /\b(?:published|posted|uploaded)\??$/iu.test(request);
+  if (statusCheckIntent) {
+    return "status";
+  }
+
+  const negativeIntent =
+    /하지\s*마|하지\s*말|금지|취소|보류|중단|do not|don't|dont|no\s+(?:publish|upload|post)|not\s+(?:publish|upload|post)|cancel|stop/iu.test(
+      request
+    );
+  if (negativeIntent) {
+    return null;
+  }
+
+  const publishIntent =
+    /(?:게시|발행|업로드|포스팅)\s*(?:해|해줘|해주세요|하자|진행|시작|승인|부탁)/iu.test(
+      request
+    ) ||
+    /올려\s*(?:줘|주세요|라|줘요)?/iu.test(request) ||
+    /승인\s*(?:해|해줘|해주세요|하자|진행|시작|부탁)/iu.test(
+      request
+    ) ||
+    /\b(?:publish|upload|post)\b(?:\s+(?:it|this|now|please))?\b/iu.test(
+      request
+    ) ||
+    /\b(?:go ahead|approve|ship it)\b/iu.test(request);
+
+  return publishIntent ? "approve" : null;
 }
 
 function extractMarkdownWorkspacePaths(text: string): string[] {
@@ -1569,6 +1616,126 @@ function sanitizeInstagramPublishPublicMessage(message: string): string {
     .trim();
 
   return sanitized || "Instagram publish status updated.";
+}
+
+function instagramPublishTypeLabel(value: "feed" | "reels"): string {
+  return value === "reels" ? "릴스" : "피드";
+}
+
+function safeInstagramPublishText(
+  value: string | null | undefined,
+  maxLength = 120
+): string | null {
+  const sanitized = sanitizeInstagramPublishUserText(value ?? "")
+    .replace(/[{}\[\]`]/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!sanitized) {
+    return null;
+  }
+  return sanitized.length > maxLength
+    ? `${sanitized.slice(0, maxLength).trimEnd()}...`
+    : sanitized;
+}
+
+function safeInstagramPermalink(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      /(?:^|[.])(?:graph[.]facebook[.]com|graph[.]instagram[.]com|tmpfiles[.]org)$/iu.test(
+        url.hostname
+      )
+    ) {
+      return null;
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function formatInstagramPublishApprovalChatMessage(
+  result: RockyInstagramPublishApprovalRecord
+): string {
+  const publishType = instagramPublishTypeLabel(result.publishType);
+  const target = safeInstagramPublishText(result.targetAccountLabel, 80);
+  const targetText = target ? ` 대상: ${target}.` : "";
+  const publicMessage = safeInstagramPublishText(result.message, 180);
+  const permalink = safeInstagramPermalink(result.permalink);
+
+  if (result.status === "published") {
+    return [
+      `Instagram ${publishType} 발행이 완료되었습니다.`,
+      targetText.trim(),
+      permalink ? `결과 링크: ${permalink}` : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join(" ");
+  }
+
+  if (result.status === "publishing") {
+    return [
+      `Instagram ${publishType} 발행 승인을 기록했고 지금 진행 중입니다.`,
+      targetText.trim(),
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join(" ");
+  }
+
+  if (result.status === "blocked") {
+    return [
+      `Instagram ${publishType} 발행을 시작하지 못했습니다.`,
+      targetText.trim(),
+      publicMessage,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join(" ");
+  }
+
+  return [
+    `Instagram ${publishType} 발행을 완료하지 못했습니다.`,
+    targetText.trim(),
+    publicMessage,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join(" ");
+}
+
+function formatInstagramPublishStatusChatMessage(input: {
+  approval: RockyInstagramPublishApprovalRecord | null;
+  preview: RockyInstagramPublishDraftPreviewRecord | null;
+}): string {
+  if (input.approval) {
+    return `현재 ${formatInstagramPublishApprovalChatMessage(input.approval)}`;
+  }
+
+  const preview = input.preview;
+  if (!preview) {
+    return "현재 확인할 Instagram Publish 초안이나 발행 결과가 없습니다.";
+  }
+
+  const publishType = instagramPublishTypeLabel(preview.publishType);
+  const target = safeInstagramPublishText(preview.targetAccountLabel, 80);
+  const caption = safeInstagramPublishText(preview.caption, 140);
+  const blocker = safeInstagramPublishText(preview.blocker, 180);
+  const statusText =
+    preview.status === "blocked"
+      ? `현재 Instagram ${publishType} 초안은 발행 준비가 막혀 있습니다.`
+      : `현재 Instagram ${publishType} 초안은 발행 승인 대기 중입니다.`;
+
+  return [
+    statusText,
+    target ? `대상: ${target}.` : null,
+    caption ? `캡션: ${caption}` : null,
+    blocker ? `차단 사유: ${blocker}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join(" ");
 }
 
 function isTemporaryMediaUrl(value: unknown): boolean {
@@ -2438,6 +2605,20 @@ export class RockyChatService {
     const targetAgent = existingAgentId
       ? await this.requireRunnableAgent(existingAgentId)
       : null;
+    const instagramPublishChatAction = await this.tryHandleInstagramPublishChatAction({
+      existing,
+      agent: targetAgent,
+      chatId,
+      message,
+      attachmentDrafts,
+      domain,
+      intent,
+      timestamp,
+    });
+    if (instagramPublishChatAction) {
+      return instagramPublishChatAction;
+    }
+
     const reusableSessionId = this.findReusableSessionId(existing);
     const followupSkillId = latestUsedSkillId(existing);
     const routed = targetAgent
@@ -2500,6 +2681,107 @@ export class RockyChatService {
       executionStarted:
         Boolean(routed.dispatch?.executionStarted) || Boolean(existing.executionStarted),
       updatedAt: timestamp,
+    };
+
+    await this.writeChat(chat);
+    return this.toPagedChatWithPreview(chat);
+  }
+
+  private async tryHandleInstagramPublishChatAction(input: {
+    existing: RockyChatRecord;
+    agent: AgentRecord | null;
+    chatId: string;
+    message: string;
+    attachmentDrafts: RockyAttachmentDraft[];
+    domain: RockyChatDomain;
+    intent: RockyRoutingIntent;
+    timestamp: string;
+  }): Promise<RockyChatRecord | null> {
+    if (input.attachmentDrafts.length > 0) {
+      return null;
+    }
+
+    const action = classifyInstagramPublishChatAction(input.message);
+    if (!action) {
+      return null;
+    }
+
+    const existingState = await this.readInstagramPublishApprovalState(input.chatId);
+    let activeDraft = false;
+    if (input.agent) {
+      activeDraft = Boolean(
+        await this.findActiveInstagramPublishDraft({
+          agent: input.agent,
+          chatId: input.chatId,
+        })
+      );
+    }
+
+    if (!activeDraft && !existingState) {
+      return null;
+    }
+
+    const rockyText =
+      action === "approve"
+        ? formatInstagramPublishApprovalChatMessage(
+            await this.approveInstagramPublishDraft(input.chatId)
+          )
+        : formatInstagramPublishStatusChatMessage({
+            approval: existingState?.result ?? null,
+            preview: existingState
+              ? null
+              : await this.findChatInstagramPublishDraftPreview(input.existing),
+          });
+
+    return this.appendInstagramPublishChatReply({
+      chatId: input.chatId,
+      message: input.message,
+      rockyText,
+      domain: input.domain,
+      intent: input.intent,
+      timestamp: input.timestamp,
+    });
+  }
+
+  private async appendInstagramPublishChatReply(input: {
+    chatId: string;
+    message: string;
+    rockyText: string;
+    domain: RockyChatDomain;
+    intent: RockyRoutingIntent;
+    timestamp: string;
+  }): Promise<RockyChatRecord> {
+    const latest = await this.requireChat(input.chatId);
+    const userMessage = this.buildUserMessage({
+      id: `message-${this.idGenerator()}`,
+      chatId: input.chatId,
+      message: input.message,
+      attachments: [],
+      domain: input.domain,
+      intent: input.intent,
+      createdAt: input.timestamp,
+    });
+    const rockyMessage: RockyMessageRecord = {
+      id: `message-${this.idGenerator()}`,
+      chatId: input.chatId,
+      role: "rocky",
+      intent: input.intent,
+      text: input.rockyText,
+      attachmentIds: [],
+      domain: input.domain,
+      workerId: latest.worker?.id ?? null,
+      skillCandidateIds: [],
+      usedSkills: [],
+      dispatchId: null,
+      createdAt: input.timestamp,
+    };
+    const chat: RockyChatRecord = {
+      ...latest,
+      title: latest.title || titleFromMessage(input.message),
+      intent: input.intent,
+      domain: input.domain,
+      messages: [...latest.messages, userMessage, rockyMessage],
+      updatedAt: input.timestamp,
     };
 
     await this.writeChat(chat);

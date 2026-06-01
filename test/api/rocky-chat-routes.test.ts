@@ -3074,6 +3074,412 @@ test("rocky chat approve action returns a safe blocked result without media uplo
   }
 });
 
+function createSuccessfulInstagramGraphFetch(
+  graphCalls: Array<{ url: string; body: string }>,
+  ids: {
+    creationId: string;
+    mediaId: string;
+    permalink: string;
+    timestamp?: string;
+  }
+) {
+  return async (url: string | URL | Request, init?: RequestInit) => {
+    const requestUrl =
+      typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
+    const body =
+      init?.body instanceof URLSearchParams
+        ? init.body.toString()
+        : typeof init?.body === "string"
+          ? init.body
+          : "";
+    graphCalls.push({ url: requestUrl, body });
+    const parsedUrl = new URL(requestUrl);
+    if (parsedUrl.pathname.endsWith("/17841400000000001/media")) {
+      return new Response(JSON.stringify({ id: ids.creationId }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (parsedUrl.pathname.endsWith(`/${ids.creationId}`)) {
+      return new Response(
+        JSON.stringify({ id: ids.creationId, status_code: "FINISHED" }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+    if (parsedUrl.pathname.endsWith("/17841400000000001/media_publish")) {
+      return new Response(JSON.stringify({ id: ids.mediaId }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (parsedUrl.pathname.endsWith(`/${ids.mediaId}`)) {
+      return new Response(
+        JSON.stringify({
+          id: ids.mediaId,
+          permalink: ids.permalink,
+          timestamp: ids.timestamp ?? "2026-04-21T00:00:10+0000",
+          media_type: "IMAGE",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+
+    return new Response(JSON.stringify({ error: "unexpected graph call" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  };
+}
+
+async function createInstagramAgentChat(input: {
+  stateRoot: string;
+  agents: AgentRecord[];
+  completedRunSummaries: string[];
+  server: ReturnType<typeof createRockyChatTestServer>["server"];
+}) {
+  const workspaceRoot = path.join(
+    input.stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace"
+  );
+  const runtimeHome = path.join(
+    input.stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home"
+  );
+  input.agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram agent",
+      workspaceRoot,
+      runtimeHome,
+    })
+  );
+  input.completedRunSummaries.push("Instagram draft is ready for approval.");
+
+  const response = await input.server.inject({
+    method: "POST",
+    url: "/rocky/chats",
+    payload: {
+      message: "Create an Instagram feed draft.",
+      agentId: "instagram-agent",
+    },
+  });
+  assert.equal(response.statusCode, 201);
+  const created = response.json<RockyChatRecord>();
+  const outputDir = path.join(
+    workspaceRoot,
+    ...rockyTaskOutputDirectory(created.id).split("/")
+  );
+  await mkdir(outputDir, { recursive: true });
+
+  return { created, outputDir, workspaceRoot };
+}
+
+test("rocky chat routes publish-intent messages to Instagram publish approval", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const graphCalls: Array<{ url: string; body: string }> = [];
+  let uploadCalls = 0;
+  const instagramTemporaryMediaHost: TemporaryMediaHostLike = {
+    async upload(input) {
+      uploadCalls += 1;
+      assert.equal(path.basename(input.absolutePath), "feed.png");
+      return {
+        provider: "tmpfiles",
+        publicUrl: "https://tmpfiles.org/dl/chat/feed.png",
+        uploadedAt: "2026-04-21T00:00:00.000Z",
+      };
+    },
+  };
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      instagramTemporaryMediaHost,
+      connectorFetch: createSuccessfulInstagramGraphFetch(graphCalls, {
+        creationId: "creation-chat-123",
+        mediaId: "media-chat-456",
+        permalink: "https://www.instagram.com/p/chat-publish/",
+      }),
+    });
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    await writeFile(path.join(outputDir, "feed.png"), "png-bytes", "utf8");
+    await writeFile(
+      path.join(outputDir, "instagram-publish-request.json"),
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_file: path.posix.join(rockyTaskOutputDirectory(created.id), "feed.png"),
+          caption: "채팅 승인 테스트",
+          capability_id: "instagram.media.publish",
+          graph_endpoint: "https://graph.instagram.com/v19.0/hidden/media",
+          temporary_media_url: "https://tmpfiles.org/dl/hidden/feed.png",
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+    const initialSendTurnCount = sendTurnCalls.length;
+
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: { message: "승인해줘" },
+    });
+    assert.equal(publishResponse.statusCode, 201);
+    const published = publishResponse.json<RockyChatRecord>();
+    const rockyReply = published.messages.at(-1)?.text ?? "";
+
+    assert.equal(sendTurnCalls.length, initialSendTurnCount);
+    assert.equal(published.dispatches.length, created.dispatches.length);
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 4);
+    assert.match(rockyReply, /발행이 완료/u);
+    assert.match(rockyReply, /instagram[.]com\/p\/chat-publish/u);
+    assert.doesNotMatch(
+      JSON.stringify(published.messages),
+      /tmpfiles[.]org|graph[.]instagram[.]com|instagram[.]media[.]|creation-chat-123|media-chat-456|instagram-publish-request[.]json/u
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat keeps publish wording on the normal chat flow when no active Instagram draft exists", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+  try {
+    const { created } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    const initialSendTurnCount = sendTurnCalls.length;
+    completedRunSummaries.push("Normal publish wording reached the agent.");
+
+    const publishResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: { message: "게시해줘" },
+    });
+    assert.equal(publishResponse.statusCode, 201);
+    const chat = publishResponse.json<RockyChatRecord>();
+
+    assert.equal(sendTurnCalls.length, initialSendTurnCount + 1);
+    assert.equal(graphCalls, 0);
+    assert.equal(chat.messages.at(-1)?.text, "Normal publish wording reached the agent.");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat returns Instagram draft state for publish status checks without publishing", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    const requestPath = path.join(outputDir, "instagram-publish-request.json");
+    await writeFile(
+      requestPath,
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_url: "https://tmpfiles.org/dl/example/rocky-feed.png",
+          caption: "상태 확인 테스트",
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+    const initialSendTurnCount = sendTurnCalls.length;
+
+    const statusResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: { message: "게시 됐어?" },
+    });
+    assert.equal(statusResponse.statusCode, 201);
+    const chat = statusResponse.json<RockyChatRecord>();
+    const rockyReply = chat.messages.at(-1)?.text ?? "";
+    const persisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(sendTurnCalls.length, initialSendTurnCount);
+    assert.equal(graphCalls, 0);
+    assert.equal(persisted.status, "draft_ready_for_preview");
+    assert.match(rockyReply, /발행 승인 대기/u);
+    assert.match(rockyReply, /@rocky[.]agent[.]kr/u);
+    assert.doesNotMatch(
+      rockyReply,
+      /tmpfiles[.]org|graph[.]instagram[.]com|instagram[.]media[.]|instagram-publish-request[.]json/u
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat duplicate publish-intent messages return in-progress and completed publish state", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const graphCalls: Array<{ url: string; body: string }> = [];
+  let uploadCalls = 0;
+  let uploadStartedResolve: (() => void) | null = null;
+  let releaseUpload: (() => void) | null = null;
+  const uploadStarted = new Promise<void>((resolve) => {
+    uploadStartedResolve = resolve;
+  });
+  const uploadRelease = new Promise<void>((resolve) => {
+    releaseUpload = resolve;
+  });
+  const instagramTemporaryMediaHost: TemporaryMediaHostLike = {
+    async upload() {
+      uploadCalls += 1;
+      uploadStartedResolve?.();
+      await uploadRelease;
+      return {
+        provider: "tmpfiles",
+        publicUrl: "https://tmpfiles.org/dl/duplicate/feed.png",
+        uploadedAt: "2026-04-21T00:00:00.000Z",
+      };
+    },
+  };
+  const { agents, completedRunSummaries, sendTurnCalls, server } =
+    createRockyChatTestServer(stateRoot, {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      instagramTemporaryMediaHost,
+      connectorFetch: createSuccessfulInstagramGraphFetch(graphCalls, {
+        creationId: "creation-duplicate-123",
+        mediaId: "media-duplicate-456",
+        permalink: "https://www.instagram.com/p/duplicate-publish/",
+      }),
+    });
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    await writeFile(path.join(outputDir, "feed.png"), "png-bytes", "utf8");
+    await writeFile(
+      path.join(outputDir, "instagram-publish-request.json"),
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_file: path.posix.join(rockyTaskOutputDirectory(created.id), "feed.png"),
+          caption: "중복 승인 테스트",
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+    const initialSendTurnCount = sendTurnCalls.length;
+
+    const firstPublish = server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: { message: "게시해줘" },
+    });
+    await uploadStarted;
+
+    const duplicateResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: { message: "publish" },
+    });
+    assert.equal(duplicateResponse.statusCode, 201);
+    const duplicateChat = duplicateResponse.json<RockyChatRecord>();
+    assert.match(duplicateChat.messages.at(-1)?.text ?? "", /진행 중/u);
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 0);
+    assert.equal(sendTurnCalls.length, initialSendTurnCount);
+
+    assert.ok(releaseUpload);
+    releaseUpload();
+    const firstResponse = await firstPublish;
+    assert.equal(firstResponse.statusCode, 201);
+    const firstChat = firstResponse.json<RockyChatRecord>();
+    assert.match(firstChat.messages.at(-1)?.text ?? "", /발행이 완료/u);
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 4);
+
+    const repeatResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/messages`,
+      payload: { message: "게시해줘" },
+    });
+    assert.equal(repeatResponse.statusCode, 201);
+    const repeatChat = repeatResponse.json<RockyChatRecord>();
+    assert.match(repeatChat.messages.at(-1)?.text ?? "", /발행이 완료/u);
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 4);
+    assert.equal(sendTurnCalls.length, initialSendTurnCount);
+    assert.equal(repeatChat.dispatches.length, created.dispatches.length);
+    assert.doesNotMatch(
+      JSON.stringify(repeatChat.messages),
+      /tmpfiles[.]org|graph[.]instagram[.]com|instagram[.]media[.]|creation-duplicate-123|media-duplicate-456|instagram-publish-request[.]json/u
+    );
+  } finally {
+    releaseUpload?.();
+    await server.close();
+  }
+});
+
 test("rocky chat injects Facebook profile capability for account checks", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   await mkdir(path.join(stateRoot, "connectors", "facebook"), { recursive: true });

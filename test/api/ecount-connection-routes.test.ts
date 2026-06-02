@@ -546,6 +546,141 @@ test("EcountConnectionService reads, offsets, and normalizes ECOUNT product rows
   assert.equal(JSON.stringify(result).includes("session-secret"), false);
 });
 
+test("EcountConnectionService queries all scraped read-only ECOUNT manual datasets", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const service = new EcountConnectionService({
+    now: () => "2026-05-03T00:00:00.000Z",
+    fetchImpl: async (url, init) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+      if (String(url).includes("/OAPILogin")) {
+        return new Response(
+          JSON.stringify({ Data: { Code: "00", Datas: { SESSION_ID: "session-secret" } } }),
+          { status: 200 }
+        );
+      }
+      if (String(url).includes("/InventoryBasic/ViewBasicProduct")) {
+        return new Response(
+          JSON.stringify({
+            Data: {
+              Code: "00",
+              Result: JSON.stringify([
+                {
+                  PROD_CD: "P-001",
+                  PROD_DES: "테스트 품목",
+                  SIZE_DES: "BOX",
+                  UNIT: "EA",
+                },
+              ]),
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          Data: {
+            Code: "00",
+            Result: [
+              {
+                PROD_CD: "P-001",
+                PROD_DES: "테스트 품목",
+                WH_CD: "100",
+                WH_DES: "본사창고",
+                BAL_QTY: "7",
+              },
+            ],
+          },
+        }),
+        { status: 200 }
+      );
+    },
+  });
+  const input = {
+    accountLabel: "본사 이카운트",
+    comCode: "123456",
+    userId: "api-user",
+    apiCertKey: "test-secret-key",
+    zone: "CC",
+  };
+
+  const missingRequired = await service.queryDataset(input, {
+    dataset: "inventoryBalance",
+    filters: {
+      baseDate: "2026-05-01",
+    },
+  });
+  assert.equal(missingRequired.status, "failed");
+  assert.equal(missingRequired.diagnostics?.stage, "capability");
+
+  const product = await service.queryDataset(input, {
+    dataset: "productDetail",
+    filters: {
+      productCode: "P-001",
+    },
+  });
+  const inventoryBalance = await service.queryDataset(input, {
+    dataset: "inventoryBalance",
+    filters: {
+      baseDate: "2026-05-01",
+      productCode: "P-001",
+    },
+  });
+  const warehouseInventory = await service.queryDataset(input, {
+    dataset: "warehouseInventory",
+    filters: {
+      baseDate: "2026-05-01",
+      warehouseCode: "100",
+    },
+  });
+  const warehouseInventoryBalance = await service.queryDataset(input, {
+    dataset: "warehouseInventoryBalance",
+    filters: {
+      baseDate: "2026-05-01",
+      productCode: "P-001",
+      warehouseCode: "100",
+    },
+  });
+
+  assert.equal(product.api, "InventoryBasic/ViewBasicProduct");
+  assert.equal(product.records[0]?.code, "P-001");
+  assert.equal(inventoryBalance.api, "InventoryBalance/ViewInventoryBalanceStatus");
+  assert.equal(inventoryBalance.records[0]?.balanceQuantity, 7);
+  assert.equal(warehouseInventory.api, "InventoryBalance/GetListInventoryBalanceStatusByLocation");
+  assert.equal(warehouseInventory.records[0]?.warehouseCode, "100");
+  assert.equal(
+    warehouseInventoryBalance.api,
+    "InventoryBalance/ViewInventoryBalanceStatusByLocation"
+  );
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    [
+      "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
+      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBasic/ViewBasicProduct?SESSION_ID=session-secret",
+      "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
+      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBalance/ViewInventoryBalanceStatus?SESSION_ID=session-secret",
+      "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
+      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBalance/GetListInventoryBalanceStatusByLocation?SESSION_ID=session-secret",
+      "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
+      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBalance/ViewInventoryBalanceStatusByLocation?SESSION_ID=session-secret",
+    ]
+  );
+  assert.deepEqual(calls[1]?.body, {
+    SESSION_ID: "session-secret",
+    PROD_CD: "P-001",
+  });
+  assert.deepEqual(calls[3]?.body, {
+    SESSION_ID: "session-secret",
+    BASE_DATE: "20260501",
+    PROD_CD: "P-001",
+    WH_CD: "",
+  });
+  assert.equal(JSON.stringify(product).includes("test-secret-key"), false);
+  assert.equal(JSON.stringify(product).includes("session-secret"), false);
+});
+
 test("EcountConnectionService queries ECOUNT inventory balance datasets", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const service = new EcountConnectionService({
@@ -599,7 +734,7 @@ test("EcountConnectionService queries ECOUNT inventory balance datasets", async 
       [
         "inventory",
         "supported",
-        "InventoryBalance/GetListInventoryBalanceStatusByLocation",
+        "InventoryBalance/GetListInventoryBalanceStatus",
       ],
       [
         "warehouseInventory",
@@ -630,59 +765,34 @@ test("EcountConnectionService queries ECOUNT inventory balance datasets", async 
 
   assert.equal(result.ok, true);
   assert.equal(result.dataset, "inventory");
-  assert.equal(result.api, "InventoryBalance/GetListInventoryBalanceStatusByLocation");
-  assert.equal(result.count, 1);
-  assert.equal(result.returnedCount, 1);
+  assert.equal(result.api, "InventoryBalance/GetListInventoryBalanceStatus");
+  assert.equal(result.count, 2);
+  assert.equal(result.returnedCount, 2);
   assert.deepEqual(result.records[0], {
     productCode: "P-001",
     productName: "테스트 품목",
-    balanceQuantity: 10,
-    warehouses: [
-      {
-        productCode: "P-001",
-        productName: "테스트 품목",
-        warehouseCode: "100",
-        warehouseName: "본사창고",
-        balanceQuantity: 7,
-        raw: {
-          PROD_CD: "P-001",
-          PROD_DES: "테스트 품목",
-          WH_CD: "100",
-          WH_DES: "본사창고",
-          BAL_QTY: "7",
-        },
-      },
-      {
-        productCode: "P-001",
-        productName: "테스트 품목",
-        warehouseCode: "200",
-        warehouseName: "지점창고",
-        balanceQuantity: 3,
-        raw: {
-          PROD_CD: "P-001",
-          PROD_DES: "테스트 품목",
-          WH_CD: "200",
-          WH_DES: "지점창고",
-          BAL_QTY: "3",
-        },
-      },
-    ],
+    productSpec: null,
+    warehouseCode: "100",
+    warehouseName: "본사창고",
+    balanceQuantity: 7,
+    raw: {
+      PROD_CD: "P-001",
+      PROD_DES: "테스트 품목",
+      WH_CD: "100",
+      WH_DES: "본사창고",
+      BAL_QTY: "7",
+    },
   });
   assert.deepEqual(
     calls.map((call) => call.url),
     [
       "https://sboapiCC.ecount.com/OAPI/V2/OAPILogin",
-      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBalance/GetListInventoryBalanceStatusByLocation?SESSION_ID=session-secret",
+      "https://sboapiCC.ecount.com/OAPI/V2/InventoryBalance/GetListInventoryBalanceStatus?SESSION_ID=session-secret",
     ]
   );
   assert.deepEqual(calls[1]?.body, {
     SESSION_ID: "session-secret",
     BASE_DATE: "20260501",
-    COM_CODE: "123456",
-    USER_ID: "api-user",
-    ZONE: "CC",
-    API_CERT_KEY: "test-secret-key",
-    LAN_TYPE: "ko-KR",
     PROD_CD: "P-001",
     WH_CD: "100",
   });
@@ -768,13 +878,22 @@ test("EcountConnectionService queries ECOUNT purchase order datasets", async () 
   assert.deepEqual(result.records[0], {
     orderNo: "PO-002",
     orderDate: "20260502",
+    warehouseCode: null,
+    warehouseName: null,
+    projectCode: null,
+    projectName: null,
+    employeeCode: null,
+    managerName: null,
     customerCode: "C-001",
     customerName: "테스트 거래처",
     productCode: "P-002",
     productName: "두 번째 품목",
+    dueDate: null,
     quantity: 3,
     supplyAmount: null,
+    vatAmount: null,
     totalAmount: 2400,
+    foreignAmount: null,
     status: "open",
     raw: {
       IO_NO: "PO-002",
@@ -797,15 +916,14 @@ test("EcountConnectionService queries ECOUNT purchase order datasets", async () 
   );
   assert.deepEqual(calls[1]?.body, {
     SESSION_ID: "session-secret",
-    START_DATE: "20260501",
-    END_DATE: "20260531",
-    COM_CODE: "123456",
-    USER_ID: "api-user",
-    ZONE: "CC",
-    API_CERT_KEY: "test-secret-key",
-    LAN_TYPE: "ko-KR",
-    CUST: "C-001",
     PROD_CD: "P-002",
+    CUST_CD: "C-001",
+    ListParam: {
+      PAGE_CURRENT: 1,
+      PAGE_SIZE: 1,
+      BASE_DATE_FROM: "20260501",
+      BASE_DATE_TO: "20260531",
+    },
   });
   assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
   assert.equal(JSON.stringify(result).includes("session-secret"), false);

@@ -315,11 +315,14 @@ const DEFAULT_ECOUNT_SKILL_DATASETS: EcountDatasetId[] = [
 ];
 
 const ECOUNT_DATASET_LABELS: Record<EcountDatasetId, string> = {
+  product: "품목(단건)",
   products: "품목",
+  inventoryBalance: "재고현황(단건)",
   inventory: "재고현황",
+  warehouseInventoryBalance: "창고별 재고현황(단건)",
+  warehouseInventory: "창고별 재고",
   customers: "거래처",
   sales: "판매",
-  warehouseInventory: "창고별 재고",
   orders: "주문서",
   purchases: "구매",
   accounting: "매출·매입",

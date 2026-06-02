@@ -835,7 +835,7 @@ interface InstagramPublishReadyRequest {
 }
 
 interface InstagramPublishExecutionResult {
-  status: "published" | "publish_failed";
+  status: "published" | "publish_failed" | "verification_required" | "already_published";
   requestPath: string;
   checkedAt: string;
   message: string;
@@ -1124,13 +1124,18 @@ function isInstagramPublishRequestApproved(
 function isTerminalInstagramPublishRequest(
   payload: Record<string, unknown>
 ): boolean {
-  const status = readRecordString(payload, ["status"])?.toLowerCase() ?? "";
+  const status =
+    readRecordString(payload, ["status"])
+      ?.toLowerCase()
+      .replace(/[\s-]+/gu, "_") ?? "";
   return (
     status === "published" ||
-    status === "publish_failed" ||
+    status === "already_published" ||
+    status === "verification_required" ||
     status === "publishing" ||
     status === "publish_in_progress" ||
-    Boolean(readRecordString(payload, ["media_id", "mediaId"]))
+    Boolean(readRecordString(payload, ["media_id", "mediaId"])) ||
+    Boolean(readRecordString(payload, ["permalink", "published_url", "publishedUrl"]))
   );
 }
 
@@ -1247,6 +1252,34 @@ function readInstagramDraftTargetAccount(
   ]);
 }
 
+function canRetryInstagramPublishApproval(
+  result: RockyInstagramPublishApprovalRecord
+): boolean {
+  return result.status === "publish_failed";
+}
+
+function readInstagramDraftKnownPublication(
+  payload: Record<string, unknown>
+): { mediaId: string | null; permalink: string | null; publishedAt: string | null } | null {
+  const status =
+    readRecordString(payload, ["status"])
+      ?.toLowerCase()
+      .replace(/[\s-]+/gu, "_") ?? "";
+  const mediaId = readRecordString(payload, ["media_id", "mediaId"]);
+  const permalink = safeInstagramPermalink(
+    readRecordString(payload, ["permalink", "published_url", "publishedUrl"])
+  );
+  const publishedAt = readRecordString(payload, [
+    "published_at",
+    "publishedAt",
+    "timestamp",
+  ]);
+  if (!mediaId && !permalink && status !== "published" && status !== "already_published") {
+    return null;
+  }
+  return { mediaId, permalink, publishedAt };
+}
+
 function readInstagramDraftMediaReference(
   payload: Record<string, unknown>
 ):
@@ -1317,6 +1350,14 @@ function sanitizeInstagramPublishUserText(text: string): string {
     )
     .replace(/https:\/\/(?:graph[.]facebook|graph[.]instagram)[.]com\/[^\s)"'<>`]+/giu, "Instagram API")
     .replace(/https:\/\/tmpfiles[.]org\/[^\s)"'<>`]+/giu, "임시 미디어 링크")
+    .replace(
+      /([?&](?:access_token|refresh_token|id_token|auth_token|client_secret|session_id)=)[^&\s]+/giu,
+      "$1[redacted]"
+    )
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/giu, "인증 정보는 숨겼습니다")
+    .replace(/\b(?:access_token|refresh_token|id_token|auth_token|client_secret|sessionid|session_id|cookie)\b\s*[:=]\s*[^\s,;\])}]+/giu, "인증 정보는 숨겼습니다")
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s"'<>]*(?:agent-workspaces|runtime-home|browser-profile|connectors|outputs)[^\s"'<>]*/giu, "작업공간 경로")
+    .replace(/(?:^|\s)(?:[.][\\/])?outputs[\\/][^\s"'<>]+/giu, " 작업공간 파일")
     .replace(
       /\b(?:creation[_ -]?id|creationId|containerId|media[_ -]?id|mediaId)\b\s*[:=]\s*[^\s,;\])}]+/giu,
       "발행 식별자는 숨겼습니다"
@@ -1473,17 +1514,45 @@ function instagramPublishFailure(input: {
   message: string;
   creationId?: string | null;
   mediaId?: string | null;
+  verificationRequired?: boolean;
 }): InstagramPublishExecutionResult {
+  const status = input.verificationRequired
+    ? "verification_required"
+    : "publish_failed";
   return {
-    status: "publish_failed",
+    status,
     requestPath: input.requestPath,
     checkedAt: input.checkedAt,
-    message: input.message,
+    message: input.verificationRequired
+      ? formatInstagramPublishVerificationRequiredMessage(input.message)
+      : formatInstagramPublishRetryableFailureMessage(input.message),
     creationId: input.creationId ?? null,
     mediaId: input.mediaId ?? null,
     permalink: null,
     publishedAt: null,
   };
+}
+
+function formatInstagramPublishRetryableFailureMessage(message: string): string {
+  const detail = sanitizeInstagramPublishPublicMessage(message);
+  return [
+    "Instagram 발행을 시작하기 전에 실패했습니다.",
+    detail,
+    "문제를 수정한 뒤 다시 승인하면 안전하게 재시도할 수 있습니다.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function formatInstagramPublishVerificationRequiredMessage(message: string): string {
+  const detail = sanitizeInstagramPublishPublicMessage(message);
+  return [
+    "Instagram 발행 요청 이후 상태 확인이 필요합니다.",
+    detail,
+    "새 발행으로 재시도하지 말고 Instagram 게시 여부를 먼저 확인해 주세요.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function formatUnexpectedInstagramPublishError(error: unknown): string {
@@ -1544,7 +1613,15 @@ function appendInstagramMediaPublishResult(input: {
     "---",
     "",
     "Instagram publish result:",
-    `- Status: ${input.result.status === "published" ? "published" : "failed"}`,
+    `- Status: ${
+      input.result.status === "published"
+        ? "published"
+        : input.result.status === "verification_required"
+          ? "verification required"
+          : input.result.status === "already_published"
+            ? "already published"
+            : "failed"
+    }`,
     `- Request: ${input.result.requestPath}`,
     input.result.creationId ? `- Creation ID: ${input.result.creationId}` : null,
     input.result.mediaId ? `- Media ID: ${input.result.mediaId}` : null,
@@ -1582,7 +1659,7 @@ function mergeInstagramPublishResult(
   if (result.publishedAt) {
     next.published_at = result.publishedAt;
   }
-  if (result.status === "publish_failed") {
+  if (result.status === "publish_failed" || result.status === "verification_required") {
     next.publish_error_message = result.message;
   }
 
@@ -1659,6 +1736,44 @@ function safeInstagramPermalink(value: string | null): string | null {
   }
 }
 
+function instagramApprovalCtaForBlockerCode(code: string): string | null {
+  if (code === "professional_account_required") {
+    return "Instagram 계정을 Business 또는 Creator 프로페셔널 계정으로 전환한 뒤 다시 연결해 주세요.";
+  }
+  if (code === "access_token_missing" || code === "token_expired") {
+    return "Instagram을 다시 연결해 Graph API 토큰을 갱신해 주세요.";
+  }
+  if (code === "permission_missing" || code === "app_review_required") {
+    return "Instagram 발행에 필요한 Graph API 권한을 승인한 뒤 다시 연결해 주세요.";
+  }
+  if (code === "app_access_required") {
+    return "Meta 앱 테스트 사용자 또는 앱 역할 승인을 완료한 뒤 Instagram을 다시 연결해 주세요.";
+  }
+  if (code === "instagram_business_account_id_missing") {
+    return "Instagram Business Account ID를 확인하거나 Graph API 연결을 다시 진행해 주세요.";
+  }
+  return null;
+}
+
+function instagramApprovalCtaFromBlockers(
+  blockers: Array<{ code?: unknown; nextAction?: unknown }> | undefined
+): string | null {
+  for (const blocker of blockers ?? []) {
+    if (typeof blocker.code === "string") {
+      const mapped = instagramApprovalCtaForBlockerCode(blocker.code);
+      if (mapped) {
+        return mapped;
+      }
+    }
+  }
+  for (const blocker of blockers ?? []) {
+    if (typeof blocker.nextAction === "string" && blocker.nextAction.trim()) {
+      return sanitizeInstagramPublishPublicMessage(blocker.nextAction);
+    }
+  }
+  return null;
+}
+
 function formatInstagramPublishApprovalChatMessage(
   result: RockyInstagramPublishApprovalRecord
 ): string {
@@ -1678,6 +1793,17 @@ function formatInstagramPublishApprovalChatMessage(
       .join(" ");
   }
 
+  if (result.status === "already_published") {
+    return [
+      `Instagram ${publishType} 초안은 이미 발행된 것으로 확인되어 새 발행을 만들지 않습니다.`,
+      targetText.trim(),
+      permalink ? `결과 링크: ${permalink}` : null,
+      publicMessage ?? "Instagram에서 게시 상태를 확인해 주세요.",
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join(" ");
+  }
+
   if (result.status === "publishing") {
     return [
       `Instagram ${publishType} 발행 승인을 기록했고 지금 진행 중입니다.`,
@@ -1690,6 +1816,16 @@ function formatInstagramPublishApprovalChatMessage(
   if (result.status === "blocked") {
     return [
       `Instagram ${publishType} 발행을 시작하지 못했습니다.`,
+      targetText.trim(),
+      publicMessage,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join(" ");
+  }
+
+  if (result.status === "verification_required") {
+    return [
+      `Instagram ${publishType} 발행 상태 확인이 필요합니다.`,
       targetText.trim(),
       publicMessage,
     ]
@@ -1803,7 +1939,11 @@ function mergeInstagramApprovalPublishResult(
   if (result.publishedAt) {
     next.published_at = result.publishedAt;
   }
-  if (result.status === "publish_failed" || result.status === "blocked") {
+  if (
+    result.status === "publish_failed" ||
+    result.status === "verification_required" ||
+    result.status === "blocked"
+  ) {
     next.publish_error_message = result.message;
   }
 
@@ -2265,6 +2405,16 @@ export class RockyChatService {
       chatId,
     });
     if (!draft) {
+      if (existingState && !canRetryInstagramPublishApproval(existingState.result)) {
+        return existingState.result;
+      }
+      const knownPublished = await this.findKnownPublishedInstagramPublishApproval({
+        agent,
+        chatId,
+      });
+      if (knownPublished) {
+        return knownPublished;
+      }
       if (existingState) {
         return existingState.result;
       }
@@ -2285,7 +2435,10 @@ export class RockyChatService {
     if (inFlight) {
       return inFlight;
     }
-    if (existingState?.draftFingerprint === draftFingerprint) {
+    if (
+      existingState?.draftFingerprint === draftFingerprint &&
+      !canRetryInstagramPublishApproval(existingState.result)
+    ) {
       return existingState.result;
     }
 
@@ -2383,7 +2536,7 @@ export class RockyChatService {
         targetAccountLabel,
         permalink: null,
         publishedAt: null,
-        message: sanitizeInstagramPublishPublicMessage(
+        message: formatInstagramPublishRetryableFailureMessage(
           formatUnexpectedInstagramPublishError(error)
         ),
         approvedAt,
@@ -2708,6 +2861,7 @@ export class RockyChatService {
 
     const existingState = await this.readInstagramPublishApprovalState(input.chatId);
     let activeDraft = false;
+    let knownPublished: RockyInstagramPublishApprovalRecord | null = null;
     if (input.agent) {
       activeDraft = Boolean(
         await this.findActiveInstagramPublishDraft({
@@ -2715,9 +2869,15 @@ export class RockyChatService {
           chatId: input.chatId,
         })
       );
+      if (!activeDraft && !existingState) {
+        knownPublished = await this.findKnownPublishedInstagramPublishApproval({
+          agent: input.agent,
+          chatId: input.chatId,
+        });
+      }
     }
 
-    if (!activeDraft && !existingState) {
+    if (!activeDraft && !existingState && !knownPublished) {
       return null;
     }
 
@@ -2727,8 +2887,8 @@ export class RockyChatService {
             await this.approveInstagramPublishDraft(input.chatId)
           )
         : formatInstagramPublishStatusChatMessage({
-            approval: existingState?.result ?? null,
-            preview: existingState
+            approval: existingState?.result ?? knownPublished,
+            preview: existingState || knownPublished
               ? null
               : await this.findChatInstagramPublishDraftPreview(input.existing),
           });
@@ -3430,10 +3590,20 @@ export class RockyChatService {
           checkedAt: statusResult.checkedAt,
           message: `Instagram media container status check failed: ${statusResult.message}`,
           creationId: input.creationId,
+          verificationRequired: true,
         });
       }
 
       const status = readInstagramMediaContainerStatus(statusResult);
+      if (!status) {
+        return instagramPublishFailure({
+          requestPath: input.requestPath,
+          checkedAt: statusResult.checkedAt,
+          message: "Instagram media container status response did not include a status.",
+          creationId: input.creationId,
+          verificationRequired: true,
+        });
+      }
       if (status === "FINISHED") {
         return null;
       }
@@ -3457,6 +3627,7 @@ export class RockyChatService {
       checkedAt: lastCheckedAt,
       message: `Instagram media container did not finish processing before timeout. Last status: ${lastStatus}.`,
       creationId: input.creationId,
+      verificationRequired: true,
     });
   }
 
@@ -3671,7 +3842,10 @@ export class RockyChatService {
       return "Instagram 연결 상태를 확인하지 못했습니다. 연동 설정을 확인한 뒤 다시 시도해 주세요.";
     }
     if (!state || state.status !== "connected") {
-      return "Instagram Graph API 연결이 필요합니다. 연동 설정에서 Instagram 계정을 연결해 주세요.";
+      const nextAction = instagramApprovalCtaFromBlockers(state?.readiness.blockers);
+      return nextAction
+        ? `Instagram Graph API 연결이 필요합니다. ${nextAction}`
+        : "Instagram Graph API 연결이 필요합니다. 연동 설정에서 Instagram 계정을 연결해 주세요.";
     }
 
     const requiredCapabilities = [
@@ -3697,8 +3871,9 @@ export class RockyChatService {
           return "Instagram 발행 기능은 아직 사용할 수 없습니다. 현재는 초안 미리보기만 가능합니다.";
         }
         const nextAction =
-          capability.setupSteps?.find(Boolean) ??
-          capability.blockers?.map((blocker) => blocker.nextAction).find(Boolean) ??
+          instagramApprovalCtaFromBlockers(capability.blockers) ??
+          instagramApprovalCtaFromBlockers(state.readiness.blockers) ??
+          capability.setupSteps?.map(sanitizeInstagramPublishPublicMessage).find(Boolean) ??
           "Instagram 계정과 발행 권한을 확인해 주세요.";
         return `Instagram 발행 준비가 필요합니다. ${nextAction}`;
       }
@@ -3784,114 +3959,135 @@ export class RockyChatService {
       });
     }
 
-    const args = buildInstagramMediaPrepareArgs({
-      payload: input.draft.payload,
-      caption: input.caption,
-    });
-    await this.attachTemporaryHostedInstagramMediaUrl({
-      agent: input.agent,
-      payload: input.draft.payload,
-      args,
-    });
-
-    const prepareResult = await this.connectorService.executeCapability("instagram", {
-      capabilityId: "instagram.media.prepare",
-      args,
-    });
-    if (!prepareResult.ok) {
-      return instagramPublishFailure({
-        requestPath: input.draft.workspacePath,
-        checkedAt: prepareResult.checkedAt,
-        message: prepareResult.message,
+    let verificationRequiredOnError = false;
+    try {
+      const args = buildInstagramMediaPrepareArgs({
+        payload: input.draft.payload,
+        caption: input.caption,
       });
-    }
-
-    const creationId = readCapabilityDataString(prepareResult, [
-      "id",
-      "creation_id",
-      "creationId",
-    ]);
-    if (!creationId) {
-      return instagramPublishFailure({
-        requestPath: input.draft.workspacePath,
-        checkedAt: prepareResult.checkedAt,
-        message:
-          "Instagram media.prepare completed without returning a creation_id.",
+      await this.attachTemporaryHostedInstagramMediaUrl({
+        agent: input.agent,
+        payload: input.draft.payload,
+        args,
       });
-    }
 
-    const containerFailure = await this.waitForInstagramMediaContainerReady({
-      creationId,
-      requestPath: input.draft.workspacePath,
-    });
-    if (containerFailure) {
-      return containerFailure;
-    }
-
-    const publishResult = await this.connectorService.executeCapability("instagram", {
-      capabilityId: "instagram.media.publish",
-      args: {
-        approved: true,
-        creationId,
-      },
-    });
-    if (!publishResult.ok) {
-      return instagramPublishFailure({
-        requestPath: input.draft.workspacePath,
-        checkedAt: publishResult.checkedAt,
-        message: publishResult.message,
-        creationId,
+      const prepareResult = await this.connectorService.executeCapability("instagram", {
+        capabilityId: "instagram.media.prepare",
+        args,
       });
-    }
-
-    const mediaId = readCapabilityDataString(publishResult, [
-      "id",
-      "media_id",
-      "mediaId",
-    ]);
-    if (!mediaId) {
-      return instagramPublishFailure({
-        requestPath: input.draft.workspacePath,
-        checkedAt: publishResult.checkedAt,
-        message:
-          "Instagram media.publish completed without returning a media_id.",
-        creationId,
-      });
-    }
-
-    let permalink: string | null = null;
-    let publishedAt: string | null = null;
-    let checkedAt = publishResult.checkedAt;
-    let message = publishResult.message;
-    const statusResult = await this.connectorService.executeCapability(
-      "instagram",
-      {
-        capabilityId: "instagram.media.status.read",
-        args: { mediaId },
+      if (!prepareResult.ok) {
+        return instagramPublishFailure({
+          requestPath: input.draft.workspacePath,
+          checkedAt: prepareResult.checkedAt,
+          message: prepareResult.message,
+        });
       }
-    );
-    checkedAt = statusResult.checkedAt;
-    if (statusResult.ok) {
-      permalink = readCapabilityDataString(statusResult, ["permalink"]);
-      publishedAt = readCapabilityDataString(statusResult, [
-        "timestamp",
-        "published_at",
-        "publishedAt",
-      ]);
-    } else {
-      message = `${publishResult.message} Status verification failed: ${statusResult.message}`;
-    }
 
-    return {
-      status: "published",
-      requestPath: input.draft.workspacePath,
-      checkedAt,
-      message,
-      creationId,
-      mediaId,
-      permalink,
-      publishedAt,
-    };
+      const creationId = readCapabilityDataString(prepareResult, [
+        "id",
+        "creation_id",
+        "creationId",
+      ]);
+      if (!creationId) {
+        return instagramPublishFailure({
+          requestPath: input.draft.workspacePath,
+          checkedAt: prepareResult.checkedAt,
+          message:
+            "Instagram media.prepare completed without returning a creation_id.",
+          verificationRequired: true,
+        });
+      }
+
+      verificationRequiredOnError = true;
+      const containerFailure = await this.waitForInstagramMediaContainerReady({
+        creationId,
+        requestPath: input.draft.workspacePath,
+      });
+      if (containerFailure) {
+        return containerFailure;
+      }
+
+      const publishResult = await this.connectorService.executeCapability("instagram", {
+        capabilityId: "instagram.media.publish",
+        args: {
+          approved: true,
+          creationId,
+        },
+      });
+      if (!publishResult.ok) {
+        return instagramPublishFailure({
+          requestPath: input.draft.workspacePath,
+          checkedAt: publishResult.checkedAt,
+          message: publishResult.message,
+          creationId,
+          verificationRequired: true,
+        });
+      }
+
+      const mediaId = readCapabilityDataString(publishResult, [
+        "id",
+        "media_id",
+        "mediaId",
+      ]);
+      if (!mediaId) {
+        return instagramPublishFailure({
+          requestPath: input.draft.workspacePath,
+          checkedAt: publishResult.checkedAt,
+          message:
+            "Instagram media.publish completed without returning a media_id.",
+          creationId,
+          verificationRequired: true,
+        });
+      }
+
+      let permalink: string | null = null;
+      let publishedAt: string | null = null;
+      let checkedAt = publishResult.checkedAt;
+      let message = publishResult.message;
+      const statusResult = await this.connectorService.executeCapability(
+        "instagram",
+        {
+          capabilityId: "instagram.media.status.read",
+          args: { mediaId },
+        }
+      );
+      checkedAt = statusResult.checkedAt;
+      if (statusResult.ok) {
+        permalink = readCapabilityDataString(statusResult, ["permalink"]);
+        publishedAt = readCapabilityDataString(statusResult, [
+          "timestamp",
+          "published_at",
+          "publishedAt",
+        ]);
+      } else {
+        return instagramPublishFailure({
+          requestPath: input.draft.workspacePath,
+          checkedAt: statusResult.checkedAt,
+          message: `${publishResult.message} Status verification failed: ${statusResult.message}`,
+          creationId,
+          mediaId,
+          verificationRequired: true,
+        });
+      }
+
+      return {
+        status: "published",
+        requestPath: input.draft.workspacePath,
+        checkedAt,
+        message,
+        creationId,
+        mediaId,
+        permalink,
+        publishedAt,
+      };
+    } catch (error) {
+      return instagramPublishFailure({
+        requestPath: input.draft.workspacePath,
+        checkedAt: this.now(),
+        message: formatUnexpectedInstagramPublishError(error),
+        verificationRequired: verificationRequiredOnError,
+      });
+    }
   }
 
   private async attachTemporaryHostedInstagramMediaUrl(input: {
@@ -3963,6 +4159,8 @@ export class RockyChatService {
         (result.status !== "publishing" &&
           result.status !== "published" &&
           result.status !== "publish_failed" &&
+          result.status !== "verification_required" &&
+          result.status !== "already_published" &&
           result.status !== "blocked")
       ) {
         return null;
@@ -4157,6 +4355,96 @@ export class RockyChatService {
     );
 
     return candidates[0] ?? null;
+  }
+
+  private async findKnownPublishedInstagramPublishApproval(input: {
+    agent: AgentRecord;
+    chatId: string;
+  }): Promise<RockyInstagramPublishApprovalRecord | null> {
+    const outputRoot = rockyTaskOutputDirectory(input.chatId);
+    const absoluteRoot = this.workspaceAbsolutePath(input.agent.workspaceRoot, outputRoot);
+    if (!absoluteRoot) {
+      return null;
+    }
+
+    const candidates: Array<{
+      payload: Record<string, unknown>;
+      updatedAt: string;
+      mtimeMs: number;
+    }> = [];
+
+    const visit = async (absoluteDirectory: string, relativeDirectory: string) => {
+      let entries;
+      try {
+        entries = await readdir(absoluteDirectory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        const workspacePath = path.posix.join(relativeDirectory, entry.name);
+        const absolutePath = path.join(absoluteDirectory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath, workspacePath);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".json")) {
+          continue;
+        }
+
+        let payload: Record<string, unknown>;
+        let metadata: Awaited<ReturnType<typeof stat>>;
+        try {
+          const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            continue;
+          }
+          payload = parsed as Record<string, unknown>;
+          metadata = await stat(absolutePath);
+        } catch {
+          continue;
+        }
+
+        if (
+          !isInstagramPublishDraftPayload({ payload, workspacePath }) ||
+          !readInstagramDraftKnownPublication(payload)
+        ) {
+          continue;
+        }
+        candidates.push({
+          payload,
+          updatedAt: metadata.mtime.toISOString(),
+          mtimeMs: metadata.mtimeMs,
+        });
+      }
+    };
+
+    await visit(absoluteRoot, outputRoot);
+    candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
+    const latest = candidates[0] ?? null;
+    if (!latest) {
+      return null;
+    }
+
+    const known = readInstagramDraftKnownPublication(latest.payload);
+    if (!known) {
+      return null;
+    }
+    const timestamp = this.now();
+    return {
+      provider: "instagram",
+      status: "already_published",
+      publishType: readInstagramDraftPublishType(latest.payload),
+      targetAccountLabel:
+        readInstagramDraftTargetAccount(latest.payload) ?? "Instagram 계정",
+      permalink: known.permalink,
+      publishedAt: known.publishedAt,
+      message:
+        "이 Instagram 초안은 이미 게시물 식별자 또는 링크가 있어 새 발행으로 재시도하지 않습니다. Instagram에서 게시 상태를 확인해 주세요.",
+      approvedAt: latest.updatedAt,
+      updatedAt: timestamp,
+      completedAt: timestamp,
+    };
   }
 
   private async findChatInstagramPublishDraftPreview(

@@ -3184,6 +3184,329 @@ async function createInstagramAgentChat(input: {
   return { created, outputDir, workspaceRoot };
 }
 
+test("rocky chat approve action lets safe Instagram upload failures retry", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const graphCalls: Array<{ url: string; body: string }> = [];
+  let uploadCalls = 0;
+  const instagramTemporaryMediaHost: TemporaryMediaHostLike = {
+    async upload() {
+      uploadCalls += 1;
+      if (uploadCalls === 1) {
+        throw new Error(
+          "Upload failed at https://tmpfiles.org/api/v1/upload access_token=secret in C:/tmp/agent-workspaces/instagram/workspace/outputs/feed.png",
+        );
+      }
+      return {
+        provider: "tmpfiles",
+        publicUrl: "https://tmpfiles.org/dl/retry/feed.png",
+        uploadedAt: "2026-04-21T00:00:00.000Z",
+      };
+    },
+  };
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      instagramTemporaryMediaHost,
+      connectorFetch: createSuccessfulInstagramGraphFetch(graphCalls, {
+        creationId: "creation-retry-123",
+        mediaId: "media-retry-456",
+        permalink: "https://www.instagram.com/p/retry-publish/",
+      }),
+    },
+  );
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    await writeFile(path.join(outputDir, "feed.png"), "png-bytes", "utf8");
+    await writeFile(
+      path.join(outputDir, "instagram-publish-request.json"),
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_file: path.posix.join(rockyTaskOutputDirectory(created.id), "feed.png"),
+          caption: "재시도 테스트",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const failedResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/instagram/publish/approve`,
+    });
+    assert.equal(failedResponse.statusCode, 200);
+    const failed = failedResponse.json();
+    assert.equal(failed.status, "publish_failed");
+    assert.match(failed.message, /재시도/u);
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 0);
+    assert.doesNotMatch(
+      JSON.stringify(failed),
+      /tmpfiles[.]org|access_token=secret|agent-workspaces|outputs[/\\]feed[.]png/u,
+    );
+
+    const retryResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/instagram/publish/approve`,
+    });
+    assert.equal(retryResponse.statusCode, 200);
+    const retried = retryResponse.json();
+    assert.equal(retried.status, "published");
+    assert.equal(retried.permalink, "https://www.instagram.com/p/retry-publish/");
+    assert.equal(uploadCalls, 2);
+    assert.equal(graphCalls.length, 4);
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat approve action makes ambiguous post-submit results verification-required", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  const graphCalls: Array<{ url: string; body: string }> = [];
+  let uploadCalls = 0;
+  const instagramTemporaryMediaHost: TemporaryMediaHostLike = {
+    async upload() {
+      uploadCalls += 1;
+      return {
+        provider: "tmpfiles",
+        publicUrl: "https://tmpfiles.org/dl/verify/feed.png",
+        uploadedAt: "2026-04-21T00:00:00.000Z",
+      };
+    },
+  };
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      instagramTemporaryMediaHost,
+      connectorFetch: async (url, init) => {
+        const requestUrl =
+          typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
+        const body =
+          init?.body instanceof URLSearchParams
+            ? init.body.toString()
+            : typeof init?.body === "string"
+              ? init.body
+              : "";
+        graphCalls.push({ url: requestUrl, body });
+        const parsedUrl = new URL(requestUrl);
+        if (parsedUrl.pathname.endsWith("/17841400000000001/media")) {
+          return new Response(JSON.stringify({ id: "creation-verify-123" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (parsedUrl.pathname.endsWith("/creation-verify-123")) {
+          return new Response(
+            JSON.stringify({ id: "creation-verify-123", status_code: "FINISHED" }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (parsedUrl.pathname.endsWith("/17841400000000001/media_publish")) {
+          return new Response(JSON.stringify({ status: "ok-but-no-id" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ error: "unexpected graph call" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    await writeFile(path.join(outputDir, "feed.png"), "png-bytes", "utf8");
+    const requestPath = path.join(outputDir, "instagram-publish-request.json");
+    await writeFile(
+      requestPath,
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_file: path.posix.join(rockyTaskOutputDirectory(created.id), "feed.png"),
+          caption: "확인 필요 테스트",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const approvalResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/instagram/publish/approve`,
+    });
+    assert.equal(approvalResponse.statusCode, 200);
+    const approval = approvalResponse.json();
+    assert.equal(approval.status, "verification_required");
+    assert.match(approval.message, /확인/u);
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 3);
+    assert.doesNotMatch(
+      JSON.stringify(approval),
+      /tmpfiles[.]org|graph[.]instagram[.]com|creation-verify-123|media-verify|access_token|raw_response/u,
+    );
+
+    const repeatResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/instagram/publish/approve`,
+    });
+    assert.equal(repeatResponse.statusCode, 200);
+    assert.equal(repeatResponse.json().status, "verification_required");
+    assert.equal(uploadCalls, 1);
+    assert.equal(graphCalls.length, 3);
+
+    const persisted = JSON.parse(await readFile(requestPath, "utf8")) as Record<string, unknown>;
+    assert.equal(persisted.status, "verification_required");
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat approve action does not republish drafts with known Instagram publication", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let uploadCalls = 0;
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      instagramTemporaryMediaHost: {
+        async upload() {
+          uploadCalls += 1;
+          throw new Error("already-published drafts must not upload");
+        },
+      },
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    await writeFile(
+      path.join(outputDir, "instagram-publish-request.json"),
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_url: "https://tmpfiles.org/dl/hidden/feed.png",
+          caption: "이미 발행됨",
+          media_id: "media-known-123",
+          permalink: "https://www.instagram.com/p/already-published/",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const approvalResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/instagram/publish/approve`,
+    });
+    assert.equal(approvalResponse.statusCode, 200);
+    const approval = approvalResponse.json();
+    assert.equal(approval.status, "already_published");
+    assert.equal(approval.permalink, "https://www.instagram.com/p/already-published/");
+    assert.equal(uploadCalls, 0);
+    assert.equal(graphCalls, 0);
+    assert.doesNotMatch(
+      JSON.stringify(approval),
+      /tmpfiles[.]org|media-known-123|graph[.]instagram[.]com|raw_response/u,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("rocky chat approve action maps Instagram readiness blockers to user CTAs", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBaseEnv: {
+        ...INSTAGRAM_GRAPH_ENV,
+        ROCKY_CONNECTOR_INSTAGRAM_ACCOUNT_KIND: "personal",
+      },
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+
+  try {
+    const { created, outputDir } = await createInstagramAgentChat({
+      stateRoot,
+      agents,
+      completedRunSummaries,
+      server,
+    });
+    await writeFile(
+      path.join(outputDir, "instagram-publish-request.json"),
+      `${JSON.stringify(
+        {
+          account: "@rocky.agent.kr",
+          content_type: "instagram_feed",
+          status: "draft_ready_for_preview",
+          image_url: "https://example.com/feed.png",
+          caption: "프로페셔널 계정 필요",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const approvalResponse = await server.inject({
+      method: "POST",
+      url: `/rocky/chats/${created.id}/instagram/publish/approve`,
+    });
+    assert.equal(approvalResponse.statusCode, 200);
+    const approval = approvalResponse.json();
+    assert.equal(approval.status, "blocked");
+    assert.match(approval.message, /Business|Creator|프로페셔널/u);
+    assert.doesNotMatch(JSON.stringify(approval), /blockerCodes|access_token|raw_response/u);
+    assert.equal(graphCalls, 0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("rocky chat routes publish-intent messages to Instagram publish approval", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const graphCalls: Array<{ url: string; body: string }> = [];

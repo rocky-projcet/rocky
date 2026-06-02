@@ -64,6 +64,11 @@ import {
   isTerminalRockyRunEvent,
   rockyRunProgressLabelForEvent,
 } from "@/domains/rocky/lib/rocky-run-progress";
+import {
+  instagramPublishApprovalMessage,
+  instagramPublishApprovalNoticeClassName,
+  instagramPublishApprovalStatusLabel,
+} from "@/domains/rocky/lib/instagram-publish-approval";
 import type {
   AgentSessionArtifactManifestEntry,
   AgentSessionMessage,
@@ -3479,17 +3484,16 @@ function InstagramPublishDraftPreviewCard({
   const MediaIcon = preview.media?.kind === "video" ? Video : ImageIcon;
   const publishTypeLabel = preview.publishType === "reels" ? "릴스" : "피드";
   const statusLabel = preview.status === "ready" ? "미리보기 준비" : "확인 필요";
-  const approvalStatusLabel =
-    approvalResult?.status === "published"
-      ? "발행 완료"
-      : approvalResult?.status === "publishing"
-        ? "발행 중"
-        : approvalResult?.status === "publish_failed"
-          ? "발행 실패"
-          : approvalResult?.status === "blocked"
-            ? "승인 차단"
-            : null;
-  const canApprove = preview.status === "ready" && !approvePending;
+  const approvalStatusLabel = approvalResult
+    ? instagramPublishApprovalStatusLabel(approvalResult.status)
+    : null;
+  const approvalMessage = approvalResult
+    ? instagramPublishApprovalMessage(approvalResult)
+    : null;
+  const canApprove =
+    preview.status === "ready" &&
+    !approvePending &&
+    (!approvalResult || approvalResult.status === "publish_failed");
 
   return (
     <div className="flex w-full justify-start">
@@ -3571,9 +3575,14 @@ function InstagramPublishDraftPreviewCard({
               </div>
             ) : null}
             {approvalResult ? (
-              <div className="rounded-2xl border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+              <div
+                className={cn(
+                  "rounded-2xl border px-3 py-2 text-xs leading-5",
+                  instagramPublishApprovalNoticeClassName(approvalResult.status)
+                )}
+              >
                 <div className="font-semibold">{approvalStatusLabel}</div>
-                <div>{approvalResult.message}</div>
+                <div>{approvalMessage}</div>
                 {approvalResult.permalink ? (
                   <a
                     className="mt-1 inline-flex items-center gap-1 underline-offset-4 hover:underline"
@@ -3597,7 +3606,11 @@ function InstagramPublishDraftPreviewCard({
                 disabled={!canApprove}
                 onClick={onApprove}
               >
-                {approvePending ? "발행 중..." : "승인 후 발행"}
+                {approvePending
+                  ? "발행 중..."
+                  : approvalResult?.status === "publish_failed"
+                    ? "다시 승인"
+                    : "승인 후 발행"}
               </Button>
             </div>
           </div>
@@ -7251,13 +7264,17 @@ function RockyWorkspacePage({ mode }: { mode: RockyWorkspaceMode }) {
     try {
       const result = await approveInstagramPublishMutation.mutateAsync();
       setInstagramPublishApprovalResult(result);
-      if (result.status === "published") {
-        toast.success("Instagram 발행이 완료되었습니다.");
+      if (result.status === "published" || result.status === "already_published") {
+        toast.success(instagramPublishApprovalStatusLabel(result.status));
       } else if (result.status === "publishing") {
         toast.message("Instagram 발행을 진행 중입니다.");
+      } else if (result.status === "verification_required") {
+        toast.message("Instagram 발행 상태 확인이 필요합니다.", {
+          description: instagramPublishApprovalMessage(result),
+        });
       } else {
         toast.error("Instagram 발행을 완료하지 못했습니다.", {
-          description: result.message,
+          description: instagramPublishApprovalMessage(result),
         });
       }
     } catch (error) {

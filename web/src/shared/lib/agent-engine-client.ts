@@ -1242,6 +1242,8 @@ export type RockyInstagramPublishApprovalStatus =
   | "publishing"
   | "published"
   | "publish_failed"
+  | "verification_required"
+  | "already_published"
   | "blocked";
 
 export interface RockyInstagramPublishApprovalRecord {

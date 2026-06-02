@@ -586,7 +586,7 @@ function ErpIntegrationSelectField({
       .then((next) => {
         if (cancelled) return;
         setSettings(next);
-        if (!next.configured && selectedRef.current === "ecount") {
+        if (!(next.configured || next.webLoginConfigured) && selectedRef.current === "ecount") {
           onChangeRef.current(null);
         }
       })
@@ -606,7 +606,7 @@ function ErpIntegrationSelectField({
     };
   }, []);
 
-  const ecountConfigured = settings?.configured === true;
+  const ecountConfigured = settings?.configured === true || settings?.webLoginConfigured === true;
   const ecountLabel = settings?.accountLabel ?? "이카운트 ERP";
   const ecountSelected = selected === "ecount";
 
@@ -649,7 +649,8 @@ function ErpIntegrationSelectField({
                 ? [
                     ecountLabel,
                     settings?.zone ? `ZONE ${settings.zone}` : null,
-                    settings?.checkedAt ? `마지막 확인 ${formatDateTime(settings.checkedAt)}` : null,
+                    settings?.checkedAt ? `OAPI ${formatDateTime(settings.checkedAt)}` : null,
+                    settings?.webLoginConfigured ? "웹 로그인 저장됨" : null,
                   ]
                     .filter(Boolean)
                     .join(" · ")
@@ -676,7 +677,7 @@ function ErpIntegrationSelectField({
       {!ecountConfigured && !loading ? (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-muted/25 px-4 py-3 text-xs leading-5 text-muted-foreground">
           <p className="min-w-0 flex-1">
-            먼저 연동 화면에서 ECOUNT ERP 연결 테스트를 완료한 뒤 스킬에서 선택할 수 있습니다.
+            먼저 연동 화면에서 ECOUNT ERP OAPI 또는 웹 로그인 설정을 완료한 뒤 스킬에서 선택할 수 있습니다.
           </p>
           <Button
             type="button"

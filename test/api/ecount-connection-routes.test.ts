@@ -9,6 +9,7 @@ import {
   EcountConnectionService,
   type EcountConnectionTestInput,
 } from "../../src/integrations/ecount-connection-service.js";
+import { EcountSettingsService } from "../../src/integrations/ecount-settings-service.js";
 
 test("ECOUNT connection route tests credentials without returning secrets", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ecount-route-"));
@@ -145,6 +146,68 @@ test("ECOUNT connection settings are encrypted and reused for tests", async () =
     assert.equal(received[1]?.apiCertKey, "test-secret-key");
     assert.equal(received[1]?.comCode, "123456");
     assert.equal(received[1]?.userId, "api-user");
+  } finally {
+    await server.close();
+  }
+});
+
+test("ECOUNT web login settings are encrypted and kept separate from OAPI credentials", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ecount-web-login-"));
+  const server = createAgentEngineServer({
+    stateRoot,
+    now: () => "2026-05-03T00:00:00.000Z",
+  });
+
+  try {
+    const settingsResponse = await server.inject({
+      method: "PUT",
+      url: "/integrations/ecount/settings",
+      payload: {
+        accountLabel: "본사 이카운트",
+        comCode: "123456",
+        userId: "api-user",
+        apiCertKey: "test-secret-key",
+        zone: "CC",
+      },
+    });
+    assert.equal(settingsResponse.statusCode, 200);
+
+    const webResponse = await server.inject({
+      method: "PUT",
+      url: "/integrations/ecount/web-login",
+      payload: {
+        accountLabel: "본사 이카운트",
+        userId: "web-user",
+        password: "web-password",
+      },
+    });
+    assert.equal(webResponse.statusCode, 200);
+    assert.equal(webResponse.json().configured, true);
+    assert.equal(webResponse.json().webLoginConfigured, true);
+    assert.equal(JSON.stringify(webResponse.json()).includes("web-user"), false);
+    assert.equal(JSON.stringify(webResponse.json()).includes("web-password"), false);
+
+    const storedFile = await readFile(
+      path.join(stateRoot, "integrations", "ecount", "web-login.json"),
+      "utf8"
+    );
+    assert.equal(storedFile.includes("123456"), false);
+    assert.equal(storedFile.includes("web-user"), false);
+    assert.equal(storedFile.includes("web-password"), false);
+
+    const settings = new EcountSettingsService({ stateRoot });
+    const webLogin = await settings.getWebLoginInput();
+    assert.equal(webLogin?.comCode, "123456");
+    assert.equal(webLogin?.userId, "web-user");
+    assert.equal(webLogin?.password, "web-password");
+
+    const deleteResponse = await server.inject({
+      method: "DELETE",
+      url: "/integrations/ecount/web-login",
+    });
+    assert.equal(deleteResponse.statusCode, 200);
+    assert.equal(deleteResponse.json().configured, true);
+    assert.equal(deleteResponse.json().webLoginConfigured, false);
   } finally {
     await server.close();
   }

@@ -126,6 +126,7 @@ export function createAgentEngineServer(
       skillTemplateStore: options.skillTemplateStore,
       ecountSettingsService: options.ecountSettingsService,
       ecountLookupService: options.ecountLookupService,
+      ecountSalesExportService: options.ecountSalesExportService,
       connectorService,
       publicWorkspaceBaseUrl: options.publicWorkspaceBaseUrl,
       instagramTemporaryMediaHost,

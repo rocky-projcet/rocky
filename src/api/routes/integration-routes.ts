@@ -15,6 +15,7 @@ import {
   EcountSettingsService,
   type EcountConnectionSettingsInput,
   type EcountSettingsServiceLike,
+  type EcountWebLoginSettingsInput,
 } from "../../integrations/ecount-settings-service.js";
 
 export interface IntegrationRoutesOptions {
@@ -99,6 +100,21 @@ function parseEcountConnectionSettingsBody(body: unknown): EcountConnectionSetti
     userId: requiredString(input, "userId"),
     apiCertKey: requiredString(input, "apiCertKey"),
     zone: optionalString(input, "zone"),
+    lanType: optionalString(input, "lanType"),
+  };
+}
+
+function parseEcountWebLoginSettingsBody(body: unknown): EcountWebLoginSettingsInput {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("ECOUNT web login settings requests require a JSON object body.");
+  }
+
+  const input = body as Record<string, unknown>;
+  return {
+    accountLabel: optionalString(input, "accountLabel"),
+    comCode: optionalString(input, "comCode"),
+    userId: requiredString(input, "userId"),
+    password: requiredString(input, "password"),
     lanType: optionalString(input, "lanType"),
   };
 }
@@ -374,6 +390,17 @@ export const registerIntegrationRoutes: FastifyPluginAsync<IntegrationRoutesOpti
   server.delete("/integrations/:provider/settings", async (request, reply) => {
     requireIntegrationProvider((request.params as { provider?: string }).provider);
     sendJson(reply, 200, await ecountSettingsService.deleteSettings());
+  });
+
+  server.put("/integrations/:provider/web-login", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
+    const input = parseEcountWebLoginSettingsBody(request.body);
+    sendJson(reply, 200, await ecountSettingsService.saveWebLogin(input));
+  });
+
+  server.delete("/integrations/:provider/web-login", async (request, reply) => {
+    requireIntegrationProvider((request.params as { provider?: string }).provider);
+    sendJson(reply, 200, await ecountSettingsService.deleteWebLogin());
   });
 
   server.post("/integrations/:provider/test", async (request, reply) => {

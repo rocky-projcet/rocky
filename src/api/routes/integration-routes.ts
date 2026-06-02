@@ -164,6 +164,7 @@ function parseNonNegativeOffset(value: unknown): number | null {
 function parseEcountProductsLookupOptions(input: unknown): {
   limit?: number | null;
   offset?: number | null;
+  filters?: Record<string, unknown> | null;
 } {
   if (input === null || input === undefined) {
     return {};
@@ -175,6 +176,7 @@ function parseEcountProductsLookupOptions(input: unknown): {
   return {
     limit: parsePositiveLimit(record.limit),
     offset: parseNonNegativeOffset(record.offset),
+    filters: parseIntegrationFilters(record),
   };
 }
 
@@ -200,10 +202,32 @@ const INTEGRATION_FILTER_KEYS = [
   "date",
   "fromDate",
   "toDate",
+  "startDate",
+  "endDate",
   "warehouseCode",
+  "warehouseCodes",
   "productCode",
+  "productCodes",
+  "productType",
+  "productTypes",
+  "fromProductCode",
+  "toProductCode",
   "customerCode",
+  "customerCodes",
   "period",
+  "page",
+  "pageCurrent",
+  "pageSize",
+  "commaFlag",
+  "zeroFlag",
+  "balanceFlag",
+  "deleteFlag",
+  "safeFlag",
+  "deleteLocationFlag",
+  "includeZero",
+  "includeUnmanagedProducts",
+  "includeInactiveProducts",
+  "includeInactiveWarehouses",
 ];
 
 function parseIntegrationFilters(record: Record<string, unknown>): Record<string, unknown> | null {

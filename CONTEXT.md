@@ -12,6 +12,14 @@ _Avoid_: integration when referring to the account state itself
 A discrete external action or read that Rocky can expose to an agent under connector rules.
 _Avoid_: feature, tool
 
+**ECOUNT ERP connection**:
+A Rocky-managed connector to an ECOUNT ERP company account for business data lookups under Open API prerequisites.
+_Avoid_: ECOUNT login when referring to API readiness
+
+**ECOUNT read capability**:
+An ECOUNT capability that retrieves ERP records for analysis without creating or modifying ERP data.
+_Avoid_: ECOUNT write, ECOUNT sync
+
 **Available capability**:
 A capability whose account, credential, and product conditions are ready for execution under Rocky policy.
 _Avoid_: enabled
@@ -60,6 +68,7 @@ _Avoid_: publish request, JSON request
 
 - A **Connector** exposes zero or more **Capabilities**.
 - A **Capability** is exactly one of **Available capability**, **Blocked capability**, or **Planned capability** when Rocky can classify it.
+- An **ECOUNT ERP connection** exposes zero or more **ECOUNT read capabilities**.
 - An **Instagram Graph API connection** is a kind of **Rocky-managed OAuth connection**.
 - An **Instagram Graph API connection** may have a **Browser assist session**, but the session does not make Graph API capabilities available.
 - A **Tester invitation blocker** prevents an **Instagram Graph API connection** until the user accepts the invitation and retries OAuth.
@@ -83,3 +92,4 @@ _Avoid_: publish request, JSON request
 - "Instagram Graph API connection" previously implied a Facebook Page boundary; resolved: the default Rocky flow uses Instagram Login for Business and treats the Instagram User ID as the execution boundary.
 - "broker" was used to mean both OAuth authorization and publish execution; resolved: **OAuth broker** is authorization-only, and posting is **Instagram publish execution**.
 - "approval" was used to mean an agent-written JSON flag; resolved: **Publish approval** is a user authorization held by Rocky, not by the agent workspace.
+- "ECOUNT 조회" was used broadly enough to include ERP input APIs useful for analysis; resolved: **ECOUNT read capability** includes only lookup APIs that retrieve ERP records without mutation.

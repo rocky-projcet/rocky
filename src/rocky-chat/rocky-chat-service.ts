@@ -1126,6 +1126,42 @@ function readRecordString(
   return null;
 }
 
+function readRecordObject(
+  record: Record<string, unknown> | null | undefined,
+  keys: string[]
+): Record<string, unknown> | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function readInstagramDraftMediaField(
+  payload: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  return (
+    readRecordString(payload, keys) ??
+    readRecordString(readRecordObject(payload, ["media"]), keys)
+  );
+}
+
+function readInstagramDraftCaptionField(
+  payload: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  return (
+    readRecordString(payload, keys) ??
+    readRecordString(readRecordObject(payload, ["caption"]), keys)
+  );
+}
+
 function readRecordBoolean(
   record: Record<string, unknown>,
   keys: string[]
@@ -1176,30 +1212,7 @@ function isTerminalInstagramPublishRequest(
 }
 
 function hasInstagramDraftMedia(payload: Record<string, unknown>): boolean {
-  return Boolean(
-    readRecordString(payload, [
-      "imageFile",
-      "image_file",
-      "videoFile",
-      "video_file",
-      "mediaFile",
-      "media_file",
-      "file",
-      "imageUrl",
-      "image_url",
-      "videoUrl",
-      "video_url",
-      "publicImageUrl",
-      "public_image_url",
-      "publicVideoUrl",
-      "public_video_url",
-      "mediaUrl",
-      "media_url",
-      "publicMediaUrl",
-      "public_media_url",
-      "url",
-    ])
-  );
+  return Boolean(readInstagramDraftMediaReference(payload));
 }
 
 function isInstagramPublishDraftPayload(input: {
@@ -1227,7 +1240,15 @@ function isInstagramPublishDraftPayload(input: {
   return (
     (pathSignal || instagramSignal) &&
     (hasInstagramDraftMedia(input.payload) ||
-      Boolean(readRecordString(input.payload, ["caption", "caption_file", "captionFile"])))
+      Boolean(
+        readInstagramDraftCaptionField(input.payload, [
+          "caption",
+          "caption_file",
+          "captionFile",
+          "text",
+          "content",
+        ])
+      ))
   );
 }
 
@@ -1321,11 +1342,14 @@ function readInstagramDraftMediaReference(
 ):
   | { kind: "image" | "video" | "unknown"; source: "workspace" | "external"; value: string }
   | null {
-  const videoFile = readRecordString(payload, ["videoFile", "video_file"]);
+  const videoFile = readInstagramDraftMediaField(payload, [
+    "videoFile",
+    "video_file",
+  ]);
   if (videoFile) {
     return { kind: "video", source: "workspace", value: videoFile };
   }
-  const imageFile = readRecordString(payload, [
+  const imageFile = readInstagramDraftMediaField(payload, [
     "imageFile",
     "image_file",
     "mediaFile",
@@ -1342,7 +1366,7 @@ function readInstagramDraftMediaReference(
       value: imageFile,
     };
   }
-  const videoUrl = readRecordString(payload, [
+  const videoUrl = readInstagramDraftMediaField(payload, [
     "videoUrl",
     "video_url",
     "publicVideoUrl",
@@ -1351,7 +1375,7 @@ function readInstagramDraftMediaReference(
   if (videoUrl) {
     return { kind: "video", source: "external", value: videoUrl };
   }
-  const imageUrl = readRecordString(payload, [
+  const imageUrl = readInstagramDraftMediaField(payload, [
     "imageUrl",
     "image_url",
     "publicImageUrl",
@@ -1405,7 +1429,7 @@ function buildInstagramMediaPrepareArgs(input: {
   payload: Record<string, unknown>;
   caption: string | null;
 }): Record<string, unknown> {
-  const imageUrl = readRecordString(input.payload, [
+  const imageUrl = readInstagramDraftMediaField(input.payload, [
     "imageUrl",
     "image_url",
     "publicImageUrl",
@@ -1416,21 +1440,28 @@ function buildInstagramMediaPrepareArgs(input: {
     "public_media_url",
     "url",
   ]);
-  const videoUrl = readRecordString(input.payload, [
+  const videoUrl = readInstagramDraftMediaField(input.payload, [
     "videoUrl",
     "video_url",
     "publicVideoUrl",
     "public_video_url",
   ]);
-  const videoFile = readRecordString(input.payload, ["videoFile", "video_file"]);
-  const imageFile = readRecordString(input.payload, [
+  const videoFile = readInstagramDraftMediaField(input.payload, [
+    "videoFile",
+    "video_file",
+  ]);
+  const imageFile = readInstagramDraftMediaField(input.payload, [
     "imageFile",
     "image_file",
     "mediaFile",
     "media_file",
     "file",
   ]);
-  const mediaType = readRecordString(input.payload, ["mediaType", "media_type"]);
+  const mediaType = readInstagramDraftMediaField(input.payload, [
+    "mediaType",
+    "media_type",
+    "type",
+  ]);
   const args: Record<string, unknown> = {
     approved: true,
   };
@@ -3832,9 +3863,10 @@ export class RockyChatService {
     agent: AgentRecord;
     payload: Record<string, unknown>;
   }): Promise<string | null> {
-    const captionPath = readRecordString(input.payload, [
+    const captionPath = readInstagramDraftCaptionField(input.payload, [
       "captionFile",
       "caption_file",
+      "file",
     ]);
     if (captionPath) {
       const relativePath = normalizeWorkspaceRelativePath(captionPath);
@@ -3853,7 +3885,11 @@ export class RockyChatService {
       }
     }
 
-    return readRecordString(input.payload, ["caption", "content", "text"]);
+    return readInstagramDraftCaptionField(input.payload, [
+      "caption",
+      "content",
+      "text",
+    ]);
   }
 
   private async readInstagramConnectorStateForApproval(): Promise<{
@@ -4583,11 +4619,11 @@ export class RockyChatService {
       return;
     }
 
-    const videoFile = readRecordString(input.payload, [
+    const videoFile = readInstagramDraftMediaField(input.payload, [
       "videoFile",
       "video_file",
     ]);
-    const imageFile = readRecordString(input.payload, [
+    const imageFile = readInstagramDraftMediaField(input.payload, [
       "imageFile",
       "image_file",
       "mediaFile",

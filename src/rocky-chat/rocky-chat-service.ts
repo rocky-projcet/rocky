@@ -119,6 +119,7 @@ import {
   type EcountDatasetQueryResult,
   type EcountLookupServiceLike,
 } from "../integrations/ecount-connection-service.js";
+import { EcountSalesExcelExportService } from "../integrations/ecount-browser-sales-export.js";
 import type {
   ConnectorExecuteCapabilityResult,
   ConnectorPublishDraftInput,
@@ -139,6 +140,7 @@ export interface RockyChatServiceOptions {
   skillTemplateStore?: SkillTemplateStore;
   ecountSettingsService?: EcountSettingsServiceLike;
   ecountLookupService?: EcountLookupServiceLike;
+  ecountSalesExportService?: EcountSalesExcelExportService;
   connectorService?: ConnectorServiceLike;
   instagramTemporaryMediaHost?: TemporaryMediaHostLike;
 }
@@ -395,6 +397,19 @@ function ecountDatasetLookupWorkspacePath(chatId: string, dataset: string): stri
   );
 }
 
+function ecountSalesExportDirectoryWorkspacePath(chatId: string): string {
+  return path.posix.join(
+    rockyTaskInputDirectory(chatId),
+    "integrations",
+    "ecount",
+    "sales-export"
+  );
+}
+
+function ecountSalesExportWorkspacePath(chatId: string, fileName: string): string {
+  return path.posix.join(ecountSalesExportDirectoryWorkspacePath(chatId), fileName);
+}
+
 function threadsFollowerLookupWorkspacePath(chatId: string): string {
   return path.posix.join(
     rockyTaskInputDirectory(chatId),
@@ -441,6 +456,24 @@ function legacyEcountProductLookupWorkspacePath(chatId: string): string {
 
 function ecountQueryOptionsForDataset(dataset: EcountDatasetId): Omit<EcountDatasetQueryInput, "dataset"> {
   return dataset === "products" ? {} : { filters: { period: "recent-30-days" } };
+}
+
+function defaultEcountSalesExportDates(checkedAt: string): { fromDate: string; toDate: string } {
+  const toDate = new Date(checkedAt);
+  if (Number.isNaN(toDate.getTime())) {
+    const today = new Date();
+    return defaultEcountSalesExportDates(today.toISOString());
+  }
+  const fromDate = new Date(toDate);
+  fromDate.setUTCDate(fromDate.getUTCDate() - 30);
+  return {
+    fromDate: toDateString(fromDate),
+    toDate: toDateString(toDate),
+  };
+}
+
+function toDateString(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
 function ecountResultToPreparedSummary(
@@ -2065,6 +2098,7 @@ export class RockyChatService {
   private readonly skillTemplateStore: SkillTemplateStore;
   private readonly ecountSettingsService: EcountSettingsServiceLike;
   private readonly ecountLookupService: EcountLookupServiceLike;
+  private readonly ecountSalesExportService: EcountSalesExcelExportService;
   private readonly connectorService: ConnectorServiceLike | null;
   private readonly publicWorkspaceBaseUrl: string | null;
   private readonly instagramTemporaryMediaHost: TemporaryMediaHostLike;
@@ -2102,6 +2136,11 @@ export class RockyChatService {
     this.ecountLookupService =
       options.ecountLookupService ??
       new EcountConnectionService({
+        now: this.now,
+      });
+    this.ecountSalesExportService =
+      options.ecountSalesExportService ??
+      new EcountSalesExcelExportService({
         now: this.now,
       });
     this.connectorService = options.connectorService ?? null;
@@ -4695,7 +4734,7 @@ export class RockyChatService {
         const parsed = JSON.parse(await readFile(absolutePath, "utf8")) as {
           dataset?: string;
           title?: string;
-          status?: "ready" | "failed" | "unsupported";
+          status?: "ready" | "failed" | "unsupported" | "not-configured";
           api?: string | null;
           count?: number;
           returnedCount?: number;
@@ -4755,6 +4794,107 @@ export class RockyChatService {
     };
   }
 
+  private async prepareEcountSalesExport(input: {
+    agent: AgentRecord;
+    chatId: string;
+  }): Promise<AgentPreparedIntegrationSummary> {
+    const workspacePath = ecountDatasetLookupWorkspacePath(input.chatId, "sales");
+    const absolutePath = path.join(input.agent.workspaceRoot, ...workspacePath.split("/"));
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+
+    const webLogin = await this.ecountSettingsService.getWebLoginInput();
+    if (!webLogin) {
+      const document = {
+        provider: "ecount",
+        dataset: "sales",
+        title: ecountDatasetTitle("sales"),
+        status: "not-configured",
+        api: "browser:E040206",
+        accountLabel: null,
+        zone: null,
+        checkedAt: this.now(),
+        count: 0,
+        returnedCount: 0,
+        records: [],
+        message: "ECOUNT web login settings are not configured for sales export.",
+        diagnostics: {
+          stage: "capability",
+          detail: "Complete ECOUNT ERP web login settings for 판매조회 Browser Assist.",
+        },
+        export: null,
+      };
+      await writeFile(absolutePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+      return {
+        provider: "ecount",
+        dataset: "sales",
+        title: document.title,
+        status: "not-configured",
+        api: document.api,
+        count: 0,
+        returnedCount: 0,
+        checkedAt: document.checkedAt,
+        workspacePath,
+        message: document.message,
+        diagnostic: document.diagnostics.detail,
+        source: "settings",
+      };
+    }
+
+    const checkedAt = this.now();
+    const dates = defaultEcountSalesExportDates(checkedAt);
+    const outputWorkspaceDir = ecountSalesExportDirectoryWorkspacePath(input.chatId);
+    const outputDir = path.join(input.agent.workspaceRoot, ...outputWorkspaceDir.split("/"));
+    const result = await this.ecountSalesExportService.exportSalesExcel({
+      login: webLogin,
+      outputDir,
+      fromDate: dates.fromDate,
+      toDate: dates.toDate,
+    });
+    const exportWorkspacePath = result.fileName
+      ? ecountSalesExportWorkspacePath(input.chatId, result.fileName)
+      : null;
+    const status = result.ok ? "ready" : "failed";
+    const document = {
+      provider: "ecount",
+      dataset: "sales",
+      title: ecountDatasetTitle("sales"),
+      status,
+      api: "browser:E040206",
+      accountLabel: result.accountLabel,
+      zone: null,
+      checkedAt: result.checkedAt,
+      count: 0,
+      returnedCount: 0,
+      records: [],
+      message: result.message,
+      diagnostics: result.diagnostics ?? null,
+      filters: result.filters,
+      export: result.ok
+        ? {
+            programId: result.programId,
+            fileName: result.fileName,
+            byteSize: result.byteSize,
+            workspacePath: exportWorkspacePath,
+          }
+        : null,
+    };
+    await writeFile(absolutePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+    return {
+      provider: "ecount",
+      dataset: "sales",
+      title: document.title,
+      status,
+      api: document.api,
+      count: 0,
+      returnedCount: 0,
+      checkedAt: result.checkedAt,
+      workspacePath,
+      message: result.message,
+      diagnostic: result.diagnostics?.detail ?? (exportWorkspacePath ? `export=${exportWorkspacePath}` : null),
+      source: "fresh",
+    };
+  }
+
   private async prepareEcountLookups(input: {
     agent: AgentRecord;
     chatId: string;
@@ -4796,8 +4936,16 @@ export class RockyChatService {
         ? ["products"]
         : DEFAULT_ECOUNT_SKILL_DATASETS;
     const connectionInput = await this.ecountSettingsService.getConnectionInput();
-    if (!connectionInput) {
-      return datasets.map((dataset) => ({
+
+    const summaries: AgentPreparedIntegrationSummary[] = [];
+    for (const dataset of datasets) {
+      if (dataset === "sales") {
+        summaries.push(await this.prepareEcountSalesExport(input));
+        continue;
+      }
+
+      if (!connectionInput) {
+        summaries.push({
           provider: "ecount",
           dataset,
           title: ecountDatasetTitle(dataset),
@@ -4807,14 +4955,13 @@ export class RockyChatService {
           returnedCount: null,
           checkedAt: null,
           workspacePath: null,
-          message: "ECOUNT connection settings are not configured.",
+          message: "ECOUNT Open API connection settings are not configured.",
           diagnostic: null,
           source: "settings",
-        }));
-    }
+        });
+        continue;
+      }
 
-    const summaries: AgentPreparedIntegrationSummary[] = [];
-    for (const dataset of datasets) {
       const query: EcountDatasetQueryInput = {
         ...ecountQueryOptionsForDataset(dataset),
         dataset,
@@ -4869,7 +5016,8 @@ export class RockyChatService {
 
     let configured = false;
     try {
-      configured = (await this.ecountSettingsService.getPublicSettings()).configured;
+      const settings = await this.ecountSettingsService.getPublicSettings();
+      configured = settings.configured || settings.webLoginConfigured;
     } catch {
       configured = false;
     }

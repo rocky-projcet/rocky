@@ -172,6 +172,14 @@ export interface EcountConnectionTestInput {
   lanType?: string | null;
 }
 
+export interface EcountWebLoginSettingsInput {
+  accountLabel?: string | null;
+  comCode?: string | null;
+  userId: string;
+  password: string;
+  lanType?: string | null;
+}
+
 export interface EcountConnectionTestRecord {
   ok: boolean;
   status: "connected" | "failed";
@@ -196,6 +204,9 @@ export interface EcountConnectionSettingsRecord {
   zone: string | null;
   checkedAt: string | null;
   updatedAt: string | null;
+  webLoginConfigured: boolean;
+  webUserIdMasked: string | null;
+  webLoginUpdatedAt: string | null;
 }
 
 export interface IntegrationCapabilityRecord {
@@ -2280,6 +2291,27 @@ export class AgentEngineClient {
   deleteEcountConnectionSettings(): Promise<EcountConnectionSettingsRecord> {
     return this.request<EcountConnectionSettingsRecord>(
       "/integrations/ecount/settings",
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  saveEcountWebLoginSettings(
+    input: EcountWebLoginSettingsInput
+  ): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>(
+      "/integrations/ecount/web-login",
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }
+    );
+  }
+
+  deleteEcountWebLoginSettings(): Promise<EcountConnectionSettingsRecord> {
+    return this.request<EcountConnectionSettingsRecord>(
+      "/integrations/ecount/web-login",
       {
         method: "DELETE",
       }

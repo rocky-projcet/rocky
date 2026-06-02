@@ -31,6 +31,7 @@ import type {
   EcountLookupServiceLike,
 } from "../integrations/ecount-connection-service.js";
 import type { EcountSettingsServiceLike } from "../integrations/ecount-settings-service.js";
+import type { EcountSalesExcelExportService } from "../integrations/ecount-browser-sales-export.js";
 import type {
   ConnectorBrowserDetector,
   ConnectorBrowserLoginStarter,
@@ -272,6 +273,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   ecountConnectionTester?: EcountConnectionTester;
   ecountLookupService?: EcountLookupServiceLike;
   ecountSettingsService?: EcountSettingsServiceLike;
+  ecountSalesExportService?: EcountSalesExcelExportService;
   hardwareStatusService?: HardwareStatusServiceLike;
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;

@@ -92,8 +92,8 @@ const ERP_PROVIDERS: ErpProviderEntry[] = [
   {
     id: "ecount",
     label: "ECOUNT ERP",
-    description: "이카운트 테스트 API 키로 연결을 확인하고 조회 연동 준비 상태를 관리합니다.",
-    auth: "회사코드, 키 발급자 ID, 테스트 API 인증키",
+    description: "이카운트 OAPI 조회와 판매조회 Browser Assist 준비 상태를 관리합니다.",
+    auth: "OAPI 키, 웹 로그인 정보",
     status: "available",
     icon: Database,
     iconColor: "#059669",
@@ -339,7 +339,7 @@ function ErpProviderCard({ entry }: { entry: ErpProviderEntry }) {
     useState<EcountConnectionSettingsRecord>(() => emptyEcountConnectionSettings());
   const Icon = entry.icon;
   const available = entry.status === "available";
-  const connected = available && ecountConnection.configured;
+  const connected = available && (ecountConnection.configured || ecountConnection.webLoginConfigured);
 
   useEffect(() => {
     if (entry.id === "ecount") {
@@ -402,15 +402,16 @@ function ErpProviderCard({ entry }: { entry: ErpProviderEntry }) {
 
           {available ? (
             <div className="min-h-8 text-xs leading-5 text-muted-foreground">
-              {ecountConnection.configured ? (
+              {connected ? (
                 <p>
                   <span className="font-medium text-foreground">
                     {ecountConnection.accountLabel ?? "이카운트 ERP"}
                   </span>
                   {ecountConnection.zone ? ` · ZONE ${ecountConnection.zone}` : ""}
                   {ecountConnection.checkedAt
-                    ? ` · 마지막 확인 ${formatDateTime(ecountConnection.checkedAt)}`
+                    ? ` · OAPI ${formatDateTime(ecountConnection.checkedAt)}`
                     : ""}
+                  {ecountConnection.webLoginConfigured ? " · 웹 로그인 저장됨" : ""}
                 </p>
               ) : (
                 <p>카드를 눌러 연동 안내와 연결 테스트를 진행합니다.</p>
@@ -522,7 +523,7 @@ function EcountConnectionDialog({
         <DialogHeader className="border-b border-border/70 px-6 py-5 pr-14">
           <DialogTitle>ECOUNT ERP 연동 설정</DialogTitle>
           <DialogDescription className="leading-6">
-            OAPI 테스트 키를 저장하고 연결 상태를 확인합니다. ERP 등록·수정은 추후 제공 예정입니다.
+            OAPI 조회 자격정보와 판매조회 Browser Assist용 웹 로그인 정보를 분리해 관리합니다.
           </DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 overflow-y-auto lg:grid-cols-[0.9fr_1.1fr]">
@@ -542,7 +543,7 @@ function EcountSetupGuide() {
   return (
     <aside className="grid content-start gap-4 border-b border-border/70 bg-muted/20 p-5 text-xs leading-5 text-muted-foreground lg:border-b-0 lg:border-r">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-medium text-foreground">OAPI 준비 순서</p>
+        <p className="font-medium text-foreground">연동 준비 순서</p>
         <Button
           variant="outline"
           size="sm"
@@ -576,7 +577,7 @@ function EcountSetupGuide() {
 
       <div className="grid gap-1.5 rounded-lg border border-border/70 bg-background/70 px-3 py-2">
         <p className="font-medium text-foreground">현재 제공 범위</p>
-        <p>지금은 연결 테스트와 조회 연동 준비까지만 지원합니다. ERP 등록·수정·삭제는 실행하지 않습니다.</p>
+        <p>OAPI 조회와 판매조회 Excel export 준비까지만 지원합니다. ERP 등록·수정·삭제는 실행하지 않습니다.</p>
       </div>
 
       <div className="grid gap-1.5 rounded-lg border border-border/70 bg-background/70 px-3 py-2">
@@ -614,9 +615,13 @@ function EcountConnectionPanel({
   const [userId, setUserId] = useState("");
   const [apiCertKey, setApiCertKey] = useState("");
   const [zone, setZone] = useState(settings.zone ?? "");
+  const [webUserId, setWebUserId] = useState("");
+  const [webPassword, setWebPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingWebLogin, setSavingWebLogin] = useState(false);
   const [testing, setTesting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectingWebLogin, setDisconnectingWebLogin] = useState(false);
   const [result, setResult] = useState<EcountConnectionTestRecord | null>(null);
   const [notice, setNotice] = useState<{
     kind: "success" | "error";
@@ -628,6 +633,8 @@ function EcountConnectionPanel({
     setStored(settings);
     setAccountLabel(settings.accountLabel ?? "");
     setZone(settings.zone ?? "");
+    setWebUserId("");
+    setWebPassword("");
   }, [settings]);
 
   const hasInlineInput = Boolean(comCode.trim() || userId.trim() || apiCertKey.trim());
@@ -636,7 +643,10 @@ function EcountConnectionPanel({
   );
   const canTest = hasCompleteInlineInput || (stored.configured && !hasInlineInput);
   const canSave = hasCompleteInlineInput;
+  const hasCompleteWebLoginInput = Boolean(webUserId.trim() && webPassword.trim());
+  const canSaveWebLogin = hasCompleteWebLoginInput && (stored.configured || Boolean(comCode.trim()));
   const connected = stored.configured;
+  const webLoginConnected = stored.webLoginConfigured;
 
   function buildInlineInput() {
     return {
@@ -645,6 +655,16 @@ function EcountConnectionPanel({
       userId: userId.trim(),
       apiCertKey: apiCertKey.trim(),
       zone: zone.trim() || null,
+      lanType: "ko-KR",
+    };
+  }
+
+  function buildWebLoginInput() {
+    return {
+      accountLabel: accountLabel.trim() || null,
+      comCode: comCode.trim() || null,
+      userId: webUserId.trim(),
+      password: webPassword,
       lanType: "ko-KR",
     };
   }
@@ -718,6 +738,53 @@ function EcountConnectionPanel({
     }
   }
 
+  async function saveWebLogin() {
+    if (!canSaveWebLogin) return;
+    setSavingWebLogin(true);
+    setNotice(null);
+    try {
+      const next = await agentEngineClient.saveEcountWebLoginSettings(buildWebLoginInput());
+      setStored(next);
+      onConnectionChange(next);
+      setAccountLabel(next.accountLabel ?? "");
+      setWebUserId("");
+      setWebPassword("");
+      setNotice({
+        kind: "success",
+        title: "웹 로그인 정보를 저장했습니다.",
+        detail: "판매조회 Browser Assist가 저장된 웹 로그인 정보를 사용할 수 있습니다.",
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        title: "웹 로그인 저장 실패",
+        detail: error instanceof Error ? error.message : "웹 로그인 정보를 저장하지 못했습니다.",
+      });
+    } finally {
+      setSavingWebLogin(false);
+    }
+  }
+
+  async function disconnectWebLogin() {
+    setDisconnectingWebLogin(true);
+    setNotice(null);
+    try {
+      const next = await agentEngineClient.deleteEcountWebLoginSettings();
+      setStored(next);
+      onConnectionChange(next);
+      setWebUserId("");
+      setWebPassword("");
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        title: "웹 로그인 해제 실패",
+        detail: error instanceof Error ? error.message : "저장된 웹 로그인 정보를 삭제하지 못했습니다.",
+      });
+    } finally {
+      setDisconnectingWebLogin(false);
+    }
+  }
+
   async function disconnect() {
     setDisconnecting(true);
     setNotice(null);
@@ -731,6 +798,8 @@ function EcountConnectionPanel({
       setComCode("");
       setUserId("");
       setApiCertKey("");
+      setWebUserId("");
+      setWebPassword("");
     } catch (error) {
       setNotice({
         kind: "error",
@@ -753,12 +822,12 @@ function EcountConnectionPanel({
             <div>
               <h2 className="text-base font-semibold text-foreground">연동 정보</h2>
               <p className="text-xs leading-5 text-muted-foreground">
-                테스트 API 키로 ZONE 조회와 세션 발급을 확인합니다.
+                OAPI와 웹 로그인 정보를 분리해 저장합니다.
               </p>
             </div>
           </div>
         </div>
-        <ConnectionBadge connected={connected} />
+        <ConnectionBadge connected={connected || webLoginConnected} />
       </div>
 
       {stored.configured ? (
@@ -783,7 +852,7 @@ function EcountConnectionPanel({
             variant="outline"
             size="sm"
             onClick={disconnect}
-            disabled={disconnecting || saving || testing}
+            disabled={disconnecting || saving || savingWebLogin || testing || disconnectingWebLogin}
           >
             {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unplug className="size-4" />}
             연결 해제
@@ -847,11 +916,102 @@ function EcountConnectionPanel({
         </p>
       ) : null}
 
+      <div className="grid gap-4 rounded-xl border border-border/70 bg-muted/15 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-700 dark:text-sky-300">
+              <FileSpreadsheet className="size-4" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-foreground">판매조회 Browser Assist</p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                E040206 판매조회 Excel export는 OAPI 키가 아니라 웹 로그인 세션을 사용합니다.
+              </p>
+            </div>
+          </div>
+          <Badge
+            variant="outline"
+            className={cn(
+              webLoginConnected
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            {webLoginConnected ? "웹 로그인 저장됨" : "웹 로그인 필요"}
+          </Badge>
+        </div>
+
+        {stored.webLoginConfigured ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              웹 로그인 ID {stored.webUserIdMasked ?? "-"}
+              {stored.webLoginUpdatedAt ? ` · 저장 ${formatDateTime(stored.webLoginUpdatedAt)}` : ""}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={disconnectWebLogin}
+              disabled={disconnectingWebLogin || saving || savingWebLogin || testing || disconnecting}
+            >
+              {disconnectingWebLogin ? <Loader2 className="size-4 animate-spin" /> : <Unplug className="size-4" />}
+              웹 로그인 해제
+            </Button>
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <EcountFormField
+            label="웹 로그인 ID"
+            htmlFor="ecount-web-user-id"
+            helper="API 키 발급자 ID와 다를 수 있습니다."
+          >
+            <Input
+              id="ecount-web-user-id"
+              value={webUserId}
+              onChange={(event) => setWebUserId(event.target.value)}
+              placeholder="ERP 웹 로그인 ID"
+            />
+          </EcountFormField>
+          <EcountFormField
+            label="웹 로그인 비밀번호"
+            htmlFor="ecount-web-password"
+            helper="저장하면 백엔드에서 암호화하고 화면에는 다시 표시하지 않습니다."
+          >
+            <Input
+              id="ecount-web-password"
+              type="password"
+              value={webPassword}
+              onChange={(event) => setWebPassword(event.target.value)}
+              placeholder="ERP 웹 로그인 비밀번호"
+            />
+          </EcountFormField>
+        </div>
+
+        {!stored.configured && !comCode.trim() ? (
+          <p className="text-xs leading-5 text-muted-foreground">
+            OAPI 설정이 없으면 회사코드를 함께 입력해야 웹 로그인 정보를 저장할 수 있습니다.
+          </p>
+        ) : null}
+
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={saveWebLogin}
+            disabled={!canSaveWebLogin || saving || savingWebLogin || testing || disconnecting || disconnectingWebLogin}
+          >
+            {savingWebLogin ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+            웹 로그인 저장
+          </Button>
+        </div>
+      </div>
+
       {notice ? <EcountNotice notice={notice} /> : null}
       {result ? <EcountResult result={result} /> : null}
 
       <DialogFooter className="flex-col-reverse items-stretch border-t border-border/70 pt-4 sm:flex-row sm:items-center">
-        <Button type="button" variant="ghost" onClick={onClose} disabled={saving || testing || disconnecting}>
+        <Button type="button" variant="ghost" onClick={onClose} disabled={saving || savingWebLogin || testing || disconnecting || disconnectingWebLogin}>
           <X className="size-4" />
           닫기
         </Button>
@@ -859,7 +1019,7 @@ function EcountConnectionPanel({
           type="button"
           variant="outline"
           onClick={saveSettings}
-          disabled={!canSave || saving || testing || disconnecting}
+          disabled={!canSave || saving || savingWebLogin || testing || disconnecting || disconnectingWebLogin}
         >
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           설정 저장
@@ -867,7 +1027,7 @@ function EcountConnectionPanel({
         <Button
           type="button"
           onClick={runTest}
-          disabled={!canTest || saving || testing || disconnecting}
+          disabled={!canTest || saving || savingWebLogin || testing || disconnecting || disconnectingWebLogin}
         >
           {testing ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
           연결 테스트
@@ -1321,6 +1481,9 @@ function emptyEcountConnectionSettings(): EcountConnectionSettingsRecord {
     zone: null,
     checkedAt: null,
     updatedAt: null,
+    webLoginConfigured: false,
+    webUserIdMasked: null,
+    webLoginUpdatedAt: null,
   };
 }
 

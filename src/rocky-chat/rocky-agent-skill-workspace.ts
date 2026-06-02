@@ -628,10 +628,10 @@ export function buildAgentTurnSystemInstructions(input: {
     ...(input.ecountLookup
       ? input.ecountLookup.configured
         ? [
-            "A Rocky-managed ECOUNT ERP lookup integration is configured for installed ECOUNT skills. The integration is read-only and is executed by Rocky before the turn when relevant.",
-            "Use the ECOUNT lookup files and summaries listed in the turn context as the source of truth. Do not call localhost, 127.0.0.1, or Rocky HTTP integration endpoints yourself.",
-            "If an ECOUNT lookup file is listed, read that file once and reuse it for summaries, examples, and follow-up analysis instead of attempting another lookup.",
-            "If an ECOUNT lookup summary is marked unsupported, clearly report that the Rocky backend does not yet support that dataset and continue with supported lookup files only.",
+            "A Rocky-managed ECOUNT ERP lookup/export integration is configured for installed ECOUNT skills. The integration is read-only and is executed by Rocky before the turn when relevant.",
+            "Use the ECOUNT lookup/export files and summaries listed in the turn context as the source of truth. Do not call localhost, 127.0.0.1, or Rocky HTTP integration endpoints yourself.",
+            "If an ECOUNT lookup/export file is listed, read that file once and reuse it for summaries, examples, and follow-up analysis instead of attempting another lookup.",
+            "If an ECOUNT lookup/export summary is marked unsupported or not-configured, clearly report that boundary and continue with supported lookup files only.",
             "If the needed ECOUNT lookup result is absent, ask the user to request or refresh that lookup instead of trying a local HTTP call.",
             "Rocky stores ECOUNT credentials. Never ask the user for ECOUNT API keys, passwords, or session IDs in chat, and never print secrets.",
             "Do not create, update, delete, submit, or transmit ECOUNT ERP records.",

@@ -5,9 +5,18 @@ import path from "node:path";
 
 import { serializeJson } from "../sessions/session-store.js";
 import type { EcountConnectionTestInput } from "./ecount-connection-service.js";
+import type { EcountWebLoginInput } from "./ecount-browser-sales-export.js";
 
 export interface EcountConnectionSettingsInput extends EcountConnectionTestInput {
   checkedAt?: string | null;
+}
+
+export interface EcountWebLoginSettingsInput {
+  accountLabel?: string | null;
+  comCode?: string | null;
+  userId: string;
+  password: string;
+  lanType?: string | null;
 }
 
 export interface EcountConnectionSettingsRecord {
@@ -19,17 +28,23 @@ export interface EcountConnectionSettingsRecord {
   zone: string | null;
   checkedAt: string | null;
   updatedAt: string | null;
+  webLoginConfigured: boolean;
+  webUserIdMasked: string | null;
+  webLoginUpdatedAt: string | null;
 }
 
 export interface EcountSettingsServiceLike {
   getPublicSettings(): Promise<EcountConnectionSettingsRecord>;
   getConnectionInput(): Promise<EcountConnectionTestInput | null>;
+  getWebLoginInput(): Promise<EcountWebLoginInput | null>;
   saveSettings(input: EcountConnectionSettingsInput): Promise<EcountConnectionSettingsRecord>;
+  saveWebLogin(input: EcountWebLoginSettingsInput): Promise<EcountConnectionSettingsRecord>;
   updateLastCheck(input: {
     zone?: string | null;
     checkedAt: string;
   }): Promise<EcountConnectionSettingsRecord>;
   deleteSettings(): Promise<EcountConnectionSettingsRecord>;
+  deleteWebLogin(): Promise<EcountConnectionSettingsRecord>;
 }
 
 export interface EcountSettingsServiceOptions {
@@ -53,10 +68,24 @@ interface PersistedEcountSettings {
   secret: EncryptedPayload;
 }
 
+interface PersistedEcountWebLoginSettings {
+  version: 1;
+  accountLabel: string | null;
+  updatedAt: string;
+  secret: EncryptedPayload;
+}
+
 interface SecretEcountSettings {
   comCode: string;
   userId: string;
   apiCertKey: string;
+  lanType: string;
+}
+
+interface SecretEcountWebLoginSettings {
+  comCode: string;
+  userId: string;
+  password: string;
   lanType: string;
 }
 
@@ -108,18 +137,23 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
 
   async getPublicSettings(): Promise<EcountConnectionSettingsRecord> {
     const stored = await this.readStoredSettings();
-    if (!stored) return emptySettingsRecord();
+    const webLogin = await this.readStoredWebLoginSettings();
+    if (!stored && !webLogin) return emptySettingsRecord();
 
-    const secret = await this.decryptSecret(stored.secret);
+    const secret = stored ? await this.decryptSecret(stored.secret) : null;
+    const webSecret = webLogin ? await this.decryptWebLoginSecret(webLogin.secret) : null;
     return {
-      configured: true,
-      accountLabel: stored.accountLabel,
-      comCodeMasked: maskValue(secret.comCode),
-      userIdMasked: maskValue(secret.userId),
-      apiCertKeyMasked: maskValue(secret.apiCertKey),
-      zone: stored.zone,
-      checkedAt: stored.checkedAt,
-      updatedAt: stored.updatedAt,
+      configured: Boolean(stored),
+      accountLabel: stored?.accountLabel ?? webLogin?.accountLabel ?? null,
+      comCodeMasked: maskValue(secret?.comCode ?? webSecret?.comCode ?? null),
+      userIdMasked: maskValue(secret?.userId ?? null),
+      apiCertKeyMasked: maskValue(secret?.apiCertKey ?? null),
+      zone: stored?.zone ?? null,
+      checkedAt: stored?.checkedAt ?? null,
+      updatedAt: stored?.updatedAt ?? null,
+      webLoginConfigured: Boolean(webLogin),
+      webUserIdMasked: maskValue(webSecret?.userId ?? null),
+      webLoginUpdatedAt: webLogin?.updatedAt ?? null,
     };
   }
 
@@ -134,6 +168,20 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
       userId: secret.userId,
       apiCertKey: secret.apiCertKey,
       zone: stored.zone,
+      lanType: secret.lanType,
+    };
+  }
+
+  async getWebLoginInput(): Promise<EcountWebLoginInput | null> {
+    const stored = await this.readStoredWebLoginSettings();
+    if (!stored) return null;
+
+    const secret = await this.decryptWebLoginSecret(stored.secret);
+    return {
+      accountLabel: stored.accountLabel,
+      comCode: secret.comCode,
+      userId: secret.userId,
+      password: secret.password,
       lanType: secret.lanType,
     };
   }
@@ -165,6 +213,32 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
     return this.getPublicSettings();
   }
 
+  async saveWebLogin(
+    input: EcountWebLoginSettingsInput
+  ): Promise<EcountConnectionSettingsRecord> {
+    const timestamp = this.now();
+    const storedApi = await this.readStoredSettings();
+    const apiSecret = storedApi ? await this.decryptSecret(storedApi.secret) : null;
+    const accountLabel = trimOptional(input.accountLabel) ?? storedApi?.accountLabel ?? null;
+    const secret: SecretEcountWebLoginSettings = {
+      comCode: trimOptional(input.comCode) ?? apiSecret?.comCode ?? requireTrimmed("", "web comCode"),
+      userId: requireTrimmed(input.userId, "web userId"),
+      password: requireTrimmed(input.password, "web password"),
+      lanType: trimOptional(input.lanType) ?? "ko-KR",
+    };
+
+    const stored: PersistedEcountWebLoginSettings = {
+      version: 1,
+      accountLabel,
+      updatedAt: timestamp,
+      secret: await this.encryptWebLoginSecret(secret),
+    };
+
+    await mkdir(this.settingsDir(), { recursive: true });
+    await writeFile(this.webLoginSettingsPath(), serializeJson(stored), "utf8");
+    return this.getPublicSettings();
+  }
+
   async updateLastCheck(input: {
     zone?: string | null;
     checkedAt: string;
@@ -184,7 +258,13 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
 
   async deleteSettings(): Promise<EcountConnectionSettingsRecord> {
     await rm(this.settingsPath(), { force: true });
+    await rm(this.webLoginSettingsPath(), { force: true });
     return emptySettingsRecord();
+  }
+
+  async deleteWebLogin(): Promise<EcountConnectionSettingsRecord> {
+    await rm(this.webLoginSettingsPath(), { force: true });
+    return this.getPublicSettings();
   }
 
   private async readStoredSettings(): Promise<PersistedEcountSettings | null> {
@@ -192,6 +272,13 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
     const parsed = JSON.parse(await readFile(this.settingsPath(), "utf8")) as Partial<PersistedEcountSettings>;
     if (parsed.version !== 1 || !parsed.secret) return null;
     return parsed as PersistedEcountSettings;
+  }
+
+  private async readStoredWebLoginSettings(): Promise<PersistedEcountWebLoginSettings | null> {
+    if (!(await pathExists(this.webLoginSettingsPath()))) return null;
+    const parsed = JSON.parse(await readFile(this.webLoginSettingsPath(), "utf8")) as Partial<PersistedEcountWebLoginSettings>;
+    if (parsed.version !== 1 || !parsed.secret) return null;
+    return parsed as PersistedEcountWebLoginSettings;
   }
 
   private async encryptSecret(secret: SecretEcountSettings): Promise<EncryptedPayload> {
@@ -212,6 +299,31 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
   }
 
   private async decryptSecret(payload: EncryptedPayload): Promise<SecretEcountSettings> {
+    return this.decryptPayload<SecretEcountSettings>(payload);
+  }
+
+  private async encryptWebLoginSecret(secret: SecretEcountWebLoginSettings): Promise<EncryptedPayload> {
+    const key = await this.readOrCreateKey();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([
+      cipher.update(JSON.stringify(secret), "utf8"),
+      cipher.final(),
+    ]);
+    const authTag = cipher.getAuthTag();
+    return {
+      algorithm: "aes-256-gcm",
+      iv: iv.toString("base64"),
+      authTag: authTag.toString("base64"),
+      ciphertext: ciphertext.toString("base64"),
+    };
+  }
+
+  private async decryptWebLoginSecret(payload: EncryptedPayload): Promise<SecretEcountWebLoginSettings> {
+    return this.decryptPayload<SecretEcountWebLoginSettings>(payload);
+  }
+
+  private async decryptPayload<T>(payload: EncryptedPayload): Promise<T> {
     const key = await this.readOrCreateKey();
     const decipher = createDecipheriv(
       "aes-256-gcm",
@@ -223,7 +335,7 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
       decipher.update(Buffer.from(payload.ciphertext, "base64")),
       decipher.final(),
     ]).toString("utf8");
-    return JSON.parse(plaintext) as SecretEcountSettings;
+    return JSON.parse(plaintext) as T;
   }
 
   private async readOrCreateKey(): Promise<Buffer> {
@@ -248,6 +360,10 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
     return path.join(this.settingsDir(), "settings.json");
   }
 
+  private webLoginSettingsPath(): string {
+    return path.join(this.settingsDir(), "web-login.json");
+  }
+
   private keyPath(): string {
     return path.join(this.settingsDir(), "settings.key");
   }
@@ -263,5 +379,8 @@ function emptySettingsRecord(): EcountConnectionSettingsRecord {
     zone: null,
     checkedAt: null,
     updatedAt: null,
+    webLoginConfigured: false,
+    webUserIdMasked: null,
+    webLoginUpdatedAt: null,
   };
 }

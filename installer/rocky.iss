@@ -10,25 +10,25 @@
 #if GetEnv("ROCKY_RELEASE_TAG") != ""
   #define ReleaseTag GetEnv("ROCKY_RELEASE_TAG")
 #else
-  #define ReleaseTag "v0.1.2"
+  #define ReleaseTag "v0.1.3"
 #endif
 
 #if GetEnv("ROCKY_APP_VERSION") != ""
   #define MyAppVersion GetEnv("ROCKY_APP_VERSION")
 #else
-  #define MyAppVersion "0.1.2"
+  #define MyAppVersion "0.1.3"
 #endif
 
 #if GetEnv("ROCKY_PAYLOAD_ROOT") != ""
   #define PayloadRoot GetEnv("ROCKY_PAYLOAD_ROOT")
 #else
-  #define PayloadRoot "..\.tmp\windows-installer\v0.1.2\payload"
+  #define PayloadRoot "..\.tmp\windows-installer\v0.1.3\payload"
 #endif
 
 #if GetEnv("ROCKY_OUTPUT_DIR") != ""
   #define OutputDirPath GetEnv("ROCKY_OUTPUT_DIR")
 #else
-  #define OutputDirPath "..\releases\v0.1.2"
+  #define OutputDirPath "..\releases\v0.1.3"
 #endif
 
 #if GetEnv("ROCKY_REPO_ROOT") != ""

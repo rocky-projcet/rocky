@@ -59,11 +59,11 @@ npm run release:macos
 
 - Windows manual installer/update guidance: `docs/windows-install.md`
 - macOS manual update-safe helper guidance: `docs/macos-install.md`
-- v0.1.2 installer updates are payload replacements that must preserve existing Rocky state roots, sessions/tasks, runtime homes, and local environment files.
+- v0.1.3 installer updates are payload replacements that must preserve existing Rocky state roots, sessions/tasks, runtime homes, and local environment files.
 
 ## Notes
 
 - 기본 상태 루트는 `.runtime/agent-engine`입니다.
 - 이 저장소는 문서 폴더 대신 루트 `README.md`, 소스 코드, 테스트, 그리고 `.agents/skills/`를 기준으로 운영합니다.
-- macOS v0.1.2 배포 산출물은 `npm run release:macos`로 만들며, 설치/제한사항은 `docs/macos-install.md`를 확인합니다.
+- macOS v0.1.3 배포 산출물은 `npm run release:macos`로 만들며, 설치/제한사항은 `docs/macos-install.md`를 확인합니다.
 - 공개 브랜치로 정리할 때는 불필요한 로컬 산출물(`dist/`, `node_modules/`, `.runtime/`, `.env`)을 포함하지 않도록 확인해야 합니다.

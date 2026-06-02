@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ReleaseTag = "v0.1.2"
+$ReleaseTag = "v0.1.3"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $MarkerPath = Join-Path $Root ".rocky-install"
 $ToolsRoot = Join-Path $Root ".tools"
@@ -632,6 +632,26 @@ function Register-UninstallEntry {
   }
 }
 
+function Remove-LegacyUninstallEntry {
+  param([Parameter(Mandatory = $true)][string]$ExpectedInstallLocation)
+
+  try {
+    $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Rocky"
+    $Entry = Get-ItemProperty -Path $RegistryPath -ErrorAction SilentlyContinue
+    if (-not $Entry) {
+      return
+    }
+
+    $InstallLocation = [string]$Entry.InstallLocation
+    if ([string]::IsNullOrWhiteSpace($InstallLocation) -or (Test-SamePath -Left $InstallLocation -Right $ExpectedInstallLocation)) {
+      Remove-Item -Path $RegistryPath -Recurse -Force -ErrorAction Stop
+      Write-InstallStatus "Removed legacy Rocky script uninstall entry; Inno Setup owns uninstall metadata."
+    }
+  } catch {
+    Write-Warning "Could not remove legacy Rocky uninstall entry: $($_.Exception.Message)"
+  }
+}
+
 $UsesBundledAppPayload = Test-BundledAppPayload -PayloadRoot $Root
 if ($UsesBundledAppPayload) {
   $IncludeBundledDependencies = $true
@@ -711,6 +731,8 @@ if (-not $SkipWindowsShellRegistration) {
   New-StartMenuShortcut -Name "Stop Rocky" -TargetPath (Join-Path $Root "Stop-Rocky-Windows.cmd") -IconLocation $AppIconPath
   New-StartMenuShortcut -Name "Uninstall Rocky" -TargetPath (Join-Path $Root "Uninstall-Rocky-Windows.cmd") -IconLocation $UninstallIconPath
   Register-UninstallEntry -DisplayIconPath $AppIconPath
+} else {
+  Remove-LegacyUninstallEntry -ExpectedInstallLocation $Root
 }
 
 Write-InstallStatus "Rocky $ReleaseTag is installed or updated."

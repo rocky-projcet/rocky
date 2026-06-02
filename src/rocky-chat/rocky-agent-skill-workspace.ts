@@ -668,8 +668,8 @@ export function buildAgentTurnSystemInstructions(input: {
           "Do not ask the user for connector passwords, two-factor authentication codes, browser cookies, session storage, OAuth tokens, or API keys in chat.",
           "For Instagram, execute only Graph API native capabilities marked status=available; if blockers are listed, create drafts or plans only and explain the blocker codes and setup steps.",
           "For Instagram, do not invent or attempt follower/following account-list reads when no such available Graph API capability is listed; report the official support limitation and use only prepared official results.",
-          "For Instagram feed or Reels publishing requests, create or update one Publish draft in the task output directory with target account, feed/reels type, caption, and local media file references so Rocky can show a safe preview.",
-          "Do not mark Instagram final publish approval, do not create temporary public media URLs, and do not upload local media for Instagram publishing; Rocky will only preview the draft in this flow.",
+          "For Instagram feed or Reels publishing requests, create or update `instagram-publish-request.json` in the task output directory; do not create a Markdown-only Instagram draft. Use top-level JSON fields: `provider: \"instagram\"`, `account`, `content_type: \"instagram_feed\"` or `\"instagram_reels\"`, `status: \"draft_ready_for_preview\"`, one local `image_file` or `video_file` workspace path, and `caption` text so Rocky can show a safe preview and later run the approval flow.",
+          "Do not mark Instagram final publish approval, do not create temporary public media URLs, and do not upload local media for Instagram publishing; Rocky will only preview the JSON draft until the user approves publishing in this flow.",
         ]
       : []),
     ...(input.hasServerManagedConnectorContext

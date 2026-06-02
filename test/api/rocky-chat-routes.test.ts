@@ -2583,6 +2583,105 @@ test("rocky chat exposes the latest active Instagram publish draft preview witho
 });
 
 
+test("rocky chat recognizes nested Instagram publish request JSON previews", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
+  let graphCalls = 0;
+  const { agents, completedRunSummaries, server } = createRockyChatTestServer(
+    stateRoot,
+    {
+      connectorBaseEnv: INSTAGRAM_GRAPH_ENV,
+      connectorFetch: async () => {
+        graphCalls += 1;
+        return new Response(JSON.stringify({ id: "unexpected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+  const workspaceRoot = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "workspace",
+  );
+  const runtimeHome = path.join(
+    stateRoot,
+    "agent-workspaces",
+    "instagram-agent",
+    "runtime-home",
+  );
+  agents.push(
+    buildAgent({
+      id: "instagram-agent",
+      name: "Instagram agent",
+      workspaceRoot,
+      runtimeHome,
+    }),
+  );
+  completedRunSummaries.push("Created a nested Instagram draft JSON.");
+
+  try {
+    const response = await server.inject({
+      method: "POST",
+      url: "/rocky/chats",
+      payload: {
+        message: "Create an Instagram feed draft.",
+        agentId: "instagram-agent",
+      },
+    });
+    assert.equal(response.statusCode, 201);
+    const created = response.json<RockyChatRecord>();
+    const outputDir = path.join(workspaceRoot, ...rockyTaskOutputDirectory(created.id).split("/"));
+    await mkdir(outputDir, { recursive: true });
+    const imageWorkspacePath = path.posix.join(
+      rockyTaskOutputDirectory(created.id),
+      "nested-feed.png",
+    );
+    await writeFile(path.join(outputDir, "nested-feed.png"), "png-bytes", "utf8");
+    await writeFile(
+      path.join(outputDir, "instagram-publish-request.json"),
+      `${JSON.stringify(
+        {
+          provider: "instagram",
+          account: "@rocky.agent.kr",
+          publish_type: "feed",
+          status: "draft_ready_for_preview",
+          media: {
+            type: "image",
+            media_file: imageWorkspacePath,
+          },
+          caption: {
+            text: "중첩 캡션",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const readOnlyResponse = await server.inject({
+      method: "GET",
+      url: `/rocky/chats/${created.id}`,
+    });
+    assert.equal(readOnlyResponse.statusCode, 200);
+    assert.equal(graphCalls, 0);
+    const withPreview = readOnlyResponse.json<RockyChatRecord>();
+    const preview = withPreview.instagramPublishDraftPreview;
+    assert.ok(preview);
+    assert.equal(preview.status, "ready");
+    assert.equal(preview.publishType, "feed");
+    assert.equal(preview.targetAccountLabel, "@rocky.agent.kr");
+    assert.equal(preview.caption, "중첩 캡션");
+    assert.equal(preview.media?.kind, "image");
+    assert.equal(preview.media?.label, "nested-feed.png");
+  } finally {
+    await server.close();
+  }
+});
+
+
 test("rocky chat returns no Instagram publish draft preview when no active draft exists", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-chat-api-"));
   const { agents, completedRunSummaries, server } = createRockyChatTestServer(

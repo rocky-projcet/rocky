@@ -8,6 +8,7 @@ import {
   type EcountConnectionTestResult,
   type EcountDatasetQueryInput,
   type EcountDatasetQueryResult,
+  type EcountServerType,
   listEcountIntegrationCapabilities,
   normalizeEcountDatasetId,
 } from "../../integrations/ecount-connection-service.js";
@@ -73,6 +74,20 @@ function optionalString(input: Record<string, unknown>, key: string): string | n
   return trimmed ? trimmed : null;
 }
 
+function optionalEcountServerType(
+  input: Record<string, unknown>,
+  key: string
+): EcountServerType | null {
+  const value = optionalString(input, key);
+  if (value === null) {
+    return null;
+  }
+  if (value === "test" || value === "production") {
+    return value;
+  }
+  throw badRequest("ECOUNT serverType must be either test or production.");
+}
+
 function maskConnectionValue(value: string): string {
   if (value.length <= 4) return "*".repeat(value.length);
   return `${value.slice(0, 2)}${"*".repeat(Math.min(value.length - 4, 8))}${value.slice(-2)}`;
@@ -101,6 +116,7 @@ function parseEcountConnectionSettingsBody(body: unknown): EcountConnectionSetti
     apiCertKey: requiredString(input, "apiCertKey"),
     zone: optionalString(input, "zone"),
     lanType: optionalString(input, "lanType"),
+    serverType: optionalEcountServerType(input, "serverType"),
   };
 }
 
@@ -128,6 +144,7 @@ function parseOptionalEcountConnectionTestBody(body: unknown): EcountConnectionT
   }
 
   const input = body as Record<string, unknown>;
+  optionalEcountServerType(input, "serverType");
   const hasInlineCredential = ["comCode", "userId", "apiCertKey"].some(
     (key) => input[key] !== undefined && input[key] !== null
   );

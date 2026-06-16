@@ -55,6 +55,13 @@ import {
 } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/shared/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { cn } from "@/shared/lib/utils";
 import type {
@@ -63,6 +70,7 @@ import type {
   ConnectorState,
   EcountConnectionSettingsRecord,
   EcountConnectionTestRecord,
+  EcountServerType,
 } from "@/shared/lib/agent-engine-client";
 
 type IntegrationTab = "erp" | "sns";
@@ -615,6 +623,9 @@ function EcountConnectionPanel({
   const [userId, setUserId] = useState("");
   const [apiCertKey, setApiCertKey] = useState("");
   const [zone, setZone] = useState(settings.zone ?? "");
+  const [serverType, setServerType] = useState<EcountServerType>(
+    settings.serverType ?? "test",
+  );
   const [webUserId, setWebUserId] = useState("");
   const [webPassword, setWebPassword] = useState("");
   const [saving, setSaving] = useState(false);
@@ -633,11 +644,17 @@ function EcountConnectionPanel({
     setStored(settings);
     setAccountLabel(settings.accountLabel ?? "");
     setZone(settings.zone ?? "");
+    setServerType(settings.serverType ?? "test");
     setWebUserId("");
     setWebPassword("");
   }, [settings]);
 
-  const hasInlineInput = Boolean(comCode.trim() || userId.trim() || apiCertKey.trim());
+  const hasInlineInput = Boolean(
+    comCode.trim() ||
+      userId.trim() ||
+      apiCertKey.trim() ||
+      serverType !== (stored.serverType ?? "test"),
+  );
   const hasCompleteInlineInput = Boolean(
     comCode.trim() && userId.trim() && apiCertKey.trim()
   );
@@ -656,6 +673,7 @@ function EcountConnectionPanel({
       apiCertKey: apiCertKey.trim(),
       zone: zone.trim() || null,
       lanType: "ko-KR",
+      serverType,
     };
   }
 
@@ -679,6 +697,7 @@ function EcountConnectionPanel({
       onConnectionChange(next);
       setAccountLabel(next.accountLabel ?? "");
       setZone(next.zone ?? "");
+      setServerType(next.serverType ?? "test");
       setComCode("");
       setUserId("");
       setApiCertKey("");
@@ -714,6 +733,7 @@ function EcountConnectionPanel({
         onConnectionChange(nextStored);
         setAccountLabel(nextStored.accountLabel ?? "");
         setZone(nextStored.zone ?? "");
+        setServerType(nextStored.serverType ?? "test");
         setComCode("");
         setUserId("");
         setApiCertKey("");
@@ -726,6 +746,7 @@ function EcountConnectionPanel({
         comCode: comCode.trim(),
         userId: userId.trim(),
         zone: zone.trim() || null,
+        serverType,
         checkedAt: new Date().toISOString(),
         message: "ECOUNT connection test failed.",
         diagnostics: {
@@ -795,6 +816,7 @@ function EcountConnectionPanel({
       onConnectionChange(next);
       setAccountLabel("");
       setZone("");
+      setServerType("test");
       setComCode("");
       setUserId("");
       setApiCertKey("");
@@ -838,6 +860,7 @@ function EcountConnectionPanel({
             </p>
             <p className="text-xs text-muted-foreground">
               {stored.zone ? `ZONE ${stored.zone} · ` : ""}
+              {ecountServerTypeLabel(stored.serverType)} ·{" "}
               {stored.checkedAt
                 ? `마지막 확인 ${formatDateTime(stored.checkedAt)}`
                 : "저장된 설정"}
@@ -869,6 +892,20 @@ function EcountConnectionPanel({
             placeholder="예: 본사 ERP"
           />
         </EcountFormField>
+        <EcountFormField label="OAPI 서버" htmlFor="ecount-server-type">
+          <Select
+            value={serverType}
+            onValueChange={(value) => setServerType(value as EcountServerType)}
+          >
+            <SelectTrigger id="ecount-server-type" className="w-full justify-between rounded-lg">
+              <SelectValue>{ecountServerTypeLabel(serverType)}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="test">테스트 서버 (sboapi)</SelectItem>
+              <SelectItem value="production">운영 서버 (oapi)</SelectItem>
+            </SelectContent>
+          </Select>
+        </EcountFormField>
         <EcountFormField label="ZONE" htmlFor="ecount-zone" helper="모르면 비워두면 자동 조회합니다.">
           <Input
             id="ecount-zone"
@@ -895,7 +932,7 @@ function EcountConnectionPanel({
         </EcountFormField>
         <EcountFormField
           className="sm:col-span-2"
-          label="테스트 API 인증키"
+          label="OAPI 인증키"
           htmlFor="ecount-api-cert-key"
           helper="저장하면 백엔드에서 암호화하고, 화면에는 다시 표시하지 않습니다."
         >
@@ -913,6 +950,7 @@ function EcountConnectionPanel({
         <p className="text-xs leading-5 text-muted-foreground">
           회사코드, 발급자 ID, 인증키를 모두 입력하면 설정을 저장할 수 있습니다.
           저장된 설정이 있으면 입력칸을 비운 상태로 연결 테스트를 실행할 수 있습니다.
+          서버를 바꿀 때는 해당 서버용 OAPI 인증키를 함께 입력해 주세요.
         </p>
       ) : null}
 
@@ -1479,12 +1517,17 @@ function emptyEcountConnectionSettings(): EcountConnectionSettingsRecord {
     userIdMasked: null,
     apiCertKeyMasked: null,
     zone: null,
+    serverType: "test",
     checkedAt: null,
     updatedAt: null,
     webLoginConfigured: false,
     webUserIdMasked: null,
     webLoginUpdatedAt: null,
   };
+}
+
+function ecountServerTypeLabel(serverType: EcountServerType): string {
+  return serverType === "production" ? "운영 서버 (oapi)" : "테스트 서버 (sboapi)";
 }
 
 function formatDateTime(iso: string): string {

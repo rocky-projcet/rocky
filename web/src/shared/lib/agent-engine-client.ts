@@ -170,7 +170,10 @@ export interface EcountConnectionTestInput {
   apiCertKey: string;
   zone?: string | null;
   lanType?: string | null;
+  serverType?: EcountServerType | null;
 }
+
+export type EcountServerType = "test" | "production";
 
 export interface EcountWebLoginSettingsInput {
   accountLabel?: string | null;
@@ -187,6 +190,7 @@ export interface EcountConnectionTestRecord {
   comCode: string;
   userId: string;
   zone: string | null;
+  serverType: EcountServerType;
   checkedAt: string;
   message: string;
   diagnostics?: {
@@ -202,6 +206,7 @@ export interface EcountConnectionSettingsRecord {
   userIdMasked: string | null;
   apiCertKeyMasked: string | null;
   zone: string | null;
+  serverType: EcountServerType;
   checkedAt: string | null;
   updatedAt: string | null;
   webLoginConfigured: boolean;

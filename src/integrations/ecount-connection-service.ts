@@ -5,7 +5,12 @@ export interface EcountConnectionTestInput {
   apiCertKey: string;
   zone?: string | null;
   lanType?: string | null;
+  serverType?: EcountServerType | null;
 }
+
+export type EcountServerType = "test" | "production";
+
+export const DEFAULT_ECOUNT_SERVER_TYPE: EcountServerType = "test";
 
 export interface EcountConnectionTestResult {
   ok: boolean;
@@ -14,6 +19,7 @@ export interface EcountConnectionTestResult {
   comCode: string;
   userId: string;
   zone: string | null;
+  serverType: EcountServerType;
   checkedAt: string;
   message: string;
   diagnostics?: {
@@ -145,6 +151,12 @@ function trimOptional(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+export function normalizeEcountServerType(
+  value: EcountServerType | string | null | undefined
+): EcountServerType {
+  return value === "production" ? "production" : DEFAULT_ECOUNT_SERVER_TYPE;
 }
 
 const PRODUCT_DETAIL_API = "InventoryBasic/ViewBasicProduct";
@@ -1139,12 +1151,18 @@ async function postJson(
 }
 
 function ecountDataApiUrl(
+  serverType: EcountServerType,
   zone: string,
   api: string,
   sessionId: string | null,
   sessionParam: "SESSION_ID" | "session_Id" = "SESSION_ID"
 ): string {
-  return `https://sboapi${zone}.ecount.com/OAPI/V2/${api}?${sessionParam}=${encodeURIComponent(sessionId ?? "")}`;
+  return `https://${ecountApiHost(serverType, zone)}/OAPI/V2/${api}?${sessionParam}=${encodeURIComponent(sessionId ?? "")}`;
+}
+
+function ecountApiHost(serverType: EcountServerType, zone?: string | null): string {
+  const prefix = serverType === "production" ? "oapi" : "sboapi";
+  return `${prefix}${zone ?? ""}.ecount.com`;
 }
 
 export class EcountConnectionService implements EcountConnectionTester {
@@ -1165,15 +1183,17 @@ export class EcountConnectionService implements EcountConnectionTester {
     const userId = input.userId.trim();
     const apiCertKey = input.apiCertKey.trim();
     const lanType = trimOptional(input.lanType) ?? "ko-KR";
+    const serverType = normalizeEcountServerType(input.serverType);
 
     try {
-      const zone = await this.resolveZone(comCode, trimOptional(input.zone));
+      const zone = await this.resolveZone(comCode, trimOptional(input.zone), serverType);
       const sessionId = await this.login({
         comCode,
         userId,
         apiCertKey,
         zone,
         lanType,
+        serverType,
       });
 
       return {
@@ -1183,6 +1203,7 @@ export class EcountConnectionService implements EcountConnectionTester {
         comCode,
         userId,
         zone,
+        serverType,
         checkedAt,
         message: sessionId
           ? "ECOUNT login succeeded and a session was issued."
@@ -1197,6 +1218,7 @@ export class EcountConnectionService implements EcountConnectionTester {
         comCode,
         userId,
         zone: trimOptional(input.zone),
+        serverType,
         checkedAt,
         message: "ECOUNT connection test failed.",
         diagnostics: {
@@ -1217,11 +1239,12 @@ export class EcountConnectionService implements EcountConnectionTester {
     const userId = input.userId.trim();
     const apiCertKey = input.apiCertKey.trim();
     const lanType = trimOptional(input.lanType) ?? "ko-KR";
+    const serverType = normalizeEcountServerType(input.serverType);
     let stage: "zone" | "login" | "read" = "zone";
     let zone = trimOptional(input.zone);
 
     try {
-      zone = await this.resolveZone(comCode, zone);
+      zone = await this.resolveZone(comCode, zone, serverType);
       stage = "login";
       const sessionId = await this.login({
         comCode,
@@ -1229,11 +1252,12 @@ export class EcountConnectionService implements EcountConnectionTester {
         apiCertKey,
         zone,
         lanType,
+        serverType,
       });
       stage = "read";
       const payload = await postJson(
         this.fetchImpl,
-        ecountDataApiUrl(zone, PRODUCT_LIST_API, sessionId, "session_Id"),
+        ecountDataApiUrl(serverType, zone, PRODUCT_LIST_API, sessionId, "session_Id"),
         buildProductPayload({
           sessionId,
           filters: options.filters,
@@ -1384,6 +1408,7 @@ export class EcountConnectionService implements EcountConnectionTester {
     const userId = input.userId.trim();
     const apiCertKey = input.apiCertKey.trim();
     const lanType = trimOptional(input.lanType) ?? "ko-KR";
+    const serverType = normalizeEcountServerType(input.serverType);
     const label = datasetLabel(config.dataset);
     let stage: EcountReadStage = "capability";
     let zone = trimOptional(input.zone);
@@ -1405,7 +1430,7 @@ export class EcountConnectionService implements EcountConnectionTester {
 
     try {
       stage = "zone";
-      zone = await this.resolveZone(comCode, zone);
+      zone = await this.resolveZone(comCode, zone, serverType);
       stage = "login";
       const sessionId = await this.login({
         comCode,
@@ -1413,11 +1438,12 @@ export class EcountConnectionService implements EcountConnectionTester {
         apiCertKey,
         zone,
         lanType,
+        serverType,
       });
       stage = "read";
       const payload = await postJson(
         this.fetchImpl,
-        ecountDataApiUrl(zone, config.api, sessionId),
+        ecountDataApiUrl(serverType, zone, config.api, sessionId),
         config.buildPayload({
           sessionId,
           filters: query.filters,
@@ -1474,14 +1500,22 @@ export class EcountConnectionService implements EcountConnectionTester {
     }
   }
 
-  private async resolveZone(comCode: string, zone: string | null): Promise<string> {
+  private async resolveZone(
+    comCode: string,
+    zone: string | null,
+    serverType: EcountServerType
+  ): Promise<string> {
     if (zone) {
       return zone;
     }
 
-    const payload = await postJson(this.fetchImpl, "https://sboapi.ecount.com/OAPI/V2/Zone", {
-      COM_CODE: comCode,
-    });
+    const payload = await postJson(
+      this.fetchImpl,
+      `https://${ecountApiHost(serverType)}/OAPI/V2/Zone`,
+      {
+        COM_CODE: comCode,
+      }
+    );
     const resolvedZone = firstStringAt(payload, [
       ["Data", "Datas", "ZONE"],
       ["Data", "ZONE"],
@@ -1500,17 +1534,18 @@ export class EcountConnectionService implements EcountConnectionTester {
     apiCertKey: string;
     zone: string;
     lanType: string;
+    serverType: EcountServerType;
   }): Promise<string | null> {
     const payload = await postJson(
       this.fetchImpl,
-      `https://sboapi${input.zone}.ecount.com/OAPI/V2/OAPILogin`,
+      `https://${ecountApiHost(input.serverType, input.zone)}/OAPI/V2/OAPILogin`,
       {
         COM_CODE: input.comCode,
         USER_ID: input.userId,
         API_CERT_KEY: input.apiCertKey,
         LAN_TYPE: input.lanType,
         ZONE: input.zone,
-        ISTEST: "Y",
+        ISTEST: input.serverType === "production" ? "N" : "Y",
       }
     );
     const sessionId = firstStringAt(payload, [

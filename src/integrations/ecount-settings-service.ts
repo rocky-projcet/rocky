@@ -4,7 +4,12 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { serializeJson } from "../sessions/session-store.js";
-import type { EcountConnectionTestInput } from "./ecount-connection-service.js";
+import {
+  DEFAULT_ECOUNT_SERVER_TYPE,
+  normalizeEcountServerType,
+  type EcountConnectionTestInput,
+  type EcountServerType,
+} from "./ecount-connection-service.js";
 import type { EcountWebLoginInput } from "./ecount-browser-sales-export.js";
 
 export interface EcountConnectionSettingsInput extends EcountConnectionTestInput {
@@ -26,6 +31,7 @@ export interface EcountConnectionSettingsRecord {
   userIdMasked: string | null;
   apiCertKeyMasked: string | null;
   zone: string | null;
+  serverType: EcountServerType;
   checkedAt: string | null;
   updatedAt: string | null;
   webLoginConfigured: boolean;
@@ -63,6 +69,7 @@ interface PersistedEcountSettings {
   version: 1;
   accountLabel: string | null;
   zone: string | null;
+  serverType?: EcountServerType | null;
   checkedAt: string | null;
   updatedAt: string;
   secret: EncryptedPayload;
@@ -149,6 +156,7 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
       userIdMasked: maskValue(secret?.userId ?? null),
       apiCertKeyMasked: maskValue(secret?.apiCertKey ?? null),
       zone: stored?.zone ?? null,
+      serverType: normalizeEcountServerType(stored?.serverType),
       checkedAt: stored?.checkedAt ?? null,
       updatedAt: stored?.updatedAt ?? null,
       webLoginConfigured: Boolean(webLogin),
@@ -169,6 +177,7 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
       apiCertKey: secret.apiCertKey,
       zone: stored.zone,
       lanType: secret.lanType,
+      serverType: normalizeEcountServerType(stored.serverType),
     };
   }
 
@@ -203,6 +212,7 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
       version: 1,
       accountLabel,
       zone,
+      serverType: normalizeEcountServerType(input.serverType),
       checkedAt: input.checkedAt ?? null,
       updatedAt: timestamp,
       secret: await this.encryptSecret(secret),
@@ -249,6 +259,7 @@ export class EcountSettingsService implements EcountSettingsServiceLike {
     const next: PersistedEcountSettings = {
       ...stored,
       zone: trimOptional(input.zone) ?? stored.zone,
+      serverType: normalizeEcountServerType(stored.serverType),
       checkedAt: input.checkedAt,
       updatedAt: this.now(),
     };
@@ -377,6 +388,7 @@ function emptySettingsRecord(): EcountConnectionSettingsRecord {
     userIdMasked: null,
     apiCertKeyMasked: null,
     zone: null,
+    serverType: DEFAULT_ECOUNT_SERVER_TYPE,
     checkedAt: null,
     updatedAt: null,
     webLoginConfigured: false,

@@ -16,6 +16,21 @@ if (Test-Path -LiteralPath $ManagedEnvironmentPath) {
   . $ManagedEnvironmentPath
 }
 
+$ElectronExePath = Join-Path $Root "electron\Rocky.exe"
+if (
+  (Test-Path -LiteralPath $ElectronExePath -PathType Leaf) -and
+  (-not $NoBrowser) -and
+  (-not $Rebuild) -and
+  (-not $UseNpmPreview)
+) {
+  if (-not [string]::IsNullOrWhiteSpace($StateRoot)) {
+    $env:ROCKY_STATE_ROOT = $StateRoot
+  }
+  Start-Process -FilePath $ElectronExePath -ArgumentList @($Root) -WorkingDirectory $Root
+  Write-Host "Started Rocky desktop app."
+  return
+}
+
 function Resolve-Tool {
   param(
     [Parameter(Mandatory = $true)][string[]]$Names,

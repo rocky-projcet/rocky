@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rocky Electron Desktop Chrome"
+  short_description: "Guide Electron native chrome and menu work in Rocky."
+  default_prompt: "Use $rocky-electron-desktop-chrome to update Rocky Electron desktop chrome behavior."

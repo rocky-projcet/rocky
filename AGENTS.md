@@ -5,6 +5,7 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 ## Local Skills
 
 - `rocky-dev` -> `.agents/skills/rocky-dev/SKILL.md`
+- `rocky-electron-desktop-chrome` -> `.agents/skills/rocky-electron-desktop-chrome/SKILL.md`
 - `rocky-release` -> `.agents/skills/rocky-release/SKILL.md`
 - `rocky-service-run` -> `.agents/skills/rocky-service-run/SKILL.md`
 - `rocky-web-ui-dev` -> `.agents/skills/rocky-web-ui-dev/SKILL.md`
@@ -47,6 +48,7 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 | `roc-finish-current-work` | Keep | End-to-end issue/PR completion workflow. |
 | `roc-publish` | Keep | GitHub Issue and PR publication workflow. |
 | `rocky-dev` | Keep | Runtime and backend development workflow. |
+| `rocky-electron-desktop-chrome` | Add | Captures the Electron titlebar, native menu, preload bridge, and desktop chrome verification workflow. |
 | `rocky-release` | Keep | Release preparation and validation workflow. |
 | `rocky-runtime-probe` | Keep | Runtime flag and model capability verification. |
 | `rocky-service-run` | Keep | Local backend and web service run workflow. |

@@ -11,6 +11,7 @@ const backendProxyTarget =
   ).process?.env?.AGENT_ENGINE_PROXY_TARGET ?? "http://127.0.0.1:3000";
 
 export default defineConfig({
+  base: "./",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

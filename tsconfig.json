@@ -9,6 +9,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "electron/**/*.ts",
     "src/**/*.ts",
     "scripts/**/*.ts",
     "test/**/*.ts"

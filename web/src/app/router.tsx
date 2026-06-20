@@ -1,6 +1,7 @@
 import {
   Navigate,
   createBrowserRouter,
+  createHashRouter,
   useParams,
 } from "react-router-dom";
 
@@ -35,8 +36,13 @@ import { SkillDetailPage } from "../domains/skill/pages/skill-detail-page";
 import { SkillTemplateDetailPage } from "../domains/skill/pages/skill-template-detail-page";
 import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
 import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
+import { isDesktopRuntime } from "../shared/lib/desktop-api";
 
-export const router = createBrowserRouter([
+const createRouter = isDesktopRuntime(globalThis)
+  ? createHashRouter
+  : createBrowserRouter;
+
+export const router = createRouter([
   {
     path: "/",
     element: <AppShell />,

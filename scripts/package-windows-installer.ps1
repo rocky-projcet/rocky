@@ -154,6 +154,27 @@ function Copy-RequiredFile {
   Copy-Item -LiteralPath $Source -Destination $Target -Force
 }
 
+function Copy-ElectronRuntime {
+  param([Parameter(Mandatory = $true)][string]$TargetRoot)
+
+  $NodePath = Resolve-Tool -Names @("node.exe", "node") -DisplayName "Node.js"
+  $ElectronExecutable = (& $NodePath -e "console.log(require('electron'))" 2>$null | Select-Object -Last 1)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ElectronExecutable)) {
+    throw "Could not resolve Electron runtime. Run npm install before packaging."
+  }
+
+  $ElectronExecutable = [string]$ElectronExecutable
+  if (-not (Test-Path -LiteralPath $ElectronExecutable -PathType Leaf)) {
+    throw "Missing Electron runtime. Run npm install before packaging."
+  }
+
+  $ElectronSource = Split-Path -Parent $ElectronExecutable
+  $ElectronExecutableName = Split-Path -Leaf $ElectronExecutable
+  $ElectronTarget = Join-Path $TargetRoot "electron"
+  Copy-Item -LiteralPath $ElectronSource -Destination $ElectronTarget -Recurse -Force
+  Rename-Item -LiteralPath (Join-Path $ElectronTarget $ElectronExecutableName) -NewName "Rocky.exe" -Force
+}
+
 function Write-MinimalPackageJson {
   param([Parameter(Mandatory = $true)][string]$TargetRoot)
 
@@ -165,6 +186,7 @@ function Write-MinimalPackageJson {
   "private": true,
   "version": "$Version",
   "type": "module",
+  "main": "./dist/electron/main.js",
   "bin": {
     "rocky-project": "./dist/src/cli.js"
   },
@@ -248,8 +270,10 @@ New-Item -ItemType Directory -Force -Path $PayloadRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 Copy-RequiredDirectory -RelativePath "dist\src" -TargetRoot $PayloadRoot
+Copy-RequiredDirectory -RelativePath "dist\electron" -TargetRoot $PayloadRoot
 Copy-RequiredDirectory -RelativePath "web\dist" -TargetRoot $PayloadRoot
 Copy-RequiredDirectory -RelativePath "node_modules" -TargetRoot $PayloadRoot
+Copy-ElectronRuntime -TargetRoot $PayloadRoot
 Copy-RequiredDirectory -RelativePath "assets\windows" -TargetRoot $PayloadRoot
 Copy-RequiredFile -RelativePath "scripts\install-windows.ps1" -TargetRoot $PayloadRoot
 Copy-RequiredFile -RelativePath "scripts\start-rocky-windows.ps1" -TargetRoot $PayloadRoot

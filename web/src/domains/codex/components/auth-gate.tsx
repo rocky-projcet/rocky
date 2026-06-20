@@ -9,10 +9,11 @@ import {
 import { ProviderGlyph } from "./provider-glyph";
 import { providerAccentClasses, providerLabel } from "../lib/provider-display";
 import type { ProviderAccountRecord, ProviderKind } from "../types";
+import { resolvePublicAssetPath } from "@/shared/lib/public-asset";
 import { cn } from "@/shared/lib/utils";
 
 const GATED_PROVIDERS: ReadonlyArray<ProviderKind> = ["codex"];
-const BOOT_VIDEO_PATH = "/rocky-start-screen.mp4";
+const BOOT_VIDEO_PATH = resolvePublicAssetPath("rocky-start-screen.mp4");
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const accountsQuery = useProviderAccountsQuery();

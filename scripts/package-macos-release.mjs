@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { cp, mkdir, rm, stat, writeFile, chmod } from "node:fs/promises";
+import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -132,7 +132,7 @@ function plist(version) {
   <key>CFBundleDisplayName</key>
   <string>Rocky</string>
   <key>CFBundleExecutable</key>
-  <string>Rocky</string>
+  <string>Electron</string>
   <key>CFBundleIdentifier</key>
   <string>works.earendil.rocky</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -146,91 +146,9 @@ function plist(version) {
   <key>CFBundleVersion</key>
   <string>${version.replace(/^v/, "")}</string>
   <key>LSMinimumSystemVersion</key>
-  <string>12.0</string>
+  <string>13.0</string>
 </dict>
 </plist>
-`;
-}
-
-function launcherScript() {
-  return `#!/bin/sh
-set -eu
-
-APP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../Resources/app" && pwd)"
-LOG_DIR="$HOME/Library/Logs/Rocky"
-STATE_ROOT="\${ROCKY_STATE_ROOT:-$HOME/Library/Application Support/Rocky/agent-engine}"
-API_HOST="\${ROCKY_HOST:-127.0.0.1}"
-API_PORT="\${ROCKY_API_PORT:-3000}"
-WEB_PORT="\${ROCKY_WEB_PORT:-4173}"
-WEB_URL="http://$API_HOST:$WEB_PORT"
-
-mkdir -p "$LOG_DIR" "$STATE_ROOT"
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"
-
-find_node() {
-  if [ -n "\${ROCKY_NODE:-}" ] && [ -x "$ROCKY_NODE" ]; then
-    printf '%s\n' "$ROCKY_NODE"
-    return 0
-  fi
-
-  if command -v node >/dev/null 2>&1; then
-    command -v node
-    return 0
-  fi
-
-  for candidate in \
-    /opt/homebrew/bin/node \
-    /usr/local/bin/node \
-    "$HOME/.volta/bin/node" \
-    "$HOME/.asdf/shims/node"; do
-    if [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  if [ -d "$HOME/.nvm/versions/node" ]; then
-    for candidate in "$HOME"/.nvm/versions/node/*/bin/node; do
-      if [ -x "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    done
-  fi
-
-  return 1
-}
-
-NODE_BIN="$(find_node || true)"
-NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-if [ -z "$NODE_BIN" ] || [ "$NODE_MAJOR" -lt 22 ]; then
-  osascript -e 'display alert "Rocky requires Node.js 22 or newer" message "Install Node.js 22+ with Homebrew, Volta, asdf, or nvm. If Node is already installed, set ROCKY_NODE to its node binary and open Rocky from Terminal."' >/dev/null 2>&1 || true
-  {
-    echo "Rocky requires Node.js 22 or newer."
-    echo "PATH=$PATH"
-    echo "ROCKY_NODE=\${ROCKY_NODE:-}"
-    echo "Detected NODE_BIN=$NODE_BIN"
-    echo "Detected NODE_MAJOR=$NODE_MAJOR"
-  } >> "$LOG_DIR/rocky.log"
-  exit 1
-fi
-
-echo "Using Node.js at $NODE_BIN" >> "$LOG_DIR/rocky.log"
-
-cd "$APP_DIR"
-"$NODE_BIN" dist/src/cli.js serve --host "$API_HOST" --port "$API_PORT" --state-root "$STATE_ROOT" >> "$LOG_DIR/api.log" 2>&1 &
-API_PID=$!
-"$NODE_BIN" scripts/serve-web-dist.mjs --host "$API_HOST" --port "$WEB_PORT" --proxy-target "http://$API_HOST:$API_PORT" >> "$LOG_DIR/web.log" 2>&1 &
-WEB_PID=$!
-
-cleanup() {
-  kill "$API_PID" "$WEB_PID" >/dev/null 2>&1 || true
-}
-trap cleanup INT TERM EXIT
-
-sleep 2
-open "$WEB_URL" >/dev/null 2>&1 || true
-wait
 `;
 }
 
@@ -239,20 +157,30 @@ async function stageApp(options) {
   const stageRoot = path.join(repoRoot, ".tmp", "macos-release", options.tag);
   const appRoot = path.join(stageRoot, "Rocky.app");
   const contentsRoot = path.join(appRoot, "Contents");
-  const macosRoot = path.join(contentsRoot, "MacOS");
   const resourcesRoot = path.join(contentsRoot, "Resources");
   const payloadRoot = path.join(resourcesRoot, "app");
+  const electronAppSource = path.join(
+    repoRoot,
+    "node_modules",
+    "electron",
+    "dist",
+    "Electron.app"
+  );
 
   assertChildPath(path.join(repoRoot, ".tmp"), stageRoot);
   assertChildPath(path.join(repoRoot, "releases"), options.outputDirectory);
+  await assertExists(
+    electronAppSource,
+    "Electron.app runtime. Run npm install on a macOS builder before packaging"
+  );
 
   await rm(stageRoot, { recursive: true, force: true });
-  await mkdir(macosRoot, { recursive: true });
+  await mkdir(stageRoot, { recursive: true });
+  await cp(electronAppSource, appRoot, { recursive: true, force: true });
+  await rm(payloadRoot, { recursive: true, force: true });
   await mkdir(payloadRoot, { recursive: true });
 
   await writeFile(path.join(contentsRoot, "Info.plist"), plist(options.tag), "utf8");
-  await writeFile(path.join(macosRoot, "Rocky"), launcherScript(), "utf8");
-  await chmod(path.join(macosRoot, "Rocky"), 0o755);
 
   await cp(path.join(repoRoot, "dist"), path.join(payloadRoot, "dist"), {
     recursive: true,
@@ -267,7 +195,6 @@ async function stageApp(options) {
     force: true,
   });
 
-  await copyIfExists(path.join(repoRoot, "scripts", "serve-web-dist.mjs"), path.join(payloadRoot, "scripts", "serve-web-dist.mjs"));
   await copyIfExists(path.join(repoRoot, "package.json"), path.join(payloadRoot, "package.json"));
   await copyIfExists(path.join(repoRoot, "package-lock.json"), path.join(payloadRoot, "package-lock.json"));
   await copyIfExists(path.join(repoRoot, "README.md"), path.join(payloadRoot, "README.md"));
@@ -284,10 +211,11 @@ async function stageApp(options) {
 async function validateApp(appRoot) {
   const payloadRoot = path.join(appRoot, "Contents", "Resources", "app");
   await assertExists(path.join(appRoot, "Contents", "Info.plist"), "Info.plist");
-  await assertExists(path.join(appRoot, "Contents", "MacOS", "Rocky"), "launcher");
+  await assertExists(path.join(appRoot, "Contents", "MacOS", "Electron"), "Electron executable");
+  await assertExists(path.join(payloadRoot, "dist", "electron", "main.js"), "Electron main");
+  await assertExists(path.join(payloadRoot, "dist", "electron", "preload.js"), "Electron preload");
   await assertExists(path.join(payloadRoot, "dist", "src", "cli.js"), "backend CLI");
   await assertExists(path.join(payloadRoot, "web", "dist", "index.html"), "built web UI");
-  await assertExists(path.join(payloadRoot, "scripts", "serve-web-dist.mjs"), "web static server");
   await assertExists(path.join(payloadRoot, "node_modules"), "runtime dependencies");
 }
 

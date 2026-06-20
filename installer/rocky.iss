@@ -5,7 +5,7 @@
 #define MyAppName "Rocky"
 #define MyAppPublisher "Rocky"
 #define MyAppURL "https://github.com/rocky-projcet/rocky"
-#define MyAppExeName "Start-Rocky-Windows.cmd"
+#define MyAppExeName "electron\Rocky.exe"
 
 #if GetEnv("ROCKY_RELEASE_TAG") != ""
   #define ReleaseTag GetEnv("ROCKY_RELEASE_TAG")
@@ -73,13 +73,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "{#PayloadRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Rocky"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\assets\windows\rocky.ico"
+Name: "{group}\Rocky"; Filename: "{app}\{#MyAppExeName}"; Parameters: """{app}"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\windows\rocky.ico"
 Name: "{group}\Stop Rocky"; Filename: "{app}\Stop-Rocky-Windows.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\assets\windows\rocky.ico"
 Name: "{group}\Uninstall Rocky"; Filename: "{uninstallexe}"; IconFilename: "{app}\assets\windows\rocky-uninstall.ico"
 
 [Run]
 Filename: "{app}\Install-Rocky-Windows.cmd"; Parameters: "-InPlace -SkipDependencyInstall -SkipBuild -IncludeBundledDependencies -SkipWindowsShellRegistration -NoStart"; StatusMsg: "Preparing Rocky runtime and preserving existing state..."; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Description: "Start Rocky"; Flags: nowait postinstall skipifsilent runhidden
+Filename: "{app}\{#MyAppExeName}"; Parameters: """{app}"""; Description: "Start Rocky"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{app}\Stop-Rocky-Windows.cmd"; Flags: runhidden waituntilterminated; RunOnceId: "StopRocky"

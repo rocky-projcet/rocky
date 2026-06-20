@@ -89,6 +89,7 @@ import { WorkspaceAwareMarkdownLink } from "@/shared/components/workspace-aware-
 import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import type { WorkspacePreviewPathKind } from "@/shared/lib/workspace-link-target";
 import { agentEngineClient } from "@/shared/lib/api-client";
+import { resolvePublicAssetPath } from "@/shared/lib/public-asset";
 import type {
   AgentWorkspaceDirectoryRecord,
   AgentWorkspaceEntryRecord,
@@ -2862,7 +2863,7 @@ function RockyReplyMark() {
   return (
     <div className="rocky-reply-mark mt-1 h-6 w-7 shrink-0 rounded-lg bg-secondary/85">
       <img
-        src="/Rocky_logo_mark.svg"
+        src={resolvePublicAssetPath("Rocky_logo_mark.svg")}
         alt=""
         aria-hidden="true"
         className="rocky-reply-mark__icon"

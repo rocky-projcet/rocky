@@ -13,9 +13,10 @@ default, does not require administrator rights, and keeps Rocky runtime state
 under the current user's profile by default.
 
 The setup executable uses a source-free app payload. The installed folder
-contains compiled backend JavaScript, built web assets, launchers, icons, and
-runtime dependencies. It intentionally excludes TypeScript source, tests, local
-agent instructions, and development configuration.
+contains the Electron desktop runtime, compiled backend JavaScript, built web
+assets, launchers, icons, and runtime dependencies. It intentionally excludes
+TypeScript source, tests, local agent instructions, and development
+configuration.
 
 ## Requirements
 
@@ -50,9 +51,9 @@ The installer:
 5. Uses bundled backend npm dependencies when installed through the setup executable.
 6. Creates installed app and Start Menu shortcuts with Rocky icons when Windows allows it.
 7. Registers a per-user uninstall entry when Windows allows it.
-8. Starts the Rocky API on `127.0.0.1:3000`.
-9. Starts the Rocky web UI on `127.0.0.1:4173`.
-10. Opens the web UI in the default browser.
+8. Opens the Rocky desktop app.
+9. Starts the Rocky API on an internal loopback port managed by the desktop app.
+10. Loads the built web UI inside the native app window.
 
 The installer does not automate Codex login. If Codex-backed runs need login,
 authenticate Codex separately after install.
@@ -90,8 +91,7 @@ To start later:
 Start-Rocky-Windows.cmd
 ```
 
-The installer also creates `Rocky.lnk` in the installed app folder with the
-Rocky icon.
+The installer also creates a Start Menu `Rocky` shortcut with the Rocky icon.
 
 To stop the background API and web preview processes:
 
@@ -132,8 +132,8 @@ releases\v0.1.3\Rocky-Setup-v0.1.3.exe
 ```
 
 The `rocky-v0.1.3-windows.zip` bundle is the developer-oriented fallback. The
-setup executable and `rocky-v0.1.3-windows-app.zip` use the source-free app
-payload and skip target-machine `npm ci` and build steps.
+setup executable and `rocky-v0.1.3-windows-app.zip` use the source-free
+Electron app payload and skip target-machine `npm ci` and build steps.
 
 `npm run release:windows:installer` requires Inno Setup 6. If `ISCC.exe` is not
 on `PATH`, pass it explicitly:

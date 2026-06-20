@@ -35,6 +35,35 @@ import { registerSkillRoutes } from "./routes/skill-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { SystemHardwareStatusService } from "../system/hardware-status-service.js";
 
+const DESKTOP_CORS_ORIGINS = new Set(["file://", "null", "rocky://app"]);
+
+function registerDesktopCors(server: FastifyInstance): void {
+  if (process.env.ROCKY_DESKTOP_CORS !== "1") {
+    return;
+  }
+
+  server.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    if (typeof origin !== "string" || !DESKTOP_CORS_ORIGINS.has(origin)) {
+      return;
+    }
+
+    reply.header("access-control-allow-origin", origin);
+    reply.header(
+      "access-control-allow-methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    );
+    reply.header(
+      "access-control-allow-headers",
+      "accept,content-type"
+    );
+
+    if (request.method === "OPTIONS") {
+      reply.code(204).send();
+    }
+  });
+}
+
 export function createAgentEngineServer(
   options: AgentEngineServerOptions = {}
 ): FastifyInstance {
@@ -145,6 +174,7 @@ export function createAgentEngineServer(
   const server = Fastify({
     logger: false,
   });
+  registerDesktopCors(server);
 
   server.register(registerAgentRoutes, {
     agentService,

@@ -16,15 +16,14 @@ installer/update UX: users run the package, macOS shows installation progress,
 and the payload is installed to `/Applications/Rocky.app`. The DMG is a
 convenience wrapper created with macOS `hdiutil` when available.
 
-The app bundle contains compiled backend JavaScript, built web assets, the small
-static web server script, package metadata, and production npm dependencies. It
-intentionally excludes TypeScript source, tests, local agent instructions, and
-development configuration.
+The app bundle contains the Electron desktop runtime, compiled backend
+JavaScript, built web assets, package metadata, and production npm dependencies.
+It intentionally excludes TypeScript source, tests, local agent instructions,
+and development configuration.
 
 ## Requirements
 
-- macOS 12 or newer
-- Node.js 22 or newer installed through Homebrew, Volta, asdf, nvm, or available as `node`
+- macOS 13 Ventura or newer
 - Codex CLI installed and authenticated before Codex-backed runs are used
 
 ## Install and run
@@ -49,23 +48,12 @@ Preview app-bundle flow:
 
 From the DMG artifact, open the DMG and copy/open `Rocky.app`.
 
-When opened, Rocky starts:
-
-- API: `http://127.0.0.1:3000`
-- Web UI: `http://127.0.0.1:4173`
+When opened, Rocky starts a native Electron window. The backend API uses an
+internal loopback port managed by the desktop app, and the built web UI loads
+inside the app window instead of opening the default browser.
 
 Logs are written under `~/Library/Logs/Rocky/`. Runtime state defaults to
 `~/Library/Application Support/Rocky/agent-engine`.
-
-Rocky tries to find Node.js in standard GUI-safe locations, including Homebrew, Volta, asdf, and nvm installs. If the app still shows the Node.js requirement alert, launch it once from Terminal with an explicit Node path:
-
-```sh
-ROCKY_NODE="$(command -v node)" \
-ROCKY_API_PORT=3000 \
-ROCKY_WEB_PORT=4173 \
-ROCKY_STATE_ROOT="$HOME/Library/Application Support/Rocky/agent-engine" \
-/Applications/Rocky.app/Contents/MacOS/Rocky
-```
 
 ## Update-safe path
 
@@ -114,9 +102,9 @@ From the repository root on macOS:
 npm run release:macos
 ```
 
-This runs the backend build, web build, stages `Rocky.app`, installs production
-npm dependencies into the staged payload, validates the app layout, and creates
-artifacts under:
+This runs the backend build, web build, stages an Electron-based `Rocky.app`,
+installs production npm dependencies into the staged payload, validates the app
+layout, and creates artifacts under:
 
 ```text
 releases/v0.1.3/
@@ -141,15 +129,9 @@ After building or downloading the artifact:
 
 1. Install `rocky-v0.1.3-macos-<arch>.pkg`, unzip the app zip, or mount the DMG.
 2. Open `/Applications/Rocky.app` or the staged `Rocky.app`.
-3. Confirm the browser opens `http://127.0.0.1:4173`.
-4. Confirm the API responds:
-
-   ```sh
-   curl http://127.0.0.1:3000/agents
-   ```
-
-5. Confirm logs exist under `~/Library/Logs/Rocky/` if startup fails.
-6. For Codex-backed runs, authenticate Codex separately and run a minimal Rocky
+3. Confirm the Rocky native window opens and shows the web UI.
+4. Confirm logs exist under `~/Library/Logs/Rocky/` if startup fails.
+5. For Codex-backed runs, authenticate Codex separately and run a minimal Rocky
    smoke from the UI or CLI.
 
 ## Signing and notarization decision
@@ -169,13 +151,12 @@ the artifact before publication.
 
 ## Known limitations
 
-- No bundled Node.js runtime.
 - No Apple Developer ID signing or notarization.
 - The `.pkg` installer is unsigned and uses macOS Installer UI, but it is not a
   fully automatic in-app updater.
 - No automatic download/update channel is provided in `v0.1.3`.
 - No silent/background update flow is provided.
 - Rollback is best-effort command-line recovery, not a complete GUI rollback UX.
-- No LaunchAgent/service registration; closing the app stops the API and web UI.
+- No LaunchAgent/service registration; closing the app stops the backend API.
 - No custom macOS app icon yet.
 - Codex login is not automated by the installer.

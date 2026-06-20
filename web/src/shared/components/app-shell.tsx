@@ -18,6 +18,7 @@ import { AuthGate } from "@/domains/codex/components/auth-gate";
 import { MilestoneHost } from "@/domains/onboarding/milestone-host";
 import { ProductTourOrchestrator } from "@/domains/onboarding/product-tour-orchestrator";
 import { SidebarIdentity } from "@/domains/codex/components/sidebar-identity";
+import { DesktopChromeBar } from "./desktop-chrome";
 import { SidebarLogo } from "./sidebar-logo";
 import { SiteHeader } from "./site-header";
 import {
@@ -101,7 +102,7 @@ function isArchiveRoute(pathname: string): boolean {
 export function AppShell() {
   return (
     <AuthGate>
-      <SidebarProvider className="h-svh max-h-svh">
+      <SidebarProvider className="h-svh max-h-svh flex-col overflow-hidden">
         <AppShellInner />
         <ProductTourOrchestrator />
         <MilestoneHost />
@@ -153,138 +154,141 @@ function AppShellInner() {
 
   return (
     <>
-      <Sidebar
-        collapsible="icon"
-        className="cursor-col-resize [&_a]:cursor-pointer [&_button]:cursor-pointer [&_input]:cursor-text"
-        onClick={handleSidebarBackgroundClick}
-      >
-        <SidebarHeader className="px-3 py-4">
-          <SidebarLogo />
-        </SidebarHeader>
-
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="홈"
-                    isActive={rockyHomeRoute}
-                    render={<NavLink to="/" />}
-                  >
-                    <Home />
-                    <span>홈</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="검색"
-                    isActive={searchRoute}
-                    render={<NavLink to="/search" />}
-                  >
-                    <Search />
-                    <span>검색</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="연동"
-                    isActive={integrationsRoute}
-                    render={<NavLink to="/integrations" />}
-                  >
-                    <Plug />
-                    <span>연동</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="즐겨찾기"
-                    isActive={favoritesRoute}
-                    render={<NavLink to="/favorites" />}
-                  >
-                    <Star />
-                    <span>즐겨찾기</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem data-tour="nav-tasks">
-                  <SidebarMenuButton
-                    tooltip="작업"
-                    isActive={tasksListRoute}
-                    render={<NavLink to="/tasks" />}
-                  >
-                    <ListTodo />
-                    <span>작업</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem data-tour="nav-skills">
-                  <SidebarMenuButton
-                    tooltip="공용 스킬"
-                    isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
-                    render={<NavLink to="/skills" />}
-                  >
-                    <Sparkles />
-                    <span>공용 스킬</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem data-tour="nav-agents">
-                  <SidebarMenuButton
-                    tooltip="내 에이전트"
-                    isActive={agentsRoute}
-                    render={<NavLink to="/agents" />}
-                  >
-                    <Bot />
-                    <span>내 에이전트</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem data-tour="nav-skill-templates">
-                  <SidebarMenuButton
-                    tooltip="스킬 템플릿"
-                    isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}
-                    render={<NavLink to="/templates" />}
-                  >
-                    <LayoutTemplate />
-                    <span>스킬 템플릿</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <ArchiveMenuItem
-                  archiveOpen={archiveOpen}
-                  onToggleArchive={() => setArchiveOpen((open) => !open)}
-                  archiveRoute={archiveRoute}
-                  pathname={location.pathname}
-                  fromArchiveContext={fromArchiveContext}
-                />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup className="mt-auto">
-            <SidebarGroupContent>
-              <SidebarIdentity />
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-      </Sidebar>
-
-      <SidebarInset>
-        <SiteHeader />
-        <div
-          className={cn(
-            "min-h-0 flex-1",
-            boundedCanvas
-              ? cn(
-                  "box-border flex flex-col overflow-hidden",
-                  taskDetailRoute
-                    ? "p-0"
-                    : compactRoute
-                      ? "p-5 md:p-6"
-                      : "p-8 md:p-10",
-                )
-              : "custom-scrollbar overflow-y-auto",
-          )}
+      <DesktopChromeBar />
+      <div className="flex min-h-0 w-full flex-1">
+        <Sidebar
+          collapsible="icon"
+          className="cursor-col-resize md:top-9 md:h-[calc(100svh-2.25rem)] [&_a]:cursor-pointer [&_button]:cursor-pointer [&_input]:cursor-text"
+          onClick={handleSidebarBackgroundClick}
         >
-          <Outlet />
-        </div>
-      </SidebarInset>
+          <SidebarHeader className="px-3 py-4">
+            <SidebarLogo />
+          </SidebarHeader>
+
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="홈"
+                      isActive={rockyHomeRoute}
+                      render={<NavLink to="/" />}
+                    >
+                      <Home />
+                      <span>홈</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="검색"
+                      isActive={searchRoute}
+                      render={<NavLink to="/search" />}
+                    >
+                      <Search />
+                      <span>검색</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="연동"
+                      isActive={integrationsRoute}
+                      render={<NavLink to="/integrations" />}
+                    >
+                      <Plug />
+                      <span>연동</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="즐겨찾기"
+                      isActive={favoritesRoute}
+                      render={<NavLink to="/favorites" />}
+                    >
+                      <Star />
+                      <span>즐겨찾기</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem data-tour="nav-tasks">
+                    <SidebarMenuButton
+                      tooltip="작업"
+                      isActive={tasksListRoute}
+                      render={<NavLink to="/tasks" />}
+                    >
+                      <ListTodo />
+                      <span>작업</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem data-tour="nav-skills">
+                    <SidebarMenuButton
+                      tooltip="공용 스킬"
+                      isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
+                      render={<NavLink to="/skills" />}
+                    >
+                      <Sparkles />
+                      <span>공용 스킬</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem data-tour="nav-agents">
+                    <SidebarMenuButton
+                      tooltip="내 에이전트"
+                      isActive={agentsRoute}
+                      render={<NavLink to="/agents" />}
+                    >
+                      <Bot />
+                      <span>내 에이전트</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem data-tour="nav-skill-templates">
+                    <SidebarMenuButton
+                      tooltip="스킬 템플릿"
+                      isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}
+                      render={<NavLink to="/templates" />}
+                    >
+                      <LayoutTemplate />
+                      <span>스킬 템플릿</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <ArchiveMenuItem
+                    archiveOpen={archiveOpen}
+                    onToggleArchive={() => setArchiveOpen((open) => !open)}
+                    archiveRoute={archiveRoute}
+                    pathname={location.pathname}
+                    fromArchiveContext={fromArchiveContext}
+                  />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+
+            <SidebarGroup className="mt-auto">
+              <SidebarGroupContent>
+                <SidebarIdentity />
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+        </Sidebar>
+
+        <SidebarInset>
+          <SiteHeader />
+          <div
+            className={cn(
+              "min-h-0 flex-1",
+              boundedCanvas
+                ? cn(
+                    "box-border flex flex-col overflow-hidden",
+                    taskDetailRoute
+                      ? "p-0"
+                      : compactRoute
+                        ? "p-5 md:p-6"
+                        : "p-8 md:p-10",
+                  )
+                : "custom-scrollbar overflow-y-auto",
+            )}
+          >
+            <Outlet />
+          </div>
+        </SidebarInset>
+      </div>
     </>
   );
 }

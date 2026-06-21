@@ -46,7 +46,7 @@ The installer:
 
 1. Checks Node.js 22 or newer.
 2. Installs a portable Node.js runtime under Rocky when Node.js 22+ is missing.
-3. Installs or updates the Codex CLI under Rocky's app-managed npm prefix.
+3. Skips network Codex CLI installation for the packaged setup executable.
 4. Copies Rocky into `%LOCALAPPDATA%\Programs\Rocky`, unless `-InstallDir` is set.
 5. Uses bundled backend npm dependencies when installed through the setup executable.
 6. Creates installed app and Start Menu shortcuts with Rocky icons when Windows allows it.
@@ -55,8 +55,9 @@ The installer:
 9. Starts the Rocky API on an internal loopback port managed by the desktop app.
 10. Loads the built web UI inside the native app window.
 
-The installer does not automate Codex login. If Codex-backed runs need login,
-authenticate Codex separately after install.
+The installer does not automate Codex CLI installation or login. If
+Codex-backed runs need login, install/authenticate Codex separately after
+install.
 
 ## Manual update behavior
 

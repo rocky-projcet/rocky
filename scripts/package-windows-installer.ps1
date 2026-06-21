@@ -154,6 +154,23 @@ function Copy-RequiredFile {
   Copy-Item -LiteralPath $Source -Destination $Target -Force
 }
 
+function Set-InstallerReleaseTag {
+  param(
+    [Parameter(Mandatory = $true)][string]$TargetRoot,
+    [Parameter(Mandatory = $true)][string]$ReleaseTag
+  )
+
+  $InstallScriptPath = Join-Path $TargetRoot "scripts\install-windows.ps1"
+  $Content = Get-Content -LiteralPath $InstallScriptPath -Raw
+  $Expected = '$ReleaseTag = "v0.1.3"'
+  if (-not $Content.Contains($Expected)) {
+    throw "Could not find installer release tag placeholder in $InstallScriptPath."
+  }
+
+  $Updated = $Content.Replace($Expected, ('$ReleaseTag = "' + $ReleaseTag + '"'))
+  Set-Content -LiteralPath $InstallScriptPath -Value $Updated -Encoding UTF8
+}
+
 function Copy-ElectronRuntime {
   param([Parameter(Mandatory = $true)][string]$TargetRoot)
 
@@ -179,7 +196,7 @@ function Write-MinimalPackageJson {
   param([Parameter(Mandatory = $true)][string]$TargetRoot)
 
   $Package = Get-Content -Path (Join-Path $Root "package.json") -Raw | ConvertFrom-Json
-  $Version = if ($Package.version) { $Package.version } else { $Tag.TrimStart("v") }
+  $Version = Get-AppVersion -ReleaseTag $Tag
   $Content = @"
 {
   "name": "rocky-project",
@@ -285,6 +302,7 @@ Copy-RequiredFile -RelativePath "Start-Rocky-Windows.cmd" -TargetRoot $PayloadRo
 Copy-RequiredFile -RelativePath "Stop-Rocky-Windows.cmd" -TargetRoot $PayloadRoot
 Copy-RequiredFile -RelativePath "Uninstall-Rocky-Windows.cmd" -TargetRoot $PayloadRoot
 Copy-RequiredFile -RelativePath "docs\windows-install.md" -TargetRoot $PayloadRoot
+Set-InstallerReleaseTag -TargetRoot $PayloadRoot -ReleaseTag $Tag
 Write-MinimalPackageJson -TargetRoot $PayloadRoot
 
 $ReleaseNotes = @"

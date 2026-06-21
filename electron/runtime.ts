@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 export interface ElectronAppRootInput {
   defaultAppRoot: string;
   isPackaged: boolean;
   resourcesPath: string;
+  resourcesAppExists?: boolean;
 }
 
 export interface ElectronPlatformPathsInput {
@@ -32,7 +34,12 @@ export interface DesktopApiBaseUrlInput {
 
 export function resolveElectronAppRoot(input: ElectronAppRootInput): string {
   if (input.isPackaged) {
-    return path.resolve(input.resourcesPath, "app");
+    const resourcesAppRoot = path.resolve(input.resourcesPath, "app");
+    const resourcesAppExists =
+      input.resourcesAppExists ?? existsSync(resourcesAppRoot);
+    if (resourcesAppExists) {
+      return resourcesAppRoot;
+    }
   }
 
   return path.resolve(input.defaultAppRoot);

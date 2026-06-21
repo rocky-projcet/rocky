@@ -28,8 +28,22 @@ test("resolveElectronAppRoot uses resources app payload when packaged", () => {
       isPackaged: true,
       defaultAppRoot: "C:\\repo\\rocky",
       resourcesPath: "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources",
+      resourcesAppExists: true,
     }),
     path.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources\\app")
+  );
+});
+
+test("resolveElectronAppRoot falls back for loose Windows installer runtime", () => {
+  assert.equal(
+    resolveElectronAppRoot({
+      isPackaged: true,
+      defaultAppRoot: "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky",
+      resourcesPath:
+        "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\electron\\resources",
+      resourcesAppExists: false,
+    }),
+    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky")
   );
 });
 

@@ -78,7 +78,7 @@ Name: "{group}\Stop Rocky"; Filename: "{app}\Stop-Rocky-Windows.cmd"; WorkingDir
 Name: "{group}\Uninstall Rocky"; Filename: "{uninstallexe}"; IconFilename: "{app}\assets\windows\rocky-uninstall.ico"
 
 [Run]
-Filename: "{app}\Install-Rocky-Windows.cmd"; Parameters: "-InPlace -SkipDependencyInstall -SkipBuild -IncludeBundledDependencies -SkipWindowsShellRegistration -NoStart"; StatusMsg: "Preparing Rocky runtime and preserving existing state..."; Flags: runhidden waituntilterminated
+Filename: "{app}\Install-Rocky-Windows.cmd"; Parameters: "-InPlace -SkipDependencyInstall -SkipBuild -IncludeBundledDependencies -SkipCodexInstall -SkipWindowsShellRegistration -NoStart"; StatusMsg: "Preparing Rocky runtime and preserving existing state..."; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: """{app}"""; Description: "Start Rocky"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

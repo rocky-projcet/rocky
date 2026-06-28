@@ -32,9 +32,27 @@ export interface DesktopApiBaseUrlInput {
   port: number;
 }
 
+function isWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/u.test(value) || value.includes("\\");
+}
+
+function resolvePathLike(basePath: string, ...parts: string[]): string {
+  const pathApi = isWindowsPath(basePath) ? path.win32 : path;
+  return pathApi.resolve(basePath, ...parts);
+}
+
+function resolvePlatformPath(
+  platform: NodeJS.Platform,
+  basePath: string,
+  ...parts: string[]
+): string {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  return pathApi.resolve(basePath, ...parts);
+}
+
 export function resolveElectronAppRoot(input: ElectronAppRootInput): string {
   if (input.isPackaged) {
-    const resourcesAppRoot = path.resolve(input.resourcesPath, "app");
+    const resourcesAppRoot = resolvePathLike(input.resourcesPath, "app");
     const resourcesAppExists =
       input.resourcesAppExists ?? existsSync(resourcesAppRoot);
     if (resourcesAppExists) {
@@ -42,19 +60,19 @@ export function resolveElectronAppRoot(input: ElectronAppRootInput): string {
     }
   }
 
-  return path.resolve(input.defaultAppRoot);
+  return resolvePathLike(input.defaultAppRoot);
 }
 
 export function resolveElectronStateRoot(input: ElectronPlatformPathsInput): string {
   const configured = input.env.ROCKY_STATE_ROOT;
   if (configured && configured.trim()) {
-    return path.resolve(configured.trim());
+    return resolvePlatformPath(input.platform, configured.trim());
   }
 
   if (input.platform === "win32") {
     const localAppData = input.env.LOCALAPPDATA;
     if (localAppData && localAppData.trim()) {
-      return path.resolve(localAppData.trim(), "Rocky", "state");
+      return path.win32.resolve(localAppData.trim(), "Rocky", "state");
     }
   }
 
@@ -68,19 +86,19 @@ export function resolveElectronStateRoot(input: ElectronPlatformPathsInput): str
     );
   }
 
-  return path.resolve(input.appRoot, ".runtime", "state");
+  return resolvePathLike(input.appRoot, ".runtime", "state");
 }
 
 export function resolveElectronLogRoot(input: ElectronPlatformPathsInput): string {
   const configured = input.env.ROCKY_LOG_ROOT;
   if (configured && configured.trim()) {
-    return path.resolve(configured.trim());
+    return resolvePlatformPath(input.platform, configured.trim());
   }
 
   if (input.platform === "win32") {
     const localAppData = input.env.LOCALAPPDATA;
     if (localAppData && localAppData.trim()) {
-      return path.resolve(localAppData.trim(), "Rocky", "logs");
+      return path.win32.resolve(localAppData.trim(), "Rocky", "logs");
     }
   }
 
@@ -88,7 +106,7 @@ export function resolveElectronLogRoot(input: ElectronPlatformPathsInput): strin
     return path.resolve(input.homeDir, "Library", "Logs", "Rocky");
   }
 
-  return path.resolve(input.appRoot, ".runtime", "logs");
+  return resolvePathLike(input.appRoot, ".runtime", "logs");
 }
 
 export function resolveElectronWindowIcon(
@@ -98,15 +116,15 @@ export function resolveElectronWindowIcon(
     return undefined;
   }
 
-  return path.resolve(input.appRoot, "assets", "windows", "rocky.ico");
+  return path.win32.resolve(input.appRoot, "assets", "windows", "rocky.ico");
 }
 
 export function resolveBackendEntry(appRoot: string): string {
-  return path.resolve(appRoot, "dist", "src", "cli.js");
+  return resolvePathLike(appRoot, "dist", "src", "cli.js");
 }
 
 export function resolveWebIndex(appRoot: string): string {
-  return path.resolve(appRoot, "web", "dist", "index.html");
+  return resolvePathLike(appRoot, "web", "dist", "index.html");
 }
 
 export function buildBackendLaunchArgs(input: BackendLaunchInput): string[] {
@@ -118,7 +136,7 @@ export function buildBackendLaunchArgs(input: BackendLaunchInput): string[] {
     "--port",
     String(input.port),
     "--state-root",
-    path.resolve(input.stateRoot),
+    resolvePathLike(input.stateRoot),
   ];
 }
 

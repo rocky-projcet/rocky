@@ -29,100 +29,107 @@ async function createFakeCodexBin(rootDir: string): Promise<string> {
   await writeFile(
     codexScriptPath,
     `#!/usr/bin/env node
-import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+const path = require("node:path");
+const { mkdir, writeFile } = require("node:fs/promises");
 
-const args = process.argv.slice(2);
-const execIndex = args.indexOf("exec");
-if (execIndex === -1) {
-  console.error("fake-codex: missing exec command");
-  process.exit(2);
-}
-
-const globalArgs = args.slice(0, execIndex);
-const commandArgs = args.slice(execIndex + 1);
-
-let workspaceRoot = null;
-for (let index = 0; index < globalArgs.length; index += 1) {
-  if (globalArgs[index] === "-C") {
-    workspaceRoot = globalArgs[index + 1] ?? null;
-    index += 1;
+async function main() {
+  const args = process.argv.slice(2);
+  const execIndex = args.indexOf("exec");
+  if (execIndex === -1) {
+    console.error("fake-codex: missing exec command");
+    process.exit(2);
   }
-}
 
-let mode = "exec";
-let offset = 0;
-if (commandArgs[0] === "resume") {
-  mode = "resume";
-  offset = 1;
-}
+  const globalArgs = args.slice(0, execIndex);
+  const commandArgs = args.slice(execIndex + 1);
 
-let skipGitRepoCheck = false;
-let outputLastMessagePath = null;
-const positionals = [];
-
-for (let index = offset; index < commandArgs.length; index += 1) {
-  const value = commandArgs[index];
-  if (value === "--json" || value === "--ephemeral" || value === "--full-auto") {
-    continue;
-  }
-  if (
-    value === "--dangerously-bypass-approvals-and-sandbox" ||
-    value === "--skip-git-repo-check"
-  ) {
-    if (value === "--skip-git-repo-check") {
-      skipGitRepoCheck = true;
+  let workspaceRoot = null;
+  for (let index = 0; index < globalArgs.length; index += 1) {
+    if (globalArgs[index] === "-C") {
+      workspaceRoot = globalArgs[index + 1] ?? null;
+      index += 1;
     }
-    continue;
   }
-  if (
-    value === "--color" ||
-    value === "--output-last-message" ||
-    value === "-i"
-  ) {
-    if (value === "--output-last-message") {
-      outputLastMessagePath = commandArgs[index + 1] ?? null;
+
+  let mode = "exec";
+  let offset = 0;
+  if (commandArgs[0] === "resume") {
+    mode = "resume";
+    offset = 1;
+  }
+
+  let skipGitRepoCheck = false;
+  let outputLastMessagePath = null;
+  const positionals = [];
+
+  for (let index = offset; index < commandArgs.length; index += 1) {
+    const value = commandArgs[index];
+    if (value === "--json" || value === "--ephemeral" || value === "--full-auto") {
+      continue;
     }
-    index += 1;
-    continue;
+    if (
+      value === "--dangerously-bypass-approvals-and-sandbox" ||
+      value === "--skip-git-repo-check"
+    ) {
+      if (value === "--skip-git-repo-check") {
+        skipGitRepoCheck = true;
+      }
+      continue;
+    }
+    if (
+      value === "--color" ||
+      value === "--output-last-message" ||
+      value === "-i"
+    ) {
+      if (value === "--output-last-message") {
+        outputLastMessagePath = commandArgs[index + 1] ?? null;
+      }
+      index += 1;
+      continue;
+    }
+    positionals.push(value);
   }
-  positionals.push(value);
+
+  if (!skipGitRepoCheck) {
+    console.error("Not inside a trusted directory and --skip-git-repo-check was not specified.");
+    process.exit(1);
+  }
+
+  const runtimeSessionId =
+    mode === "resume" ? (positionals.shift() ?? "thread-e2e") : "thread-e2e";
+  const rawPrompt = positionals.join(" ").trim();
+  const start = rawPrompt.indexOf("<user_request>\\n");
+  const end = rawPrompt.lastIndexOf("\\n</user_request>");
+  const prompt =
+    start === -1 || end === -1 || end <= start
+      ? rawPrompt
+      : rawPrompt.slice(start + "<user_request>".length + 1, end);
+  const responseText = mode === "resume" ? \`resume:\${prompt}\` : \`first:\${prompt}\`;
+
+  if (outputLastMessagePath) {
+    await mkdir(path.dirname(outputLastMessagePath), { recursive: true });
+    await writeFile(outputLastMessagePath, responseText, "utf8");
+  }
+
+  if (mode === "exec") {
+    console.log(JSON.stringify({ type: "thread.started", thread_id: runtimeSessionId }));
+  }
+  console.log(JSON.stringify({ type: "turn.started", cwd: workspaceRoot }));
+  console.log(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        content: [{ text: responseText }],
+      },
+    })
+  );
 }
 
-if (!skipGitRepoCheck) {
-  console.error("Not inside a trusted directory and --skip-git-repo-check was not specified.");
+main().catch((error) => {
+  console.error(error instanceof Error ? error.stack : String(error));
   process.exit(1);
-}
-
-const runtimeSessionId =
-  mode === "resume" ? (positionals.shift() ?? "thread-e2e") : "thread-e2e";
-const rawPrompt = positionals.join(" ").trim();
-const start = rawPrompt.indexOf("<user_request>\\n");
-const end = rawPrompt.lastIndexOf("\\n</user_request>");
-const prompt =
-  start === -1 || end === -1 || end <= start
-    ? rawPrompt
-    : rawPrompt.slice(start + "<user_request>".length + 1, end);
-const responseText = mode === "resume" ? \`resume:\${prompt}\` : \`first:\${prompt}\`;
-
-if (outputLastMessagePath) {
-  await mkdir(path.dirname(outputLastMessagePath), { recursive: true });
-  await writeFile(outputLastMessagePath, responseText, "utf8");
-}
-
-if (mode === "exec") {
-  console.log(JSON.stringify({ type: "thread.started", thread_id: runtimeSessionId }));
-}
-console.log(JSON.stringify({ type: "turn.started", cwd: workspaceRoot }));
-console.log(
-  JSON.stringify({
-    type: "item.completed",
-    item: {
-      type: "agent_message",
-      content: [{ text: responseText }],
-    },
-  })
-);
+});
 `,
     { mode: 0o755 }
   );

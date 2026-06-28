@@ -465,6 +465,69 @@ export interface CliUpdateRecord {
   lastError: string | null;
 }
 
+export type RockyAppUpdateAssetKind = "pkg" | "dmg" | "app-zip";
+export type RockyAppUpdateLatestStatus =
+  | "current"
+  | "update-available"
+  | "unknown"
+  | "error";
+export type RockyAppUpdateOperationStatus =
+  | "idle"
+  | "pending"
+  | "completed"
+  | "failed";
+
+export interface RockyAppUpdateAssetRecord {
+  name: string;
+  kind: RockyAppUpdateAssetKind;
+  sizeBytes: number | null;
+  downloadUrl: string;
+  checksumSha256: string | null;
+  checksumSource: "github-asset-digest" | "release-manifest" | null;
+}
+
+export interface RockyAppUpdateDownloadRecord {
+  fileName: string;
+  filePath: string;
+  directory: string;
+  sizeBytes: number;
+  sha256: string;
+  verified: boolean;
+  verifiedAt: string | null;
+}
+
+export interface RockyAppUpdateOperationRecord {
+  kind: "check" | "download" | "install" | "open-folder" | null;
+  status: RockyAppUpdateOperationStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  lastError: string | null;
+}
+
+export interface RockyAppUpdateRecord {
+  appName: "Rocky";
+  platform: string;
+  arch: string;
+  supported: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  latestStatus: RockyAppUpdateLatestStatus;
+  checkedAt: string | null;
+  releaseUrl: string | null;
+  statusText: string;
+  asset: RockyAppUpdateAssetRecord | null;
+  download: RockyAppUpdateDownloadRecord | null;
+  operation: RockyAppUpdateOperationRecord;
+  install: {
+    status: "idle" | "opened" | "manual-action" | "failed";
+    openedAt: string | null;
+    message: string | null;
+    nativeOpen: unknown | null;
+  };
+  limitations: string[];
+  statePreservation: string[];
+}
+
 export interface ProviderAccountRecord {
   provider: ProviderKind;
   providerLabel: string;
@@ -1867,6 +1930,36 @@ export class AgentEngineClient {
   getHardwareStatus(signal?: AbortSignal): Promise<HardwareStatusRecord> {
     return this.request<HardwareStatusRecord>("/settings/hardware", {
       signal,
+    });
+  }
+
+  getRockyAppUpdate(signal?: AbortSignal): Promise<RockyAppUpdateRecord> {
+    return this.request<RockyAppUpdateRecord>("/app/update", {
+      signal,
+    });
+  }
+
+  checkRockyAppUpdate(): Promise<RockyAppUpdateRecord> {
+    return this.request<RockyAppUpdateRecord>("/app/update/check", {
+      method: "POST",
+    });
+  }
+
+  downloadRockyAppUpdate(): Promise<RockyAppUpdateRecord> {
+    return this.request<RockyAppUpdateRecord>("/app/update/download", {
+      method: "POST",
+    });
+  }
+
+  installRockyAppUpdate(): Promise<RockyAppUpdateRecord> {
+    return this.request<RockyAppUpdateRecord>("/app/update/install", {
+      method: "POST",
+    });
+  }
+
+  openRockyAppUpdateDownloadFolder(): Promise<RockyAppUpdateRecord> {
+    return this.request<RockyAppUpdateRecord>("/app/update/open-folder", {
+      method: "POST",
     });
   }
 

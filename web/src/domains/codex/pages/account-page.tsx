@@ -1,5 +1,15 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Copy, ExternalLink, KeyRound } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Download,
+  ExternalLink,
+  FolderOpen,
+  KeyRound,
+  PackageOpen,
+  RefreshCw,
+} from "lucide-react";
 
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -14,8 +24,13 @@ import {
   useLoginCodexApiKeyMutation,
   useLogoutClaudeAccountMutation,
   useLogoutCodexAccountMutation,
+  useCheckRockyAppUpdateMutation,
+  useDownloadRockyAppUpdateMutation,
+  useInstallRockyAppUpdateMutation,
+  useOpenRockyAppUpdateFolderMutation,
   useProviderAccountsQuery,
   useProviderStatusesQuery,
+  useRockyAppUpdateQuery,
   useStartClaudeUpdateMutation,
   useStartClaudeLoginMutation,
   useStartCodexUpdateMutation,
@@ -27,6 +42,7 @@ import type {
   CodexAccountRecord,
   ProviderAccountRecord,
   ProviderStatusRecord,
+  RockyAppUpdateRecord,
 } from "../types";
 import { ProviderGlyph } from "../components/provider-glyph";
 import {
@@ -42,6 +58,12 @@ import {
 } from "../lib/account-status-visibility";
 import { HardwareStatusPanel } from "../components/hardware-status-panel";
 import { buttonVariants } from "@/shared/ui/button";
+import {
+  appUpdateAssetKindLabel,
+  appUpdateOperationLabel,
+  formatAppUpdateSize,
+  getAppUpdateActions,
+} from "../lib/app-update-display";
 
 const ANSI_ESCAPE_PATTERN = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const ORPHANED_SGR_PATTERN = /\[(?:\d{1,3};?)+m/g;
@@ -361,6 +383,203 @@ function ProviderSummary({
   );
 }
 
+function AppUpdateCard() {
+  const updateQuery = useRockyAppUpdateQuery();
+  const checkMutation = useCheckRockyAppUpdateMutation();
+  const downloadMutation = useDownloadRockyAppUpdateMutation();
+  const installMutation = useInstallRockyAppUpdateMutation();
+  const folderMutation = useOpenRockyAppUpdateFolderMutation();
+  const state = updateQuery.data;
+
+  const mutationError =
+    checkMutation.error ??
+    downloadMutation.error ??
+    installMutation.error ??
+    folderMutation.error;
+
+  if (updateQuery.isLoading) {
+    return (
+      <Card className="gap-4 p-6">
+        <div>
+          <h4 className="text-lg font-semibold text-foreground">Rocky 앱 업데이트</h4>
+          <p className="mt-1 text-sm text-muted-foreground">
+            현재 앱 버전과 macOS 업데이트 상태를 불러오는 중입니다.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  if (updateQuery.isError || !state) {
+    return (
+      <Card className="gap-4 p-6">
+        <div>
+          <h4 className="text-lg font-semibold text-foreground">Rocky 앱 업데이트</h4>
+          <p className="mt-1 text-sm text-destructive">
+            {updateQuery.error instanceof Error
+              ? updateQuery.error.message
+              : "Rocky 앱 업데이트 상태를 불러올 수 없습니다."}
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  const actions = getAppUpdateActions(state);
+  const asset = state.asset;
+  const releaseHref = state.releaseUrl;
+  const installerLabel = asset?.kind === "pkg" ? "설치 열기" : "수동 설치";
+
+  function run(action: () => Promise<RockyAppUpdateRecord>) {
+    void action();
+  }
+
+  return (
+    <Card className="gap-5 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h4 className="text-lg font-semibold text-foreground">Rocky 앱 업데이트</h4>
+          <p className="mt-1 text-sm text-muted-foreground">{state.statusText}</p>
+        </div>
+        <Badge className={cn("rounded-full px-3 py-1 text-xs font-semibold", statusTone(state.operation.status))}>
+          {appUpdateOperationLabel(state)}
+        </Badge>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-3xl border border-border/70 bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">현재 버전</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            v{state.currentVersion}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {state.platform} / {state.arch}
+          </p>
+        </div>
+        <div className="rounded-3xl border border-border/70 bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">최신 버전</p>
+          <div className="mt-1 flex items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">
+              {state.latestVersion ? `v${state.latestVersion}` : "미확인"}
+            </p>
+            {releaseHref ? (
+              <a
+                href={releaseHref}
+                target="_blank"
+                rel="noreferrer"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <ExternalLink size={14} />
+              </a>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {state.checkedAt ? new Date(state.checkedAt).toLocaleString() : "아직 확인 전"}
+          </p>
+        </div>
+        <div className="rounded-3xl border border-border/70 bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">선택된 asset</p>
+          <p className="mt-1 truncate text-sm font-semibold text-foreground">
+            {asset ? appUpdateAssetKindLabel(asset.kind) : "없음"}
+          </p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {asset
+              ? `${asset.name} · ${formatAppUpdateSize(asset.sizeBytes)}`
+              : "macOS .pkg, .dmg, .app.zip 순서로 찾습니다."}
+          </p>
+        </div>
+      </div>
+
+      {asset ? (
+        <div className="rounded-3xl border border-border/70 bg-card px-4 py-3">
+          <p className="text-xs text-muted-foreground">검증 상태</p>
+          <p className="mt-1 text-sm text-foreground">
+            {asset.checksumSha256
+              ? `${asset.checksumSource === "release-manifest" ? "release manifest" : "GitHub asset digest"} checksum 사용`
+              : "checksum 정보가 없어 설치로 이어갈 수 없습니다."}
+          </p>
+          {state.download?.verified ? (
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              다운로드 검증 완료: {state.download.fileName}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {state.operation.lastError ? (
+        <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {state.operation.lastError}
+        </div>
+      ) : null}
+
+      {mutationError ? (
+        <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {mutationError instanceof Error
+            ? mutationError.message
+            : "Rocky 앱 업데이트 요청에 실패했습니다."}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => run(() => checkMutation.mutateAsync())}
+          disabled={!actions.canCheck || checkMutation.isPending}
+        >
+          <RefreshCw size={14} />
+          {state.operation.kind === "check" && actions.busy ? "확인 중..." : "업데이트 확인"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => run(() => downloadMutation.mutateAsync())}
+          disabled={!actions.canDownload || downloadMutation.isPending}
+        >
+          <Download size={14} />
+          {state.operation.kind === "download" && actions.busy ? "다운로드 중..." : "다운로드"}
+        </Button>
+        <Button
+          type="button"
+          onClick={() => run(() => installMutation.mutateAsync())}
+          disabled={!actions.canInstall || installMutation.isPending}
+        >
+          <PackageOpen size={14} />
+          {state.operation.kind === "install" && actions.busy ? "여는 중..." : installerLabel}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => run(() => folderMutation.mutateAsync())}
+          disabled={!actions.canOpenFolder || folderMutation.isPending}
+        >
+          <FolderOpen size={14} />
+          폴더 열기
+        </Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-3xl border border-border/70 bg-muted/30 px-4 py-3">
+          <p className="text-xs font-semibold text-foreground">macOS 제한</p>
+          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {state.limitations.map((item) => (
+              <p key={item}>{item}</p>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-3xl border border-border/70 bg-muted/30 px-4 py-3">
+          <p className="text-xs font-semibold text-foreground">state 보존</p>
+          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {state.statePreservation.map((item) => (
+              <p key={item}>{item}</p>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function ProviderSettingsPanel() {
   const accountsQuery = useProviderAccountsQuery();
   const statusesQuery = useProviderStatusesQuery();
@@ -505,6 +724,8 @@ function ProviderSettingsPanel() {
           Codex와 Claude 연결 상태, 설치 여부, 버전 진단을 관리합니다. 추가 로그인 방식은 각 서비스의 고급 옵션에서 열 수 있습니다.
         </p>
       </div>
+
+      <AppUpdateCard />
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="gap-5 p-6">

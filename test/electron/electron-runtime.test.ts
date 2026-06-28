@@ -18,7 +18,7 @@ test("resolveElectronAppRoot uses repository root in development", () => {
       defaultAppRoot: "C:\\repo\\rocky",
       resourcesPath: "C:\\repo\\rocky\\node_modules\\electron\\dist\\resources",
     }),
-    path.resolve("C:\\repo\\rocky")
+    path.win32.resolve("C:\\repo\\rocky")
   );
 });
 
@@ -30,7 +30,7 @@ test("resolveElectronAppRoot uses resources app payload when packaged", () => {
       resourcesPath: "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources",
       resourcesAppExists: true,
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources\\app")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources\\app")
   );
 });
 
@@ -43,7 +43,7 @@ test("resolveElectronAppRoot falls back for loose Windows installer runtime", ()
         "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\electron\\resources",
       resourcesAppExists: false,
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky")
   );
 });
 
@@ -55,7 +55,7 @@ test("resolveElectronStateRoot prefers explicit environment value", () => {
       homeDir: "C:\\Users\\jsh",
       platform: "win32",
     }),
-    path.resolve("D:\\Rocky State")
+    path.win32.resolve("D:\\Rocky State")
   );
 });
 
@@ -67,7 +67,7 @@ test("resolveElectronStateRoot uses per-user Windows state by default", () => {
       homeDir: "C:\\Users\\jsh",
       platform: "win32",
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state")
   );
 });
 
@@ -91,7 +91,7 @@ test("resolveElectronLogRoot uses platform log defaults", () => {
       homeDir: "C:\\Users\\jsh",
       platform: "win32",
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\logs")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\logs")
   );
 
   assert.equal(
@@ -111,7 +111,7 @@ test("resolveElectronWindowIcon uses the Rocky Windows icon", () => {
       appRoot: "C:\\Rocky\\resources\\app",
       platform: "win32",
     }),
-    path.resolve("C:\\Rocky\\resources\\app\\assets\\windows\\rocky.ico")
+    path.win32.resolve("C:\\Rocky\\resources\\app\\assets\\windows\\rocky.ico")
   );
 
   assert.equal(
@@ -132,14 +132,14 @@ test("buildBackendLaunchArgs starts existing CLI server on loopback port", () =>
       stateRoot: "C:\\Users\\jsh\\AppData\\Local\\Rocky\\state",
     }),
     [
-      path.resolve("C:\\Rocky\\resources\\app\\dist\\src\\cli.js"),
+      path.win32.resolve("C:\\Rocky\\resources\\app\\dist\\src\\cli.js"),
       "serve",
       "--host",
       "127.0.0.1",
       "--port",
       "49152",
       "--state-root",
-      path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state"),
+      path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state"),
     ]
   );
 });

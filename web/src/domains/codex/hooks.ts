@@ -8,12 +8,14 @@ import type {
   CodexStatusRecord,
   ProviderAccountsResponse,
   ProviderStatusesResponse,
+  RockyAppUpdateRecord,
 } from "@/domains/codex/types";
 
 export const codexQueryKeys = {
   providerAccounts: () => ["provider-accounts"] as const,
   providerStatuses: () => ["provider-statuses"] as const,
   hardwareStatus: () => ["hardware-status"] as const,
+  rockyAppUpdate: () => ["rocky-app-update"] as const,
   runtimes: () => ["runtime-descriptors"] as const,
   codexAccount: () => ["codex-account"] as const,
   codexStatus: () => ["codex-status"] as const,
@@ -76,6 +78,18 @@ export function useHardwareStatusQuery(enabled = true) {
     queryFn: ({ signal }) => agentEngineClient.getHardwareStatus(signal),
     enabled,
     refetchInterval: enabled ? 10_000 : false,
+    refetchIntervalInBackground: true,
+  });
+}
+
+export function useRockyAppUpdateQuery() {
+  return useQuery({
+    queryKey: codexQueryKeys.rockyAppUpdate(),
+    queryFn: ({ signal }) => agentEngineClient.getRockyAppUpdate(signal),
+    refetchInterval: (query) => {
+      const data = query.state.data as RockyAppUpdateRecord | undefined;
+      return data?.operation.status === "pending" ? 1500 : false;
+    },
     refetchIntervalInBackground: true,
   });
 }
@@ -231,4 +245,35 @@ export function useStartClaudeUpdateMutation() {
       await invalidateProviderQueries(queryClient);
     },
   });
+}
+
+function useRockyAppUpdateMutation(
+  mutationFn: () => Promise<RockyAppUpdateRecord>
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn,
+    onSuccess: (state) => {
+      queryClient.setQueryData(codexQueryKeys.rockyAppUpdate(), state);
+    },
+  });
+}
+
+export function useCheckRockyAppUpdateMutation() {
+  return useRockyAppUpdateMutation(() => agentEngineClient.checkRockyAppUpdate());
+}
+
+export function useDownloadRockyAppUpdateMutation() {
+  return useRockyAppUpdateMutation(() => agentEngineClient.downloadRockyAppUpdate());
+}
+
+export function useInstallRockyAppUpdateMutation() {
+  return useRockyAppUpdateMutation(() => agentEngineClient.installRockyAppUpdate());
+}
+
+export function useOpenRockyAppUpdateFolderMutation() {
+  return useRockyAppUpdateMutation(() =>
+    agentEngineClient.openRockyAppUpdateDownloadFolder()
+  );
 }

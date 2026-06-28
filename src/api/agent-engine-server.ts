@@ -14,12 +14,14 @@ import { SessionService } from "../sessions/session-service.js";
 import { TaskService } from "../tasks/task-service.js";
 import { createDefaultRuntimeRegistry } from "../runtime/runtime-registry.js";
 import { openUrl } from "./http/native-open.js";
+import { RockyAppUpdateService } from "../installer/app-update-service.js";
 
 import type { AgentRegistryServiceOptions } from "../agents/agent-types.js";
 import type { AgentEngineServerOptions } from "./api-types.js";
 import { registerApiErrorHandlers } from "./http/error-handler.js";
 import { registerAgentRoutes } from "./routes/agent-routes.js";
 import { registerAccountRoutes } from "./routes/account-routes.js";
+import { registerAppUpdateRoutes } from "./routes/app-update-routes.js";
 import { registerConnectorRoutes } from "./routes/connector-routes.js";
 import { registerFavoriteRoutes } from "./routes/favorite-routes.js";
 import { ConnectorService } from "../connectors/connector-service.js";
@@ -165,6 +167,12 @@ export function createAgentEngineServer(
   const hardwareStatusService =
     options.hardwareStatusService ??
     new SystemHardwareStatusService();
+  const appUpdateService =
+    options.appUpdateService ??
+    new RockyAppUpdateService({
+      stateRoot: options.stateRoot,
+      openDownloadDirectory: options.nativeFolderOpener,
+    });
   const favoriteService = new FavoriteService({
     stateRoot: options.stateRoot,
     now: options.now,
@@ -190,6 +198,9 @@ export function createAgentEngineServer(
     claudeStatusService,
     hardwareStatusService,
     now: options.now,
+  });
+  server.register(registerAppUpdateRoutes, {
+    appUpdateService,
   });
   server.register(registerAuthProfileRoutes, {
     authProfileService,

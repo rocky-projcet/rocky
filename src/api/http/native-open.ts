@@ -45,6 +45,11 @@ interface OpenFolderOptions {
   platform?: NodeJS.Platform | "test";
 }
 
+interface OpenFileOptions {
+  execFile?: ExecFilePromise;
+  platform?: NodeJS.Platform | "test";
+}
+
 interface OpenUrlOptions {
   execFile?: ExecFilePromise;
   platform?: NodeJS.Platform | "test";
@@ -114,6 +119,37 @@ function folderOpenCommand(
       file: "xdg-open",
       args: [folderPath],
       application: "file manager",
+    };
+  }
+
+  return null;
+}
+
+function fileOpenCommand(
+  platform: NodeJS.Platform | "test",
+  filePath: string
+): { file: string; args: string[]; application: string } | null {
+  if (platform === "darwin") {
+    return {
+      file: "open",
+      args: [filePath],
+      application: "default application",
+    };
+  }
+
+  if (platform === "win32") {
+    return {
+      file: "cmd.exe",
+      args: ["/c", "start", "", filePath],
+      application: "default application",
+    };
+  }
+
+  if (platform === "linux") {
+    return {
+      file: "xdg-open",
+      args: [filePath],
+      application: "default application",
     };
   }
 
@@ -200,6 +236,46 @@ export async function openFolder(
     fileName: path.basename(resolvedPath) || resolvedPath,
     platform,
     kind: "folder",
+    path: resolvedPath,
+  };
+}
+
+export async function openFile(
+  filePath: string,
+  options: OpenFileOptions = {}
+): Promise<NativeFileOpenRecord> {
+  const platform = options.platform ?? process.platform;
+  const command = fileOpenCommand(platform, filePath);
+  if (!command) {
+    throw statusError(
+      `실제 파일 열기는 현재 지원되지 않는 로컬 서버 플랫폼입니다: ${platform}`,
+      501
+    );
+  }
+
+  const execFileImpl = options.execFile ?? (execFileAsync as ExecFilePromise);
+
+  try {
+    await execFileImpl(command.file, command.args, {
+      timeout: NATIVE_OPEN_TIMEOUT_MS,
+      windowsHide: true,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw statusError(
+      `${command.application}에서 파일을 열지 못했습니다. ${detail}`,
+      503
+    );
+  }
+
+  const resolvedPath = path.resolve(filePath);
+
+  return {
+    status: "opened",
+    application: command.application,
+    fileName: path.basename(resolvedPath),
+    platform,
+    kind: "file",
     path: resolvedPath,
   };
 }

@@ -59,6 +59,7 @@ import type {
   NativeFolderOpener,
   NativeUrlOpener,
 } from "./http/native-open.js";
+import type { RockyAppUpdateServiceLike } from "../installer/app-update-types.js";
 
 export interface SessionServiceLike {
   createSession(input: {
@@ -275,6 +276,7 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   ecountSettingsService?: EcountSettingsServiceLike;
   ecountSalesExportService?: EcountSalesExcelExportService;
   hardwareStatusService?: HardwareStatusServiceLike;
+  appUpdateService?: RockyAppUpdateServiceLike;
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
   nativeUrlOpener?: NativeUrlOpener;

@@ -145,6 +145,22 @@ function resolveStateRoot(stateRoot?: string): string {
   return path.resolve(stateRoot ?? DEFAULT_STATE_ROOT);
 }
 
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function resolveGithubToken(option: string | null | undefined): string | null {
+  if (option !== undefined) {
+    return normalizeOptionalString(option);
+  }
+  return (
+    normalizeOptionalString(process.env.GITHUB_TOKEN) ??
+    normalizeOptionalString(process.env.GITHUB_PAT) ??
+    normalizeOptionalString(process.env.GH_TOKEN)
+  );
+}
+
 function assetKind(name: string): RockyAppUpdateAssetKind | null {
   const lower = name.toLowerCase();
   if (lower.endsWith(".pkg")) {
@@ -409,7 +425,7 @@ export class RockyAppUpdateService implements RockyAppUpdateServiceLike {
     this.openInstallerFile = options.openInstallerFile ?? defaultOpenFile;
     this.openDownloadDirectory = options.openDownloadDirectory ?? defaultOpenFolder;
     this.now = options.now ?? nowIso;
-    this.githubToken = options.githubToken ?? process.env.GITHUB_TOKEN ?? null;
+    this.githubToken = resolveGithubToken(options.githubToken);
     this.downloadRoot =
       options.downloadRoot ?? path.join(this.stateRoot, "app-updates");
     this.state = this.createInitialState(
@@ -715,6 +731,11 @@ export class RockyAppUpdateService implements RockyAppUpdateServiceLike {
       }
     );
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(
+          "GitHub 최신 Release를 찾지 못했습니다. 아직 Release가 없거나 private 저장소 접근 토큰이 필요합니다."
+        );
+      }
       throw new Error(
         `GitHub Release를 확인하지 못했습니다: ${response.status} ${response.statusText}`
       );

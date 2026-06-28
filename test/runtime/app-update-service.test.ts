@@ -207,6 +207,75 @@ test("RockyAppUpdateService reports unsupported platforms without network work",
   assert.deepEqual(requested, []);
 });
 
+test("RockyAppUpdateService reports missing GitHub latest release with actionable copy", async () => {
+  const service = new RockyAppUpdateService({
+    platform: "darwin",
+    arch: "arm64",
+    currentVersion: "0.1.3",
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ message: "Not Found" }), {
+        status: 404,
+        statusText: "Not Found",
+      }),
+  });
+
+  const state = await service.checkForUpdate();
+
+  assert.equal(state.latestStatus, "error");
+  assert.equal(state.operation.status, "failed");
+  assert.match(state.statusText, /GitHub 최신 Release를 찾지 못했습니다/u);
+  assert.match(state.operation.lastError ?? "", /private 저장소 접근 토큰/u);
+  assert.doesNotMatch(state.statusText, /404 Not Found/u);
+});
+
+test("RockyAppUpdateService uses GITHUB_PAT when GITHUB_TOKEN is absent", async (t) => {
+  const previousGithubToken = process.env.GITHUB_TOKEN;
+  const previousGithubPat = process.env.GITHUB_PAT;
+  const previousGhToken = process.env.GH_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  delete process.env.GH_TOKEN;
+  process.env.GITHUB_PAT = "pat-token";
+  t.after(() => {
+    if (previousGithubToken === undefined) {
+      delete process.env.GITHUB_TOKEN;
+    } else {
+      process.env.GITHUB_TOKEN = previousGithubToken;
+    }
+    if (previousGithubPat === undefined) {
+      delete process.env.GITHUB_PAT;
+    } else {
+      process.env.GITHUB_PAT = previousGithubPat;
+    }
+    if (previousGhToken === undefined) {
+      delete process.env.GH_TOKEN;
+    } else {
+      process.env.GH_TOKEN = previousGhToken;
+    }
+  });
+
+  const requestedAuthorizations: Array<string | undefined> = [];
+  const service = new RockyAppUpdateService({
+    platform: "darwin",
+    arch: "arm64",
+    currentVersion: "0.1.3",
+    fetchImpl: async (_input, init) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      requestedAuthorizations.push(headers?.authorization);
+      return jsonResponse(
+        buildRelease({
+          checksum: null,
+          digest: `sha256:${"a".repeat(64)}`,
+        })
+      );
+    },
+  });
+
+  const state = await service.checkForUpdate();
+
+  assert.equal(state.latestStatus, "update-available");
+  assert.deepEqual(requestedAuthorizations, ["Bearer pat-token"]);
+});
+
 test("selectMacAsset skips installers for a different architecture", () => {
   const release = {
     tag_name: "v0.1.4",

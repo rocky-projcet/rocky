@@ -8,6 +8,7 @@ import type {
   RockyChatRecord,
   RockyCoreSettingsUpdateInput,
   RockyInstagramPublishApprovalRecord,
+  AppUpdateRecord,
 } from "@/domains/rocky/types";
 
 export const ROCKY_CHAT_MESSAGE_PAGE_LIMIT = 50;
@@ -18,6 +19,7 @@ export const rockyQueryKeys = {
   chat: (chatId: string) => ["rocky-chat", chatId] as const,
   chatMessages: (chatId: string) => ["rocky-chat-messages", chatId] as const,
   coreManagement: ["rocky-core-management"] as const,
+  appUpdate: ["rocky-app-update"] as const,
 };
 
 function hasActiveRockyChat(chats: RockyChatRecord[] | undefined): boolean {
@@ -62,6 +64,53 @@ export function useRockyCoreManagementQuery() {
   return useQuery({
     queryKey: rockyQueryKeys.coreManagement,
     queryFn: () => agentEngineClient.getRockyCoreManagement(),
+  });
+}
+
+export function useRockyAppUpdateQuery() {
+  return useQuery({
+    queryKey: rockyQueryKeys.appUpdate,
+    queryFn: () => agentEngineClient.getRockyAppUpdate(),
+  });
+}
+
+function setAppUpdateData(
+  queryClient: ReturnType<typeof useQueryClient>,
+  record: AppUpdateRecord
+) {
+  queryClient.setQueryData(rockyQueryKeys.appUpdate, record);
+}
+
+export function useCheckRockyAppUpdateMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => agentEngineClient.checkRockyAppUpdate(),
+    onSuccess: (record) => {
+      setAppUpdateData(queryClient, record);
+    },
+  });
+}
+
+export function useDownloadRockyAppUpdateMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => agentEngineClient.downloadRockyAppUpdateInstaller(),
+    onSuccess: (record) => {
+      setAppUpdateData(queryClient, record);
+    },
+  });
+}
+
+export function useStartRockyAppUpdateInstallerMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => agentEngineClient.startRockyAppUpdateInstaller(),
+    onSuccess: (record) => {
+      setAppUpdateData(queryClient, record);
+    },
   });
 }
 

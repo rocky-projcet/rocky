@@ -54,6 +54,7 @@ import type {
   RuntimeServiceTier,
 } from "../runtime/runtime-types.js";
 import type { HardwareStatusServiceLike } from "../system/hardware-status-types.js";
+import type { AppUpdateServiceLike } from "../installer/app-update-types.js";
 import type {
   NativeFileOpener,
   NativeFolderOpener,
@@ -275,6 +276,8 @@ export interface AgentEngineServerOptions extends AgentRegistryServiceOptions {
   ecountSettingsService?: EcountSettingsServiceLike;
   ecountSalesExportService?: EcountSalesExcelExportService;
   hardwareStatusService?: HardwareStatusServiceLike;
+  appUpdateService?: AppUpdateServiceLike;
+  appVersion?: string;
   nativeFileOpener?: NativeFileOpener;
   nativeFolderOpener?: NativeFolderOpener;
   nativeUrlOpener?: NativeUrlOpener;

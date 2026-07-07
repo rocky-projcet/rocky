@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildBackendLaunchArgs,
+  buildBackendLaunchEnv,
   resolveDesktopApiBaseUrl,
   resolveElectronAppRoot,
   resolveElectronWindowIcon,
@@ -141,6 +142,26 @@ test("buildBackendLaunchArgs starts existing CLI server on loopback port", () =>
       "--state-root",
       path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state"),
     ]
+  );
+});
+
+test("buildBackendLaunchEnv passes desktop version and internal backend flags", () => {
+  assert.deepEqual(
+    buildBackendLaunchEnv({
+      apiBaseUrl: "http://127.0.0.1:49152",
+      appVersion: "0.1.4",
+      baseEnv: {
+        PATH: "C:\\Windows\\System32",
+        ROCKY_APP_VERSION: "0.0.0",
+      },
+    }),
+    {
+      PATH: "C:\\Windows\\System32",
+      ROCKY_APP_VERSION: "0.1.4",
+      AGENT_ENGINE_INTERNAL_BASE_URL: "http://127.0.0.1:49152",
+      ELECTRON_RUN_AS_NODE: "1",
+      ROCKY_DESKTOP_CORS: "1",
+    }
   );
 });
 

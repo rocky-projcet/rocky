@@ -17,6 +17,7 @@ import {
 } from "./menu.js";
 import {
   buildBackendLaunchArgs,
+  buildBackendLaunchEnv,
   resolveDesktopApiBaseUrl,
   resolveElectronAppRoot,
   resolveElectronLogRoot,
@@ -285,12 +286,11 @@ async function startBackend(input: {
   try {
     child = spawn(process.execPath, args, {
       cwd: input.appRoot,
-      env: {
-        ...process.env,
-        AGENT_ENGINE_INTERNAL_BASE_URL: input.apiBaseUrl,
-        ELECTRON_RUN_AS_NODE: "1",
-        ROCKY_DESKTOP_CORS: "1",
-      },
+      env: buildBackendLaunchEnv({
+        apiBaseUrl: input.apiBaseUrl,
+        appVersion: app.getVersion(),
+        baseEnv: process.env,
+      }),
       stdio: ["ignore", stdout, stderr],
       windowsHide: true,
     });

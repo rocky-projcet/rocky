@@ -1449,6 +1449,53 @@ export interface RockyCoreManagementRecord {
   sessionHealth: RockyCoreSessionHealthRecord;
 }
 
+export type AppUpdateStatus =
+  | "idle"
+  | "checking"
+  | "current"
+  | "update-available"
+  | "downloaded"
+  | "installing"
+  | "install-started"
+  | "unsupported"
+  | "failed";
+
+export interface AppUpdateAssetRecord {
+  name: string;
+  downloadUrl: string;
+  size: number | null;
+  sha256: string | null;
+  checksumSource: "github-asset-digest" | "checksum-asset" | null;
+  checksumAssetName: string | null;
+}
+
+export interface AppUpdateDownloadRecord {
+  path: string;
+  fileName: string;
+  size: number;
+  sha256: string;
+  verified: boolean;
+  downloadedAt: string;
+  verifiedAt: string;
+}
+
+export interface AppUpdateRecord {
+  currentVersion: string;
+  platform: string;
+  supported: boolean;
+  status: AppUpdateStatus;
+  latestVersion: string | null;
+  releaseUrl: string | null;
+  updateAvailable: boolean;
+  installerAsset: AppUpdateAssetRecord | null;
+  download: AppUpdateDownloadRecord | null;
+  preservedPathNames: string[];
+  checkedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  lastError: string | null;
+}
+
 export interface RockyChatCreateInput {
   message: string;
   attachments?: RockyAttachmentInput[];
@@ -2472,6 +2519,31 @@ export class AgentEngineClient {
   syncRockyCoreSkills(): Promise<RockyCoreManagementRecord> {
     return this.request<RockyCoreManagementRecord>("/rocky/core/skills/sync", {
       method: "POST",
+    });
+  }
+
+  getRockyAppUpdate(): Promise<AppUpdateRecord> {
+    return this.request<AppUpdateRecord>("/rocky/app-update");
+  }
+
+  checkRockyAppUpdate(): Promise<AppUpdateRecord> {
+    return this.request<AppUpdateRecord>("/rocky/app-update/check", {
+      method: "POST",
+    });
+  }
+
+  downloadRockyAppUpdateInstaller(): Promise<AppUpdateRecord> {
+    return this.request<AppUpdateRecord>("/rocky/app-update/download", {
+      method: "POST",
+    });
+  }
+
+  startRockyAppUpdateInstaller(): Promise<AppUpdateRecord> {
+    return this.request<AppUpdateRecord>("/rocky/app-update/install", {
+      method: "POST",
+      body: JSON.stringify({
+        confirmedRestartRisk: true,
+      }),
     });
   }
 

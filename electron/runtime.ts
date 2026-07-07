@@ -27,6 +27,12 @@ export interface BackendLaunchInput {
   stateRoot: string;
 }
 
+export interface BackendLaunchEnvInput {
+  apiBaseUrl: string;
+  appVersion: string;
+  baseEnv: NodeJS.ProcessEnv;
+}
+
 export interface DesktopApiBaseUrlInput {
   host: string;
   port: number;
@@ -120,6 +126,18 @@ export function buildBackendLaunchArgs(input: BackendLaunchInput): string[] {
     "--state-root",
     path.resolve(input.stateRoot),
   ];
+}
+
+export function buildBackendLaunchEnv(
+  input: BackendLaunchEnvInput
+): NodeJS.ProcessEnv {
+  return {
+    ...input.baseEnv,
+    AGENT_ENGINE_INTERNAL_BASE_URL: input.apiBaseUrl,
+    ELECTRON_RUN_AS_NODE: "1",
+    ROCKY_APP_VERSION: input.appVersion,
+    ROCKY_DESKTOP_CORS: "1",
+  };
 }
 
 export function resolveDesktopApiBaseUrl(input: DesktopApiBaseUrlInput): string {

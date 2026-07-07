@@ -34,6 +34,8 @@ import { registerSessionRoutes } from "./routes/session-routes.js";
 import { registerSkillRoutes } from "./routes/skill-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { SystemHardwareStatusService } from "../system/hardware-status-service.js";
+import { AppUpdateService } from "../installer/app-update-service.js";
+import { registerAppUpdateRoutes } from "./routes/app-update-routes.js";
 
 const DESKTOP_CORS_ORIGINS = new Set(["file://", "null", "rocky://app"]);
 
@@ -165,6 +167,13 @@ export function createAgentEngineServer(
   const hardwareStatusService =
     options.hardwareStatusService ??
     new SystemHardwareStatusService();
+  const appUpdateService =
+    options.appUpdateService ??
+    new AppUpdateService({
+      stateRoot: options.stateRoot,
+      currentVersion: options.appVersion,
+      now: options.now,
+    });
   const favoriteService = new FavoriteService({
     stateRoot: options.stateRoot,
     now: options.now,
@@ -226,6 +235,9 @@ export function createAgentEngineServer(
   });
   server.register(registerRockyChatRoutes, {
     rockyChatService,
+  });
+  server.register(registerAppUpdateRoutes, {
+    appUpdateService,
   });
   server.register(registerConnectorRoutes, {
     connectorService,

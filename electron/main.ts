@@ -20,6 +20,7 @@ import {
   buildBackendLaunchEnv,
   resolveDesktopApiBaseUrl,
   resolveElectronAppRoot,
+  resolveElectronAppVersion,
   resolveElectronLogRoot,
   resolveElectronStateRoot,
   resolveElectronWindowIcon,
@@ -207,11 +208,15 @@ function showAboutDialog(sourceWindow?: BrowserWindow | null): void {
     appRoot,
     platform: process.platform,
   });
+  const appVersion = resolveElectronAppVersion({
+    appRoot,
+    fallbackVersion: app.getVersion(),
+  });
   const options = {
     type: "info" as const,
     title: `About ${APP_NAME}`,
     message: APP_NAME,
-    detail: `Version ${app.getVersion()}`,
+    detail: `Version ${appVersion}`,
     buttons: ["OK"],
     ...(icon && existsSync(icon) ? { icon } : {}),
   };
@@ -280,6 +285,10 @@ async function startBackend(input: {
     port: input.port,
     stateRoot: input.stateRoot,
   });
+  const appVersion = resolveElectronAppVersion({
+    appRoot: input.appRoot,
+    fallbackVersion: app.getVersion(),
+  });
   debug("spawning backend", { execPath: process.execPath, args });
 
   let child: ChildProcess;
@@ -288,7 +297,7 @@ async function startBackend(input: {
       cwd: input.appRoot,
       env: buildBackendLaunchEnv({
         apiBaseUrl: input.apiBaseUrl,
-        appVersion: app.getVersion(),
+        appVersion,
         baseEnv: process.env,
       }),
       stdio: ["ignore", stdout, stderr],

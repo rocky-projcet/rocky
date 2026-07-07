@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -7,6 +9,7 @@ import {
   buildBackendLaunchEnv,
   resolveDesktopApiBaseUrl,
   resolveElectronAppRoot,
+  resolveElectronAppVersion,
   resolveElectronWindowIcon,
   resolveElectronLogRoot,
   resolveElectronStateRoot,
@@ -162,6 +165,23 @@ test("buildBackendLaunchEnv passes desktop version and internal backend flags", 
       ELECTRON_RUN_AS_NODE: "1",
       ROCKY_DESKTOP_CORS: "1",
     }
+  );
+});
+
+test("resolveElectronAppVersion prefers the app package version over the Electron binary version", async () => {
+  const appRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-electron-version-"));
+  await writeFile(
+    path.join(appRoot, "package.json"),
+    JSON.stringify({ version: "0.1.3" }),
+    "utf8"
+  );
+
+  assert.equal(
+    resolveElectronAppVersion({
+      appRoot,
+      fallbackVersion: "42.4.1",
+    }),
+    "0.1.3"
   );
 });
 

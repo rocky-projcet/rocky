@@ -99,6 +99,7 @@ import type {
 import { Textarea } from "@/shared/ui/textarea";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/utils";
+import { useI18n } from "@/shared/lib/i18n-provider";
 import { DropZoneOverlay, useFileDropZone } from "@/domains/attachment";
 import { FavoriteToggle } from "@/domains/favorite/favorite-toggle";
 import { useMdTemplates } from "@/domains/template/hooks";
@@ -1752,13 +1753,15 @@ function EmptyChatState({
   onSelectTemplate: (template: MdTemplateDefinition) => void;
   userTemplates: MdTemplateDefinition[];
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="mx-auto flex min-h-full max-w-5xl flex-col items-center justify-center pb-16 text-center">
       <h1 className="text-2xl font-semibold tracking-normal md:text-3xl">
-        어떤 작업을 시작할까요?
+        {t("home.emptyTitle")}
       </h1>
       <p className="mt-3 text-sm leading-6 text-muted-foreground md:text-base">
-        스킬을 고르거나 자료를 올려 Rocky에게 바로 요청하세요.
+        {t("home.emptyDescription")}
       </p>
       <TemplateCardGrid
         disabled={disabled}
@@ -3852,6 +3855,7 @@ function ChatComposer({
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   stopPending: boolean;
 }) {
+  const { t } = useI18n();
   const [message, setMessage] = useState("");
   const [submitPending, setSubmitPending] = useState(false);
   const [activeMention, setActiveMention] = useState<ActiveFileMention | null>(null);
@@ -4009,7 +4013,7 @@ function ChatComposer({
             size="icon"
             nativeButton={false}
             disabled={submitPending}
-            aria-label="자료 추가"
+            aria-label={t("chat.addMaterial")}
             className="shrink-0"
             render={<label />}
           >
@@ -4018,7 +4022,7 @@ function ChatComposer({
               type="file"
               multiple
               className="sr-only"
-              aria-label="자료 파일 선택"
+              aria-label={t("chat.chooseMaterialFile")}
               onChange={(event) => {
                 onFilesChange(Array.from(event.target.files ?? []));
               }}
@@ -4044,8 +4048,8 @@ function ChatComposer({
                 event.currentTarget.selectionStart ?? event.currentTarget.value.length
               );
             }}
-            placeholder="PPT나 자료를 넣고 원하는 일을 말해보세요."
-            aria-label="Rocky에게 말하기"
+            placeholder={t("chat.composerPlaceholder")}
+            aria-label={t("chat.composerAria")}
             className="max-h-36 min-h-10 flex-1 border-0 bg-transparent px-2 py-2.5 text-sm leading-5 shadow-none focus-visible:ring-0"
             onKeyDown={(event) => {
               if (activeMention && mentionOptions.length > 0) {
@@ -4086,8 +4090,8 @@ function ChatComposer({
               variant="outline"
               size="icon"
               disabled={!canStop || stopPending}
-              aria-label={stopPending ? "중지 중" : "응답 중지"}
-              title={stopPending ? "중지 중" : "응답 중지"}
+              aria-label={stopPending ? t("chat.stopping") : t("chat.stopResponse")}
+              title={stopPending ? t("chat.stopping") : t("chat.stopResponse")}
               className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
               onClick={onStop}
             >
@@ -4098,7 +4102,7 @@ function ChatComposer({
             type="submit"
             size="icon"
             disabled={!submitEnabled}
-            aria-label={submitPending ? "전송 중" : "보내기"}
+            aria-label={submitPending ? t("chat.sending") : t("chat.send")}
             className="shrink-0"
           >
             {submitPending ? (

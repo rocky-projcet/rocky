@@ -17,6 +17,7 @@ import {
   SKILL_TEMPLATES,
   type SkillKind,
 } from "@/domains/skill/lib/skill-template-catalog";
+import { useI18n } from "@/shared/lib/i18n-provider";
 
 const SKILL_KINDS: SkillKind[] = [
   "document",
@@ -76,6 +77,7 @@ interface RouteParams {
 }
 
 export function HeaderBreadcrumb() {
+  const { t } = useI18n();
   const location = useLocation();
   const matches = useMatches();
   const [searchParams] = useSearchParams();
@@ -101,6 +103,7 @@ export function HeaderBreadcrumb() {
     agentLifecycle: agentQuery.data?.lifecycle,
     sessionTitle: sessionQuery.data?.title ?? undefined,
     taskTitle: taskQuery.data?.title,
+    t,
     skillTitle: params.skillId
       ? allTemplates.find((entry) => entry.id === params.skillId)?.title
       : undefined,
@@ -135,10 +138,13 @@ export function HeaderBreadcrumb() {
   );
 }
 
-function agentRootCrumb(archived: boolean): Crumb {
+function agentRootCrumb(
+  archived: boolean,
+  t: (key: string) => string,
+): Crumb {
   return archived
-    ? { label: "내 에이전트 보관함", to: "/agents/archived" }
-    : { label: "내 에이전트", to: "/agents" };
+    ? { label: t("shell.agentsArchive"), to: "/agents/archived" }
+    : { label: t("shell.agents"), to: "/agents" };
 }
 
 function agentDetailHref(agentId: string, archived: boolean): string {
@@ -156,8 +162,9 @@ function resolveCrumbs(args: {
   sessionTitle?: string;
   taskTitle?: string;
   skillTitle?: string;
+  t: (key: string) => string;
 }): Crumb[] | null {
-  const { pathname, params, fromContext } = args;
+  const { pathname, params, fromContext, t } = args;
   const fromArchive = fromContext?.kind === "archive";
   const fromAgent = fromContext?.kind === "agent" ? fromContext : null;
   const archivedContextAgent = args.agentLifecycle === "archived";
@@ -170,9 +177,9 @@ function resolveCrumbs(args: {
       ? truncate(args.sessionTitle, 20)
       : params.sessionId;
     return [
-      agentRootCrumb(archived),
+      agentRootCrumb(archived, t),
       { label: agentLabel, to: agentDetailHref(params.agentId, archived) },
-      { label: "작업 요청" },
+      { label: t("breadcrumb.agentTask") },
       { label: sessionLabel },
     ];
   }
@@ -180,8 +187,8 @@ function resolveCrumbs(args: {
   // /agents/new
   if (pathname === "/agents/new") {
     return [
-      { label: "내 에이전트", to: "/agents" },
-      { label: "새 에이전트" },
+      { label: t("shell.agents"), to: "/agents" },
+      { label: t("breadcrumb.newAgent") },
     ];
   }
 
@@ -190,7 +197,7 @@ function resolveCrumbs(args: {
     const archived = archivedContextAgent || fromArchive;
     const agentLabel = args.agentName ?? params.agentId;
     return [
-      agentRootCrumb(archived),
+      agentRootCrumb(archived, t),
       { label: agentLabel },
     ];
   }
@@ -198,16 +205,16 @@ function resolveCrumbs(args: {
   // /skills/new
   if (pathname === "/skills/new") {
     return [
-      { label: "공용 스킬", to: "/skills" },
-      { label: "새 스킬" },
+      { label: t("shell.skills"), to: "/skills" },
+      { label: t("breadcrumb.newSkill") },
     ];
   }
 
   // /skills/external
   if (pathname === "/skills/external") {
     return [
-      { label: "공용 스킬", to: "/skills" },
-      { label: "외부 스킬 추가" },
+      { label: t("shell.skills"), to: "/skills" },
+      { label: t("breadcrumb.externalSkill") },
     ];
   }
 
@@ -218,7 +225,7 @@ function resolveCrumbs(args: {
       : params.skillId;
     if (fromAgent && args.agentName) {
       return [
-        agentRootCrumb(archivedContextAgent),
+        agentRootCrumb(archivedContextAgent, t),
         {
           label: args.agentName,
           to: agentDetailHref(fromAgent.agentId, archivedContextAgent),
@@ -227,7 +234,7 @@ function resolveCrumbs(args: {
       ];
     }
     return [
-      { label: "공용 스킬", to: "/skills" },
+      { label: t("shell.skills"), to: "/skills" },
       { label: skillLabel },
     ];
   }
@@ -239,7 +246,7 @@ function resolveCrumbs(args: {
       : params.taskId;
     if (fromAgent && args.agentName) {
       return [
-        agentRootCrumb(archivedContextAgent),
+        agentRootCrumb(archivedContextAgent, t),
         {
           label: args.agentName,
           to: agentDetailHref(fromAgent.agentId, archivedContextAgent),
@@ -248,7 +255,7 @@ function resolveCrumbs(args: {
       ];
     }
     return [
-      { label: "작업", to: "/tasks" },
+      { label: t("shell.tasks"), to: "/tasks" },
       { label: taskLabel },
     ];
   }
@@ -256,8 +263,8 @@ function resolveCrumbs(args: {
   // /templates/new
   if (pathname === "/templates/new") {
     return [
-      { label: "스킬 템플릿", to: "/templates" },
-      { label: "새 템플릿" },
+      { label: t("shell.skillTemplates"), to: "/templates" },
+      { label: t("breadcrumb.newTemplate") },
     ];
   }
 
@@ -266,7 +273,7 @@ function resolveCrumbs(args: {
     const kindLabel =
       isSkillKind(params.kind) ? SKILL_TEMPLATES[params.kind].label : params.kind;
     return [
-      { label: "스킬 템플릿", to: "/templates" },
+      { label: t("shell.skillTemplates"), to: "/templates" },
       { label: kindLabel },
     ];
   }
@@ -274,7 +281,7 @@ function resolveCrumbs(args: {
   // /runs/:runId
   if (params.runId) {
     return [
-      { label: "실행 기록" },
+      { label: t("breadcrumb.runHistory") },
       { label: truncate(params.runId, 20) },
     ];
   }

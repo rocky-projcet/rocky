@@ -8,17 +8,19 @@ import {
   type RockyDesktopApplicationMenuId,
   type RockyDesktopNavigationState,
 } from "@/shared/lib/desktop-api";
+import { useI18n } from "@/shared/lib/i18n-provider";
 import { cn } from "@/shared/lib/utils";
 import { SidebarTrigger } from "@/shared/ui/sidebar";
 
-const MENU_ITEMS: { id: RockyDesktopApplicationMenuId; label: string }[] = [
-  { id: "file", label: "파일" },
-  { id: "edit", label: "편집" },
-  { id: "view", label: "보기" },
-  { id: "help", label: "도움말" },
+const MENU_ITEMS: { id: RockyDesktopApplicationMenuId; labelKey: string }[] = [
+  { id: "file", labelKey: "desktop.file" },
+  { id: "edit", labelKey: "desktop.edit" },
+  { id: "view", labelKey: "desktop.view" },
+  { id: "help", labelKey: "desktop.help" },
 ];
 
 function DesktopHistoryControls() {
+  const { t } = useI18n();
   const navigation = resolveDesktopNavigation(globalThis);
   const [state, setState] = useState<RockyDesktopNavigationState>({
     canGoBack: false,
@@ -58,8 +60,8 @@ function DesktopHistoryControls() {
         variant="ghost"
         size="icon-xs"
         className="size-7 rounded-md text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
-        aria-label="뒤로 가기"
-        title="뒤로 가기"
+        aria-label={t("desktop.back")}
+        title={t("desktop.back")}
         disabled={!state.canGoBack}
         onClick={() => void navigation.goBack().then(setState)}
       >
@@ -70,8 +72,8 @@ function DesktopHistoryControls() {
         variant="ghost"
         size="icon-xs"
         className="size-7 rounded-md text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
-        aria-label="앞으로 가기"
-        title="앞으로 가기"
+        aria-label={t("desktop.forward")}
+        title={t("desktop.forward")}
         disabled={!state.canGoForward}
         onClick={() => void navigation.goForward().then(setState)}
       >
@@ -82,6 +84,7 @@ function DesktopHistoryControls() {
 }
 
 export function DesktopChromeBar() {
+  const { t } = useI18n();
   const navigation = resolveDesktopNavigation(globalThis);
   const applicationMenu = resolveDesktopApplicationMenu(globalThis);
 
@@ -107,12 +110,12 @@ export function DesktopChromeBar() {
     >
       <SidebarTrigger
         className="size-7 rounded-md text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
-        aria-label="사이드바 토글"
-        title="사이드바 토글"
+        aria-label={t("desktop.toggleSidebar")}
+        title={t("desktop.toggleSidebar")}
       />
       <DesktopHistoryControls />
       <nav
-        aria-label="앱 메뉴"
+        aria-label={t("desktop.appMenu")}
         className="ml-2 flex h-full items-center gap-1 [-webkit-app-region:no-drag]"
       >
         {MENU_ITEMS.map((item) => (
@@ -128,7 +131,7 @@ export function DesktopChromeBar() {
               "[-webkit-app-region:no-drag]",
             )}
           >
-            {item.label}
+            {t(item.labelKey)}
           </button>
         ))}
       </nav>

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
+import { useI18n } from "@/shared/lib/i18n-provider";
 import { AuthGate } from "@/domains/codex/components/auth-gate";
 import { MilestoneHost } from "@/domains/onboarding/milestone-host";
 import { ProductTourOrchestrator } from "@/domains/onboarding/product-tour-orchestrator";
@@ -112,6 +113,7 @@ export function AppShell() {
 }
 
 function AppShellInner() {
+  const { t } = useI18n();
   const location = useLocation();
   const { toggleSidebar } = useSidebar();
   const fromQueryParam = new URLSearchParams(location.search).get("from");
@@ -171,82 +173,82 @@ function AppShellInner() {
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="홈"
+                      tooltip={t("shell.home")}
                       isActive={rockyHomeRoute}
                       render={<NavLink to="/" />}
                     >
                       <Home />
-                      <span>홈</span>
+                      <span>{t("shell.home")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="검색"
+                      tooltip={t("shell.search")}
                       isActive={searchRoute}
                       render={<NavLink to="/search" />}
                     >
                       <Search />
-                      <span>검색</span>
+                      <span>{t("shell.search")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="연동"
+                      tooltip={t("shell.integrations")}
                       isActive={integrationsRoute}
                       render={<NavLink to="/integrations" />}
                     >
                       <Plug />
-                      <span>연동</span>
+                      <span>{t("shell.integrations")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="즐겨찾기"
+                      tooltip={t("shell.favorites")}
                       isActive={favoritesRoute}
                       render={<NavLink to="/favorites" />}
                     >
                       <Star />
-                      <span>즐겨찾기</span>
+                      <span>{t("shell.favorites")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem data-tour="nav-tasks">
                     <SidebarMenuButton
-                      tooltip="작업"
+                      tooltip={t("shell.tasks")}
                       isActive={tasksListRoute}
                       render={<NavLink to="/tasks" />}
                     >
                       <ListTodo />
-                      <span>작업</span>
+                      <span>{t("shell.tasks")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem data-tour="nav-skills">
                     <SidebarMenuButton
-                      tooltip="공용 스킬"
+                      tooltip={t("shell.skills")}
                       isActive={skillsRoute && !location.pathname.startsWith("/skills/archived")}
                       render={<NavLink to="/skills" />}
                     >
                       <Sparkles />
-                      <span>공용 스킬</span>
+                      <span>{t("shell.skills")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem data-tour="nav-agents">
                     <SidebarMenuButton
-                      tooltip="내 에이전트"
+                      tooltip={t("shell.agents")}
                       isActive={agentsRoute}
                       render={<NavLink to="/agents" />}
                     >
                       <Bot />
-                      <span>내 에이전트</span>
+                      <span>{t("shell.agents")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem data-tour="nav-skill-templates">
                     <SidebarMenuButton
-                      tooltip="스킬 템플릿"
+                      tooltip={t("shell.skillTemplates")}
                       isActive={templatesRoute && !location.pathname.startsWith("/templates/archived")}
                       render={<NavLink to="/templates" />}
                     >
                       <LayoutTemplate />
-                      <span>스킬 템플릿</span>
+                      <span>{t("shell.skillTemplates")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <ArchiveMenuItem
@@ -306,6 +308,7 @@ function ArchiveMenuItem({
   pathname: string;
   fromArchiveContext: boolean;
 }) {
+  const { t } = useI18n();
   const { state, isMobile } = useSidebar();
   const collapsed = state === "collapsed" && !isMobile;
   const skillsArchiveActive =
@@ -322,12 +325,12 @@ function ArchiveMenuItem({
           <PopoverTrigger
             render={
               <SidebarMenuButton
-                tooltip="보관함"
+                tooltip={t("shell.archive")}
                 isActive={archiveRoute}
                 type="button"
               >
                 <Archive />
-                <span>보관함</span>
+                <span>{t("shell.archive")}</span>
               </SidebarMenuButton>
             }
           />
@@ -350,7 +353,7 @@ function ArchiveMenuItem({
               }
             >
               <Sparkles className="size-4 shrink-0 text-sidebar-foreground/60" />
-              <span>공용 스킬 보관함</span>
+              <span>{t("shell.skillsArchive")}</span>
             </NavLink>
             <NavLink
               to="/agents/archived"
@@ -365,7 +368,7 @@ function ArchiveMenuItem({
               }
             >
               <Bot className="size-4 shrink-0 text-sidebar-foreground/60" />
-              <span>내 에이전트 보관함</span>
+              <span>{t("shell.agentsArchive")}</span>
             </NavLink>
           </PopoverContent>
         </Popover>
@@ -376,7 +379,7 @@ function ArchiveMenuItem({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        tooltip="보관함"
+        tooltip={t("shell.archive")}
         isActive={archiveRoute}
         type="button"
         aria-controls="archive-subtree"
@@ -384,7 +387,7 @@ function ArchiveMenuItem({
         onClick={onToggleArchive}
       >
         <Archive />
-        <span className="min-w-0 flex-1 truncate">보관함</span>
+        <span className="min-w-0 flex-1 truncate">{t("shell.archive")}</span>
         <ChevronDown
           className={cn(
             "ml-auto size-3.5 text-sidebar-foreground/45 transition-transform group-data-[collapsible=icon]:hidden",
@@ -400,7 +403,7 @@ function ArchiveMenuItem({
               render={<NavLink to="/skills/archived" />}
             >
               <Sparkles />
-              <span>공용 스킬 보관함</span>
+              <span>{t("shell.skillsArchive")}</span>
             </SidebarMenuSubButton>
           </SidebarMenuSubItem>
           <SidebarMenuSubItem>
@@ -409,7 +412,7 @@ function ArchiveMenuItem({
               render={<NavLink to="/agents/archived" />}
             >
               <Bot />
-              <span>내 에이전트 보관함</span>
+              <span>{t("shell.agentsArchive")}</span>
             </SidebarMenuSubButton>
           </SidebarMenuSubItem>
         </SidebarMenuSub>

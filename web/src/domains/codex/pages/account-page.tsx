@@ -9,6 +9,7 @@ import { Label } from "@/shared/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { PageState } from "@/shared/components/page-state";
+import { useI18n } from "@/shared/lib/i18n-provider";
 import { cn } from "@/shared/lib/utils";
 import {
   useLoginCodexApiKeyMutation,
@@ -362,6 +363,7 @@ function ProviderSummary({
 }
 
 function ProviderSettingsPanel() {
+  const { t } = useI18n();
   const accountsQuery = useProviderAccountsQuery();
   const statusesQuery = useProviderStatusesQuery();
   const codexLoginMutation = useStartCodexLoginMutation();
@@ -396,9 +398,9 @@ function ProviderSettingsPanel() {
   if (accountsQuery.isLoading) {
     return (
       <PageState
-        eyebrow="로딩"
-        title="AI 서비스 상태를 불러오는 중입니다"
-        description="Codex와 Claude 로그인 상태, 설치 상태, 사용량 정보를 읽고 있습니다."
+        eyebrow={t("common.loading")}
+        title={t("settings.loadingTitle")}
+        description={t("settings.loadingDescription")}
       />
     );
   }
@@ -407,12 +409,12 @@ function ProviderSettingsPanel() {
     const error = accountsQuery.error;
     return (
       <PageState
-        eyebrow="오류"
-        title="AI 서비스 상태를 불러올 수 없습니다"
+        eyebrow={t("common.error")}
+        title={t("settings.errorTitle")}
         description={
           error instanceof Error
             ? error.message
-            : "현재 계정 및 CLI 상태를 불러올 수 없습니다."
+            : t("settings.errorDescription")
         }
       />
     );
@@ -422,9 +424,9 @@ function ProviderSettingsPanel() {
   if (!codexAccount || !claudeAccount) {
     return (
       <PageState
-        eyebrow="누락"
-        title="AI 서비스 정보를 찾을 수 없습니다"
-        description="Codex 또는 Claude 서비스 응답이 비어 있습니다."
+        eyebrow={t("common.missing")}
+        title={t("settings.emptyTitle")}
+        description={t("settings.emptyDescription")}
       />
     );
   }
@@ -779,13 +781,14 @@ function ProviderSettingsPanel() {
 }
 
 export function AccountPage() {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState("providers");
 
   return (
     <PageContainer>
       <PageHeader
-        title="설정"
-        description="AI 서비스 연결 상태와 로컬 AI 실행에 영향을 주는 하드웨어 상태를 한곳에서 확인합니다."
+        title={t("settings.title")}
+        description={t("settings.description")}
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">

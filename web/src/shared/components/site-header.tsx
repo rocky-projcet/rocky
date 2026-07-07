@@ -6,8 +6,11 @@ import { Input } from "@/shared/ui/input";
 import { AccountPopover } from "@/domains/codex/components/account-popover";
 import { cn } from "@/shared/lib/utils";
 import { HeaderBreadcrumb, isNestedRoute } from "./header-breadcrumb";
+import { LocaleSwitcher } from "./locale-switcher";
+import { useI18n } from "@/shared/lib/i18n-provider";
 
 function HeaderSearch() {
+  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -38,9 +41,9 @@ function HeaderSearch() {
       <Input
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        placeholder="작업 / 스킬 / 에이전트를 검색해보세요"
+        placeholder={t("header.searchPlaceholder")}
         className="h-9 pl-9"
-        aria-label="작업, 스킬, 에이전트 검색"
+        aria-label={t("header.searchAria")}
       />
     </form>
   );
@@ -59,6 +62,7 @@ export function SiteHeader({ className }: { className?: string }) {
     >
       {showBreadcrumb ? <HeaderBreadcrumb /> : <HeaderSearch />}
       <div className="ml-auto flex items-center gap-2">
+        <LocaleSwitcher />
         <AccountPopover />
       </div>
     </header>

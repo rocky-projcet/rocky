@@ -16,6 +16,7 @@ import {
 } from "@/domains/task/hooks";
 import type { AgentTaskRecord } from "@/domains/task/types";
 import { agentEngineClient } from "@/shared/lib/api-client";
+import { useI18n } from "@/shared/lib/i18n-provider";
 import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
 import { Button, buttonVariants } from "@/shared/ui/button";
@@ -23,12 +24,16 @@ import { Card } from "@/shared/ui/card";
 import { TaskEditorDialog } from "./task-editor-dialog";
 import { TaskResultDialog } from "./task-result-dialog";
 
-function formatDateTime(value: string | null): string {
+function formatDateTime(
+  value: string | null,
+  locale: "ko" | "en",
+  emptyLabel: string,
+): string {
   if (!value) {
-    return "아직 없음";
+    return emptyLabel;
   }
 
-  return new Intl.DateTimeFormat("ko-KR", {
+  return new Intl.DateTimeFormat(locale === "ko" ? "ko-KR" : "en-US", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
@@ -57,6 +62,7 @@ function webhookUrl(task: AgentTaskRecord): string {
 }
 
 export function AgentTaskSection({ agentId }: { agentId: string }) {
+  const { locale, t } = useI18n();
   const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<AgentTaskRecord | null>(null);
@@ -124,13 +130,12 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
       <Card className="flex h-full min-h-0 flex-col gap-5 p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase text-muted-foreground">단일 작업</p>
+            <p className="text-xs uppercase text-muted-foreground">{t("task.sectionEyebrow")}</p>
             <h4 className="mt-2 text-lg font-semibold font-semibold text-foreground">
-              저장된 재사용 작업
+              {t("task.savedTitle")}
             </h4>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              하네스 세션에서 검증된 작업을 저장해두고, 수동 실행, 주기 실행, Webhook 이벤트
-              트리거로 반복 재사용합니다.
+              {t("task.savedDescription")}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -146,14 +151,14 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
                 setEditorOpen(true);
               }}
             >
-              저장된 작업 만들기
+              {t("task.createSaved")}
             </Button>
           </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl bg-muted/70 px-4 py-4">
-            <p className="text-xs uppercase text-muted-foreground">활성 작업</p>
+            <p className="text-xs uppercase text-muted-foreground">{t("task.activeTasks")}</p>
             <div className="mt-2 text-sm font-semibold font-semibold text-foreground">
               {summary.activeCount}
             </div>
@@ -180,11 +185,11 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
 
         {tasksQuery.isLoading ? (
           <div className="rounded-3xl border border-border bg-muted px-5 py-8 text-sm text-muted-foreground">
-            저장된 단일 작업을 불러오는 중입니다.
+            {t("task.loadingSaved")}
           </div>
         ) : visibleTasks.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-border bg-muted px-5 py-8 text-sm text-muted-foreground">
-            저장된 단일 작업이 없습니다. 검증된 프롬프트를 작업으로 저장해 반복 실행할 수 있습니다.
+            {t("task.emptySaved")}
           </div>
         ) : (
           <div className="min-h-0 flex-1 custom-scrollbar overflow-y-auto pr-1">
@@ -209,17 +214,17 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
                           </Badge>
                         ) : null}
                         <Badge className={taskStatusTone(task.lastRunStatus)}>
-                          {task.lastRunStatus ?? "대기"}
+                          {task.lastRunStatus ?? t("task.idle")}
                         </Badge>
                         {task.lifecycle === "archived" ? (
                           <Badge className="rounded-full bg-secondary text-secondary-foreground">
-                            보관됨
+                            {t("task.archived")}
                           </Badge>
                         ) : null}
                       </div>
 
                       <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                        {task.description || "설명이 없습니다."}
+                        {task.description || t("task.noDescription")}
                       </p>
 
                       <div className="mt-4 flex flex-wrap gap-2 text-xs">
@@ -249,13 +254,19 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
                       <div className="mt-4 grid gap-2 text-xs text-muted-foreground md:grid-cols-2 xl:grid-cols-5">
                         <div>
                           <div className="uppercase">최근 실행</div>
-                          <div className="mt-1 text-foreground">{formatDateTime(task.lastRunAt)}</div>
+                          <div className="mt-1 text-foreground">
+                            {formatDateTime(task.lastRunAt, locale, t("task.noDate"))}
+                          </div>
                         </div>
                         <div>
                           <div className="uppercase">주기 다음 실행</div>
                           <div className="mt-1 text-foreground">
                             {task.schedule.enabled
-                              ? formatDateTime(task.schedule.nextRunAt)
+                              ? formatDateTime(
+                                  task.schedule.nextRunAt,
+                                  locale,
+                                  t("task.noDate"),
+                                )
                               : "비활성"}
                           </div>
                         </div>
@@ -276,7 +287,11 @@ export function AgentTaskSection({ agentId }: { agentId: string }) {
                           <div className="mt-1 text-foreground">
                             {task.messengerDelivery.enabled
                               ? task.messengerDelivery.lastDeliveredAt
-                                ? `전달됨 · ${formatDateTime(task.messengerDelivery.lastDeliveredAt)}`
+                                ? `전달됨 · ${formatDateTime(
+                                    task.messengerDelivery.lastDeliveredAt,
+                                    locale,
+                                    t("task.noDate"),
+                                  )}`
                                 : task.messengerDelivery.lastError
                                   ? `실패 · ${task.messengerDelivery.lastError}`
                                   : "대기"

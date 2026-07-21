@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("rocky.product-tour.v2.state", "completed");
+  });
+});
+
 test("sidebar service entry opens the Rocky Windows updater", async ({ page }) => {
   await page.goto("/");
 

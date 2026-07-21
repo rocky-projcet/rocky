@@ -1,29 +1,20 @@
 import { expect, test } from "@playwright/test";
 
-test("debug mode reveals Rocky management routes and screen", async ({ page }) => {
-  await page.goto("/");
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("rocky.product-tour.v2.state", "completed");
+  });
+});
 
-  await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
-  const advancedMenu = page.locator("#advanced-management-subtree");
-  await expect(advancedMenu.getByRole("link", { name: "Rocky 관리" })).toHaveCount(0);
-
-  await page.goto("/rocky/agent");
+test("service page only exposes updater and default model settings", async ({ page }) => {
+  await page.goto("/admin/rocky");
 
   await expect(
-    page.getByRole("heading", { name: "Rocky 관리 화면은 디버그 모드에서만 표시합니다" })
+    page.getByRole("heading", { name: "Rocky Windows 업데이트" })
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
-  await expect(advancedMenu.getByRole("link", { name: "Rocky 관리" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "디버그 모드로 보기" }).click();
-
-  await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Rocky Core" }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "기본 모델" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "워크스페이스" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "세션" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "스킬" })).toBeVisible();
-
-  await expect(advancedMenu.getByRole("link", { name: "에이전트" })).toBeVisible();
-  await expect(advancedMenu.getByRole("link", { name: "Rocky 관리" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rocky Core" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "워크스페이스" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "세션" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "스킬" })).toHaveCount(0);
 });

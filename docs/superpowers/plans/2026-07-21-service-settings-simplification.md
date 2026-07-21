@@ -22,18 +22,31 @@
 
 **Files:**
 - Modify: `web/tests/debug-mode.spec.ts`
+- Modify: `web/tests/app-update-navigation.spec.ts`
 - Modify: `web/src/domains/rocky/pages/rocky-agent-page.tsx`
 
 **Interfaces:**
 - Consumes: `useRockyCoreManagementQuery`, `useRuntimesQuery`, `useUpdateRockyCoreSettingsMutation`, and the existing app-update hooks.
 - Produces: the existing `RockyAgentPage` route component with exactly two visible settings sections: `Rocky Windows 업데이트` and `기본 모델`.
 
-- [ ] **Step 1: Write the failing service-page assertions**
+- [ ] **Step 1: Stabilize service navigation tests and write the failing service-page assertions**
 
-Replace the post-debug assertions in `web/tests/debug-mode.spec.ts` with assertions for the retained and removed sections:
+Add this setup to both `web/tests/debug-mode.spec.ts` and `web/tests/app-update-navigation.spec.ts` so the first-run product tour cannot intercept navigation under test:
 
 ```ts
-  await expect(page.getByRole("button", { name: "고급 관리" })).toBeVisible();
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("rocky.product-tour.v2.state", "completed");
+  });
+});
+```
+
+Replace the obsolete debug-mode flow in `web/tests/debug-mode.spec.ts` with a direct service-page test and assertions for the retained and removed sections:
+
+```ts
+test("service page only exposes updater and default model settings", async ({ page }) => {
+  await page.goto("/admin/rocky");
+
   await expect(
     page.getByRole("heading", { name: "Rocky Windows 업데이트" })
   ).toBeVisible();
@@ -42,9 +55,8 @@ Replace the post-debug assertions in `web/tests/debug-mode.spec.ts` with asserti
   await expect(page.getByRole("heading", { name: "워크스페이스" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "세션" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "스킬" })).toHaveCount(0);
+});
 ```
-
-Keep the advanced-navigation link assertions that follow these checks.
 
 - [ ] **Step 2: Run the focused test and verify the RED state**
 
@@ -54,7 +66,7 @@ Run:
 npm.cmd --prefix web run test:e2e -- debug-mode.spec.ts
 ```
 
-Expected: FAIL because the current page still renders the `Rocky Core`, `워크스페이스`, `세션`, and `스킬` headings.
+Expected: FAIL only on the absence assertions because the current page still renders the `Rocky Core`, `워크스페이스`, `세션`, and `스킬` headings. The updater and default model assertions must already pass.
 
 - [ ] **Step 3: Remove management-only dependencies and state**
 
@@ -163,13 +175,13 @@ Expected: TypeScript and Vite complete with exit code 0 and no unused-import or 
 Run:
 
 ```powershell
-git diff -- web/tests/debug-mode.spec.ts web/src/domains/rocky/pages/rocky-agent-page.tsx
+git diff -- web/tests/debug-mode.spec.ts web/tests/app-update-navigation.spec.ts web/src/domains/rocky/pages/rocky-agent-page.tsx
 git status --short
 ```
 
 Confirm the two pre-existing updater backend files remain modified but unchanged by this task. Then stage and commit only the UI and test files:
 
 ```powershell
-git add web/tests/debug-mode.spec.ts web/src/domains/rocky/pages/rocky-agent-page.tsx
+git add web/tests/debug-mode.spec.ts web/tests/app-update-navigation.spec.ts web/src/domains/rocky/pages/rocky-agent-page.tsx
 git commit -m "refactor: simplify Rocky service settings"
 ```

@@ -501,6 +501,8 @@ export function RockyAgentPage() {
 
       <div className="custom-scrollbar mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.8fr)]">
+          <AppUpdatePanel runningSessionCount={runningSessions.length} />
+
           <section className="rounded-lg border bg-card p-5 xl:col-span-2">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -647,8 +649,6 @@ export function RockyAgentPage() {
               </p>
             ) : null}
           </section>
-
-          <AppUpdatePanel runningSessionCount={runningSessions.length} />
 
           <section className="rounded-lg border bg-card p-5">
             <div className="flex items-start justify-between gap-4">

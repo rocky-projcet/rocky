@@ -9,6 +9,7 @@ import {
   ListTodo,
   Plug,
   Search,
+  Settings2,
   Sparkles,
   Star,
 } from "lucide-react";
@@ -100,6 +101,10 @@ function isArchiveRoute(pathname: string): boolean {
   return pathname === "/agents/archived" || pathname === "/skills/archived";
 }
 
+function isRockyServiceRoute(pathname: string): boolean {
+  return pathname === "/admin/rocky";
+}
+
 export function AppShell() {
   return (
     <AuthGate>
@@ -133,6 +138,7 @@ function AppShellInner() {
   const skillsRoute = isSkillsRoute(location.pathname) && !fromArchiveContext;
   const agentsRoute = isAgentsRoute(location.pathname) && !fromArchiveContext;
   const tasksListRoute = isTasksListRoute(location.pathname);
+  const rockyServiceRoute = isRockyServiceRoute(location.pathname);
   const archiveRoute = isArchiveRoute(location.pathname) || fromArchiveContext;
   const [archiveOpen, setArchiveOpen] = useState(() => archiveRoute);
 
@@ -249,6 +255,16 @@ function AppShellInner() {
                     >
                       <LayoutTemplate />
                       <span>{t("shell.skillTemplates")}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip={t("shell.service")}
+                      isActive={rockyServiceRoute}
+                      render={<NavLink to="/admin/rocky" />}
+                    >
+                      <Settings2 />
+                      <span>{t("shell.service")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <ArchiveMenuItem

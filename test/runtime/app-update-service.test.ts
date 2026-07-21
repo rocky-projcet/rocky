@@ -40,19 +40,23 @@ test("AppUpdateService discovers the latest Windows installer release", async ()
   const installerBody = "installer-bytes";
   const checksum = sha256(installerBody);
   const fetches: string[] = [];
+  let authorization: string | null = null;
   const service = new AppUpdateService({
     stateRoot,
     currentVersion: "0.1.3",
     platform: "win32",
+    githubToken: "test-token",
     now: () => "2026-06-25T00:00:00.000Z",
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       fetches.push(String(url));
+      authorization = new Headers(init?.headers).get("authorization");
       return response({
         tag_name: "v0.1.4",
         html_url: "https://github.com/rocky-projcet/rocky/releases/tag/v0.1.4",
         assets: [
           {
             name: "Rocky-Setup-v0.1.4.exe",
+            url: "https://api.github.com/repos/rocky-projcet/rocky/releases/assets/42",
             browser_download_url: "https://downloads.example/Rocky-Setup-v0.1.4.exe",
             size: installerBody.length,
             digest: `sha256:${checksum}`,
@@ -69,7 +73,12 @@ test("AppUpdateService discovers the latest Windows installer release", async ()
   assert.equal(record.latestVersion, "0.1.4");
   assert.equal(record.updateAvailable, true);
   assert.equal(record.installerAsset?.name, "Rocky-Setup-v0.1.4.exe");
+  assert.equal(
+    record.installerAsset?.downloadUrl,
+    "https://api.github.com/repos/rocky-projcet/rocky/releases/assets/42"
+  );
   assert.equal(record.installerAsset?.sha256, checksum);
+  assert.equal(authorization, "Bearer test-token");
   assert.deepEqual(fetches, [
     "https://api.github.com/repos/rocky-projcet/rocky/releases/latest",
   ]);
@@ -80,14 +89,20 @@ test("AppUpdateService downloads and verifies a checksum-backed installer", asyn
   const installerBody = "installer-bytes";
   const checksum = sha256(installerBody);
   const fetches: string[] = [];
+  let authorization: string | null = null;
   const service = new AppUpdateService({
     stateRoot,
     currentVersion: "0.1.3",
     platform: "win32",
+    githubToken: "test-token",
     now: () => "2026-06-25T00:00:00.000Z",
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       fetches.push(String(url));
-      if (String(url).endsWith(".exe")) {
+      authorization = new Headers(init?.headers).get("authorization");
+      if (
+        String(url).endsWith(".exe") ||
+        String(url).endsWith("/releases/assets/42")
+      ) {
         return response(installerBody, {
           headers: { "content-type": "application/octet-stream" },
         });
@@ -98,6 +113,7 @@ test("AppUpdateService downloads and verifies a checksum-backed installer", asyn
         assets: [
           {
             name: "Rocky-Setup-v0.1.4.exe",
+            url: "https://api.github.com/repos/rocky-projcet/rocky/releases/assets/42",
             browser_download_url: "https://downloads.example/Rocky-Setup-v0.1.4.exe",
             size: installerBody.length,
           },
@@ -120,7 +136,12 @@ test("AppUpdateService downloads and verifies a checksum-backed installer", asyn
   assert.equal(record.download?.sha256, checksum);
   assert.ok(record.download?.path.endsWith("Rocky-Setup-v0.1.4.exe"));
   assert.equal(await readFile(record.download!.path, "utf8"), installerBody);
-  assert.ok(fetches.includes("https://downloads.example/Rocky-Setup-v0.1.4.exe"));
+  assert.equal(authorization, "Bearer test-token");
+  assert.ok(
+    fetches.includes(
+      "https://api.github.com/repos/rocky-projcet/rocky/releases/assets/42"
+    )
+  );
 });
 
 test("AppUpdateService blocks installer execution until checksum verification and restart confirmation", async () => {

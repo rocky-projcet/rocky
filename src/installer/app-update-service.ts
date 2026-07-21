@@ -35,6 +35,7 @@ interface AppUpdateServiceOptions {
   currentVersion?: string;
   platform?: NodeJS.Platform;
   repoFullName?: string;
+  githubToken?: string;
   fetchImpl?: typeof fetch;
   checksumTextFetcher?: ChecksumTextFetcher;
   spawn?: AppUpdateSpawnLike;
@@ -44,6 +45,7 @@ interface AppUpdateServiceOptions {
 
 interface GitHubReleaseAsset {
   name: string;
+  url?: string;
   browser_download_url: string;
   size?: number;
   digest?: string;
@@ -71,6 +73,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
   private readonly platform: NodeJS.Platform;
   private readonly currentVersion: string;
   private readonly repoFullName: string;
+  private readonly githubToken: string | null;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private checksumAssetDownloadUrl: string | null = null;
   private state: AppUpdateRecord;
@@ -89,6 +92,11 @@ export class AppUpdateService implements AppUpdateServiceLike {
         DEFAULT_CURRENT_VERSION
     );
     this.repoFullName = options.repoFullName ?? DEFAULT_REPO_FULL_NAME;
+    this.githubToken = readNonEmptyString(
+      options.githubToken ??
+        process.env.ROCKY_GITHUB_TOKEN ??
+        process.env.GITHUB_PAT
+    );
     this.baseEnv = options.baseEnv ?? process.env;
     this.state = this.initialState();
   }
@@ -148,7 +156,9 @@ export class AppUpdateService implements AppUpdateServiceLike {
 
       const checksumAsset = selectChecksumAsset(assets, installerAsset.name);
       const digest = parseSha256Digest(installerAsset.digest);
-      this.checksumAssetDownloadUrl = checksumAsset?.browser_download_url ?? null;
+      this.checksumAssetDownloadUrl = checksumAsset
+        ? resolveReleaseAssetUrl(checksumAsset)
+        : null;
 
       return this.setState({
         status: "update-available",
@@ -157,7 +167,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
         updateAvailable: true,
         installerAsset: {
           name: installerAsset.name,
-          downloadUrl: installerAsset.browser_download_url,
+          downloadUrl: resolveReleaseAssetUrl(installerAsset),
           size: Number.isFinite(installerAsset.size)
             ? Number(installerAsset.size)
             : null,
@@ -195,7 +205,10 @@ export class AppUpdateService implements AppUpdateServiceLike {
         return this.fail("Installer checksum is unavailable; download cannot be trusted.");
       }
 
-      const response = await this.fetchImpl(asset.downloadUrl);
+      const response = await this.fetchImpl(
+        asset.downloadUrl,
+        this.githubRequestInit("application/octet-stream")
+      );
       if (!response.ok) {
         return this.fail(
           `Installer download failed with HTTP ${response.status}.`
@@ -306,7 +319,8 @@ export class AppUpdateService implements AppUpdateServiceLike {
 
   private async fetchLatestRelease(): Promise<GitHubReleasePayload> {
     const response = await this.fetchImpl(
-      `https://api.github.com/repos/${this.repoFullName}/releases/latest`
+      `https://api.github.com/repos/${this.repoFullName}/releases/latest`,
+      this.githubRequestInit("application/vnd.github+json")
     );
     if (!response.ok) {
       throw new Error(`GitHub Release check failed with HTTP ${response.status}.`);
@@ -349,11 +363,25 @@ export class AppUpdateService implements AppUpdateServiceLike {
   }
 
   private async fetchChecksumText(url: string): Promise<string> {
-    const response = await this.fetchImpl(url);
+    const response = await this.fetchImpl(
+      url,
+      this.githubRequestInit("text/plain")
+    );
     if (!response.ok) {
       throw new Error(`Checksum download failed with HTTP ${response.status}.`);
     }
     return response.text();
+  }
+
+  private githubRequestInit(accept: string): RequestInit {
+    return {
+      headers: {
+        Accept: accept,
+        ...(this.githubToken
+          ? { Authorization: `Bearer ${this.githubToken}` }
+          : {}),
+      },
+    };
   }
 
   private setState(patch: Partial<AppUpdateRecord>): AppUpdateRecord {
@@ -402,6 +430,10 @@ function compareVersions(left: string, right: string): number {
     }
   }
   return 0;
+}
+
+function resolveReleaseAssetUrl(asset: GitHubReleaseAsset): string {
+  return readNonEmptyString(asset.url) ?? asset.browser_download_url;
 }
 
 function selectWindowsInstallerAsset(

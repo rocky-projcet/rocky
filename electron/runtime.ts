@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export interface ElectronAppRootInput {
@@ -25,6 +25,17 @@ export interface BackendLaunchInput {
   host: string;
   port: number;
   stateRoot: string;
+}
+
+export interface BackendLaunchEnvInput {
+  apiBaseUrl: string;
+  appVersion: string;
+  baseEnv: NodeJS.ProcessEnv;
+}
+
+export interface ElectronAppVersionInput {
+  appRoot: string;
+  fallbackVersion: string;
 }
 
 export interface DesktopApiBaseUrlInput {
@@ -120,6 +131,38 @@ export function buildBackendLaunchArgs(input: BackendLaunchInput): string[] {
     "--state-root",
     path.resolve(input.stateRoot),
   ];
+}
+
+export function buildBackendLaunchEnv(
+  input: BackendLaunchEnvInput
+): NodeJS.ProcessEnv {
+  return {
+    ...input.baseEnv,
+    AGENT_ENGINE_INTERNAL_BASE_URL: input.apiBaseUrl,
+    ELECTRON_RUN_AS_NODE: "1",
+    ROCKY_APP_VERSION: input.appVersion,
+    ROCKY_DESKTOP_CORS: "1",
+  };
+}
+
+export function resolveElectronAppVersion(
+  input: ElectronAppVersionInput
+): string {
+  const packageJsonPath = path.join(input.appRoot, "package.json");
+  if (!existsSync(packageJsonPath)) {
+    return input.fallbackVersion;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      version?: unknown;
+    };
+    return typeof parsed.version === "string" && parsed.version.trim()
+      ? parsed.version.trim()
+      : input.fallbackVersion;
+  } catch {
+    return input.fallbackVersion;
+  }
 }
 
 export function resolveDesktopApiBaseUrl(input: DesktopApiBaseUrlInput): string {

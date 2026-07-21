@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   buildBackendLaunchArgs,
+  buildBackendLaunchEnv,
   resolveDesktopApiBaseUrl,
   resolveElectronAppRoot,
+  resolveElectronAppVersion,
   resolveElectronWindowIcon,
   resolveElectronLogRoot,
   resolveElectronStateRoot,
@@ -141,6 +145,43 @@ test("buildBackendLaunchArgs starts existing CLI server on loopback port", () =>
       "--state-root",
       path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state"),
     ]
+  );
+});
+
+test("buildBackendLaunchEnv passes desktop version and internal backend flags", () => {
+  assert.deepEqual(
+    buildBackendLaunchEnv({
+      apiBaseUrl: "http://127.0.0.1:49152",
+      appVersion: "0.1.4",
+      baseEnv: {
+        PATH: "C:\\Windows\\System32",
+        ROCKY_APP_VERSION: "0.0.0",
+      },
+    }),
+    {
+      PATH: "C:\\Windows\\System32",
+      ROCKY_APP_VERSION: "0.1.4",
+      AGENT_ENGINE_INTERNAL_BASE_URL: "http://127.0.0.1:49152",
+      ELECTRON_RUN_AS_NODE: "1",
+      ROCKY_DESKTOP_CORS: "1",
+    }
+  );
+});
+
+test("resolveElectronAppVersion prefers the app package version over the Electron binary version", async () => {
+  const appRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-electron-version-"));
+  await writeFile(
+    path.join(appRoot, "package.json"),
+    JSON.stringify({ version: "0.1.3" }),
+    "utf8"
+  );
+
+  assert.equal(
+    resolveElectronAppVersion({
+      appRoot,
+      fallbackVersion: "42.4.1",
+    }),
+    "0.1.3"
   );
 });
 

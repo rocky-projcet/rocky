@@ -17,8 +17,10 @@ import {
 } from "./menu.js";
 import {
   buildBackendLaunchArgs,
+  buildBackendLaunchEnv,
   resolveDesktopApiBaseUrl,
   resolveElectronAppRoot,
+  resolveElectronAppVersion,
   resolveElectronLogRoot,
   resolveElectronStateRoot,
   resolveElectronWindowIcon,
@@ -206,11 +208,15 @@ function showAboutDialog(sourceWindow?: BrowserWindow | null): void {
     appRoot,
     platform: process.platform,
   });
+  const appVersion = resolveElectronAppVersion({
+    appRoot,
+    fallbackVersion: app.getVersion(),
+  });
   const options = {
     type: "info" as const,
     title: `About ${APP_NAME}`,
     message: APP_NAME,
-    detail: `Version ${app.getVersion()}`,
+    detail: `Version ${appVersion}`,
     buttons: ["OK"],
     ...(icon && existsSync(icon) ? { icon } : {}),
   };
@@ -279,18 +285,21 @@ async function startBackend(input: {
     port: input.port,
     stateRoot: input.stateRoot,
   });
+  const appVersion = resolveElectronAppVersion({
+    appRoot: input.appRoot,
+    fallbackVersion: app.getVersion(),
+  });
   debug("spawning backend", { execPath: process.execPath, args });
 
   let child: ChildProcess;
   try {
     child = spawn(process.execPath, args, {
       cwd: input.appRoot,
-      env: {
-        ...process.env,
-        AGENT_ENGINE_INTERNAL_BASE_URL: input.apiBaseUrl,
-        ELECTRON_RUN_AS_NODE: "1",
-        ROCKY_DESKTOP_CORS: "1",
-      },
+      env: buildBackendLaunchEnv({
+        apiBaseUrl: input.apiBaseUrl,
+        appVersion,
+        baseEnv: process.env,
+      }),
       stdio: ["ignore", stdout, stderr],
       windowsHide: true,
     });

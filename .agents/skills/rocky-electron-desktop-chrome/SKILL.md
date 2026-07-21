@@ -1,6 +1,6 @@
 ---
 name: rocky-electron-desktop-chrome
-description: Use when modifying Rocky's Electron desktop shell chrome: BrowserWindow titlebar styles, native application menus, preload IPC bridges, web desktop chrome, back/forward controls, or Windows/macOS Electron UI smoke checks.
+description: "Use when modifying Rocky's Electron desktop shell chrome: BrowserWindow titlebar styles, native application menus, preload IPC bridges, web desktop chrome, back/forward controls, or Windows/macOS Electron UI smoke checks."
 ---
 
 # Rocky Electron Desktop Chrome

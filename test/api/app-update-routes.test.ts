@@ -116,6 +116,14 @@ test("app update routes check, download, and require explicit installer confirma
     assert.equal(install.status, 202);
     assert.equal((await install.json() as { status: string }).status, "install-started");
     assert.equal(spawned.length, 1);
+
+    const reveal = await fetch(`${baseUrl}/rocky/app-update/reveal`, {
+      method: "POST",
+    });
+    assert.equal(reveal.status, 202);
+    assert.equal((await reveal.json() as { status: string }).status, "downloaded");
+    assert.equal(spawned.length, 2);
+    assert.equal(spawned[1], "explorer.exe");
   } finally {
     await server.close();
   }

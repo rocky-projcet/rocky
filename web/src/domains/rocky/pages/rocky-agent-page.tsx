@@ -1,37 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  Download,
-  ExternalLink,
-  PlayCircle,
-  RefreshCw,
   Save,
   Settings2,
-  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useRuntimesQuery } from "@/domains/codex/hooks";
 import {
-  useCheckRockyAppUpdateMutation,
-  useDownloadRockyAppUpdateMutation,
-  useRockyAppUpdateQuery,
   useRockyCoreManagementQuery,
-  useStartRockyAppUpdateInstallerMutation,
   useUpdateRockyCoreSettingsMutation,
 } from "@/domains/rocky/hooks";
-import {
-  appUpdateStatusLabel,
-  canInstallAppUpdate,
-  primaryAppUpdateActionLabel,
-} from "@/domains/rocky/lib/app-update";
-import { ConfirmDialog } from "@/shared/components/confirm-dialog";
 import type {
   RuntimeKind,
   RuntimeOllamaLaunchTarget,
   RuntimeReasoningEffort,
   RuntimeServiceTier,
-  AppUpdateRecord,
 } from "@/shared/lib/agent-engine-client";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -59,200 +42,6 @@ function runtimeLabel(kind: RuntimeKind): string {
 
 function modelDisplay(value: string | null): string {
   return value?.trim() || "CLI 기본값";
-}
-
-function AppUpdatePanel() {
-  const updateQuery = useRockyAppUpdateQuery();
-  const checkMutation = useCheckRockyAppUpdateMutation();
-  const downloadMutation = useDownloadRockyAppUpdateMutation();
-  const installMutation = useStartRockyAppUpdateInstallerMutation();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const record = updateQuery.data ?? null;
-  const busy =
-    updateQuery.isLoading ||
-    checkMutation.isPending ||
-    downloadMutation.isPending ||
-    installMutation.isPending ||
-    record?.status === "checking" ||
-    record?.status === "installing";
-  const canInstall = record ? canInstallAppUpdate(record) : false;
-
-  async function handleRecordResult(
-    result: AppUpdateRecord,
-    successMessage: string
-  ) {
-    if (result.status === "failed") {
-      toast.error("Rocky 업데이트를 진행하지 못했습니다.", {
-        description: result.lastError ?? undefined,
-      });
-      return;
-    }
-    toast.success(successMessage);
-  }
-
-  async function handlePrimaryAction() {
-    if (!record || busy) {
-      return;
-    }
-
-    try {
-      if (record.status === "update-available") {
-        const result = await downloadMutation.mutateAsync();
-        await handleRecordResult(result, "설치 파일을 검증했습니다.");
-        return;
-      }
-
-      if (record.status === "downloaded") {
-        setConfirmOpen(true);
-        return;
-      }
-
-      const result = await checkMutation.mutateAsync();
-      await handleRecordResult(result, "최신 버전을 확인했습니다.");
-    } catch (error) {
-      toast.error("Rocky 업데이트 요청이 실패했습니다.", {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    }
-  }
-
-  async function handleInstallConfirm() {
-    try {
-      const result = await installMutation.mutateAsync();
-      setConfirmOpen(false);
-      await handleRecordResult(result, "설치 파일을 실행했습니다.");
-    } catch (error) {
-      toast.error("설치 파일을 실행하지 못했습니다.", {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    }
-  }
-
-  const statusText = record
-    ? appUpdateStatusLabel(record)
-    : updateQuery.isError
-      ? "상태 확인 실패"
-      : "불러오는 중";
-  const primaryLabel = record
-    ? primaryAppUpdateActionLabel(record)
-    : "업데이트 확인";
-  const primaryDisabled =
-    !record ||
-    busy ||
-    record.status === "unsupported" ||
-    (record.status === "downloaded" && !canInstall);
-  const checksumText = record?.download?.sha256 ?? record?.installerAsset?.sha256 ?? null;
-  const preserved = record?.preservedPathNames ?? [];
-
-  return (
-    <section className="rounded-lg border bg-card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-foreground">
-              Rocky Windows 업데이트
-            </h3>
-            <Badge variant={record?.updateAvailable ? "secondary" : "outline"}>
-              {statusText}
-            </Badge>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            현재 버전과 GitHub Release의 Windows 설치 파일을 확인합니다.
-          </p>
-        </div>
-        <ShieldCheck className="size-5 text-muted-foreground" />
-      </div>
-
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
-        <div className="rounded-lg border bg-background px-3 py-3">
-          <div className="text-xs text-muted-foreground">현재 버전</div>
-          <div className="mt-1 text-sm font-semibold text-foreground">
-            {record?.currentVersion ?? "-"}
-          </div>
-        </div>
-        <div className="rounded-lg border bg-background px-3 py-3">
-          <div className="text-xs text-muted-foreground">최신 버전</div>
-          <div className="mt-1 text-sm font-semibold text-foreground">
-            {record?.latestVersion ?? "-"}
-          </div>
-        </div>
-        <div className="rounded-lg border bg-background px-3 py-3">
-          <div className="text-xs text-muted-foreground">설치 파일</div>
-          <div className="mt-1 truncate text-sm font-semibold text-foreground">
-            {record?.download?.fileName ?? record?.installerAsset?.name ?? "-"}
-          </div>
-        </div>
-        <div className="rounded-lg border bg-background px-3 py-3">
-          <div className="text-xs text-muted-foreground">검증</div>
-          <div className="mt-1 text-sm font-semibold text-foreground">
-            {record?.download?.verified
-              ? "완료"
-              : record?.installerAsset?.sha256
-                ? "checksum 확보"
-                : "대기"}
-          </div>
-        </div>
-      </div>
-
-      {record?.lastError ? (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>{record.lastError}</span>
-        </div>
-      ) : null}
-
-      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="rounded-lg border bg-background px-3 py-3 text-sm text-muted-foreground">
-          <div className="font-medium text-foreground">보존 경로</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {preserved.map((name) => (
-              <Badge key={name} variant="outline">
-                {name}
-              </Badge>
-            ))}
-          </div>
-          {checksumText ? (
-            <div className="mt-3 break-all font-mono text-xs">
-              sha256:{checksumText}
-            </div>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {record?.releaseUrl ? (
-            <Button
-              type="button"
-              variant="outline"
-              render={<a href={record.releaseUrl} target="_blank" rel="noreferrer" />}
-            >
-              <ExternalLink className="size-4" />
-              Release
-            </Button>
-          ) : null}
-          <Button type="button" onClick={() => void handlePrimaryAction()} disabled={primaryDisabled}>
-            {record?.status === "update-available" ? (
-              <Download className="size-4" />
-            ) : record?.status === "downloaded" ? (
-              <PlayCircle className="size-4" />
-            ) : (
-              <RefreshCw className="size-4" />
-            )}
-            {busy ? "처리 중" : primaryLabel}
-          </Button>
-        </div>
-      </div>
-
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title="Rocky 설치 파일을 실행할까요?"
-        description="설치 프로그램 실행 후 Rocky가 재시작될 수 있으며 진행 중인 작업이 중단될 수 있습니다. .runtime, .codex, .tools, .env 파일은 보존 대상입니다."
-        confirmLabel="설치 실행"
-        cancelLabel="취소"
-        pending={installMutation.isPending}
-        onConfirm={() => void handleInstallConfirm()}
-      />
-    </section>
-  );
 }
 
 export function RockyAgentPage() {
@@ -371,8 +160,6 @@ export function RockyAgentPage() {
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="grid gap-4">
-          <AppUpdatePanel />
-
           <section className="rounded-lg border bg-card p-5">
             <div className="flex items-start justify-between gap-4">
               <div>

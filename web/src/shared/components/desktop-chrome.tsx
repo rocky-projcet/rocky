@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import {
   resolveDesktopApplicationMenu,
+  resolveDesktopBridge,
   resolveDesktopNavigation,
   type RockyDesktopApplicationMenuId,
   type RockyDesktopNavigationState,
@@ -11,6 +12,7 @@ import {
 import { useI18n } from "@/shared/lib/i18n-provider";
 import { cn } from "@/shared/lib/utils";
 import { SidebarTrigger } from "@/shared/ui/sidebar";
+import { DesktopUpdateControl } from "./desktop-update-control";
 
 const MENU_ITEMS: { id: RockyDesktopApplicationMenuId; labelKey: string }[] = [
   { id: "file", labelKey: "desktop.file" },
@@ -87,6 +89,7 @@ export function DesktopChromeBar() {
   const { t } = useI18n();
   const navigation = resolveDesktopNavigation(globalThis);
   const applicationMenu = resolveDesktopApplicationMenu(globalThis);
+  const platform = resolveDesktopBridge(globalThis)?.platform;
 
   if (!navigation) {
     return null;
@@ -106,7 +109,10 @@ export function DesktopChromeBar() {
   return (
     <div
       data-desktop-chrome
-      className="flex h-9 shrink-0 items-center border-b bg-background px-1 pr-[140px] text-sm text-muted-foreground [-webkit-app-region:drag]"
+      className={cn(
+        "flex h-9 shrink-0 items-center border-b bg-background text-sm text-muted-foreground [-webkit-app-region:drag]",
+        platform === "darwin" ? "pl-[84px] pr-1" : "pl-1 pr-[140px]",
+      )}
     >
       <SidebarTrigger
         className="size-7 rounded-md text-muted-foreground hover:text-foreground [-webkit-app-region:no-drag]"
@@ -135,6 +141,7 @@ export function DesktopChromeBar() {
           </button>
         ))}
       </nav>
+      <DesktopUpdateControl className="ml-auto" />
     </div>
   );
 }

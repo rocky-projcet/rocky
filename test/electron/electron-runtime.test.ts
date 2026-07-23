@@ -20,9 +20,10 @@ test("resolveElectronAppRoot uses repository root in development", () => {
     resolveElectronAppRoot({
       isPackaged: false,
       defaultAppRoot: "C:\\repo\\rocky",
+      platform: "win32",
       resourcesPath: "C:\\repo\\rocky\\node_modules\\electron\\dist\\resources",
     }),
-    path.resolve("C:\\repo\\rocky")
+    path.win32.resolve("C:\\repo\\rocky")
   );
 });
 
@@ -31,10 +32,13 @@ test("resolveElectronAppRoot uses resources app payload when packaged", () => {
     resolveElectronAppRoot({
       isPackaged: true,
       defaultAppRoot: "C:\\repo\\rocky",
+      platform: "win32",
       resourcesPath: "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources",
       resourcesAppExists: true,
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources\\app")
+    path.win32.resolve(
+      "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\resources\\app"
+    )
   );
 });
 
@@ -43,11 +47,12 @@ test("resolveElectronAppRoot falls back for loose Windows installer runtime", ()
     resolveElectronAppRoot({
       isPackaged: true,
       defaultAppRoot: "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky",
+      platform: "win32",
       resourcesPath:
         "C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky\\electron\\resources",
       resourcesAppExists: false,
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Programs\\Rocky")
   );
 });
 
@@ -59,7 +64,7 @@ test("resolveElectronStateRoot prefers explicit environment value", () => {
       homeDir: "C:\\Users\\jsh",
       platform: "win32",
     }),
-    path.resolve("D:\\Rocky State")
+    path.win32.resolve("D:\\Rocky State")
   );
 });
 
@@ -71,7 +76,7 @@ test("resolveElectronStateRoot uses per-user Windows state by default", () => {
       homeDir: "C:\\Users\\jsh",
       platform: "win32",
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state")
   );
 });
 
@@ -83,7 +88,9 @@ test("resolveElectronStateRoot uses macOS application support by default", () =>
       homeDir: "/Users/jsh",
       platform: "darwin",
     }),
-    path.resolve("/Users/jsh/Library/Application Support/Rocky/agent-engine")
+    path.posix.resolve(
+      "/Users/jsh/Library/Application Support/Rocky/agent-engine"
+    )
   );
 });
 
@@ -95,7 +102,7 @@ test("resolveElectronLogRoot uses platform log defaults", () => {
       homeDir: "C:\\Users\\jsh",
       platform: "win32",
     }),
-    path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\logs")
+    path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\logs")
   );
 
   assert.equal(
@@ -105,7 +112,7 @@ test("resolveElectronLogRoot uses platform log defaults", () => {
       homeDir: "/Users/jsh",
       platform: "darwin",
     }),
-    path.resolve("/Users/jsh/Library/Logs/Rocky")
+    path.posix.resolve("/Users/jsh/Library/Logs/Rocky")
   );
 });
 
@@ -115,7 +122,9 @@ test("resolveElectronWindowIcon uses the Rocky Windows icon", () => {
       appRoot: "C:\\Rocky\\resources\\app",
       platform: "win32",
     }),
-    path.resolve("C:\\Rocky\\resources\\app\\assets\\windows\\rocky.ico")
+    path.win32.resolve(
+      "C:\\Rocky\\resources\\app\\assets\\windows\\rocky.ico"
+    )
   );
 
   assert.equal(
@@ -132,18 +141,19 @@ test("buildBackendLaunchArgs starts existing CLI server on loopback port", () =>
     buildBackendLaunchArgs({
       appRoot: "C:\\Rocky\\resources\\app",
       host: "127.0.0.1",
+      platform: "win32",
       port: 49152,
       stateRoot: "C:\\Users\\jsh\\AppData\\Local\\Rocky\\state",
     }),
     [
-      path.resolve("C:\\Rocky\\resources\\app\\dist\\src\\cli.js"),
+      path.win32.resolve("C:\\Rocky\\resources\\app\\dist\\src\\cli.js"),
       "serve",
       "--host",
       "127.0.0.1",
       "--port",
       "49152",
       "--state-root",
-      path.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state"),
+      path.win32.resolve("C:\\Users\\jsh\\AppData\\Local\\Rocky\\state"),
     ]
   );
 });

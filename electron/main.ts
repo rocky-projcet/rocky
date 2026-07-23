@@ -282,6 +282,7 @@ async function startBackend(input: {
   const args = buildBackendLaunchArgs({
     appRoot: input.appRoot,
     host: BACKEND_HOST,
+    platform: process.platform,
     port: input.port,
     stateRoot: input.stateRoot,
   });
@@ -416,6 +417,7 @@ async function boot(): Promise<void> {
   const appRoot = resolveElectronAppRoot({
     defaultAppRoot,
     isPackaged: app.isPackaged,
+    platform: process.platform,
     resourcesPath: process.resourcesPath,
   });
   const stateRoot = resolveElectronStateRoot({

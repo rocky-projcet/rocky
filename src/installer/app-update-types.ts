@@ -3,17 +3,25 @@ export type AppUpdateStatus =
   | "checking"
   | "current"
   | "update-available"
+  | "downloading"
   | "downloaded"
   | "installing"
   | "install-started"
   | "unsupported"
   | "failed";
 
+export type AppUpdateAssetKind =
+  | "windows-exe"
+  | "macos-pkg"
+  | "macos-dmg"
+  | "macos-app-zip";
+
 export type AppUpdateChecksumSource =
   | "github-asset-digest"
   | "checksum-asset";
 
 export interface AppUpdateAssetRecord {
+  kind: AppUpdateAssetKind;
   name: string;
   downloadUrl: string;
   size: number | null;
@@ -32,6 +40,12 @@ export interface AppUpdateDownloadRecord {
   verifiedAt: string;
 }
 
+export interface AppUpdateDownloadProgress {
+  bytesReceived: number;
+  totalBytes: number | null;
+  percent: number | null;
+}
+
 export interface AppUpdateRecord {
   currentVersion: string;
   platform: NodeJS.Platform;
@@ -39,9 +53,12 @@ export interface AppUpdateRecord {
   status: AppUpdateStatus;
   latestVersion: string | null;
   releaseUrl: string | null;
+  releaseNotes: string | null;
+  limitations: string[];
   updateAvailable: boolean;
   installerAsset: AppUpdateAssetRecord | null;
   download: AppUpdateDownloadRecord | null;
+  downloadProgress: AppUpdateDownloadProgress | null;
   preservedPathNames: string[];
   checkedAt: string | null;
   startedAt: string | null;
@@ -54,4 +71,5 @@ export interface AppUpdateServiceLike {
   checkForUpdates(): Promise<AppUpdateRecord>;
   downloadInstaller(): Promise<AppUpdateRecord>;
   startInstaller(input: { confirmedRestartRisk: boolean }): Promise<AppUpdateRecord>;
+  revealDownload(): Promise<AppUpdateRecord>;
 }

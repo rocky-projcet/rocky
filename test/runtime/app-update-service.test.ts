@@ -243,3 +243,191 @@ test("AppUpdateService starts the verified installer without deleting preserved 
   assert.equal(spawned.length, 1);
   assert.ok(spawned[0]!.command.endsWith("Rocky-Setup-v0.1.4.exe"));
 });
+
+test("AppUpdateService prefers a macOS pkg and exposes release notes", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    now: () => "2026-07-23T00:00:00.000Z",
+    fetchImpl: async () =>
+      response({
+        tag_name: "v0.1.4",
+        body: "macOS updater release notes",
+        assets: [
+          {
+            name: "Rocky-v0.1.4.app.zip",
+            browser_download_url: "https://downloads.example/Rocky-v0.1.4.app.zip",
+          },
+          {
+            name: "Rocky-v0.1.4.dmg",
+            browser_download_url: "https://downloads.example/Rocky-v0.1.4.dmg",
+          },
+          {
+            name: "Rocky-v0.1.4.pkg",
+            browser_download_url: "https://downloads.example/Rocky-v0.1.4.pkg",
+          },
+        ],
+      }),
+  });
+
+  const record = await service.checkForUpdates();
+
+  assert.equal(record.status, "update-available");
+  assert.equal(record.installerAsset?.name, "Rocky-v0.1.4.pkg");
+  assert.equal(record.installerAsset?.kind, "macos-pkg");
+  assert.equal(record.releaseNotes, "macOS updater release notes");
+});
+
+test("AppUpdateService falls back from dmg to app.zip for macOS releases", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const release = {
+    tag_name: "v0.1.4",
+    assets: [
+      {
+        name: "Rocky-v0.1.4.app.zip",
+        browser_download_url: "https://downloads.example/Rocky-v0.1.4.app.zip",
+      },
+      {
+        name: "Rocky-v0.1.4.dmg",
+        browser_download_url: "https://downloads.example/Rocky-v0.1.4.dmg",
+      },
+    ],
+  };
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    fetchImpl: async () => response(release),
+  });
+
+  const dmgRecord = await service.checkForUpdates();
+  assert.equal(dmgRecord.installerAsset?.kind, "macos-dmg");
+
+  const zipOnlyService = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    fetchImpl: async () =>
+      response({
+        ...release,
+        assets: release.assets.slice(0, 1),
+      }),
+  });
+  const zipRecord = await zipOnlyService.checkForUpdates();
+  assert.equal(zipRecord.installerAsset?.kind, "macos-app-zip");
+});
+
+test("AppUpdateService opens a verified macOS pkg with Installer", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const installerBody = "macos-pkg-bytes";
+  const checksum = sha256(installerBody);
+  const spawned: Array<{ command: string; args: string[] }> = [];
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    now: () => "2026-07-23T00:00:00.000Z",
+    fetchImpl: async (url) => {
+      if (String(url).endsWith(".pkg")) {
+        return response(installerBody, {
+          headers: { "content-type": "application/octet-stream" },
+        });
+      }
+      return response({
+        tag_name: "v0.1.4",
+        assets: [
+          {
+            name: "Rocky-v0.1.4.pkg",
+            browser_download_url: "https://downloads.example/Rocky-v0.1.4.pkg",
+            digest: `sha256:${checksum}`,
+          },
+        ],
+      });
+    },
+    spawn: (command, args) => {
+      spawned.push({ command, args });
+      return childProcessStub();
+    },
+  });
+
+  await service.checkForUpdates();
+  await service.downloadInstaller();
+  const install = await service.startInstaller({ confirmedRestartRisk: true });
+
+  assert.equal(install.status, "install-started");
+  assert.deepEqual(spawned, [
+    {
+      command: "/usr/bin/open",
+      args: [path.join(stateRoot, ".runtime", "app-updates", "Rocky-v0.1.4.pkg")],
+    },
+  ]);
+});
+
+test("AppUpdateService enters downloading state before a streamed asset completes", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const installerBody = "streamed-installer";
+  const checksum = sha256(installerBody);
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    fetchImpl: async (url) => {
+      if (String(url).endsWith(".pkg")) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              streamController = controller;
+            },
+          }),
+          {
+            headers: {
+              "content-length": String(Buffer.byteLength(installerBody)),
+              "content-type": "application/octet-stream",
+            },
+          }
+        );
+      }
+      return response({
+        tag_name: "v0.1.4",
+        assets: [
+          {
+            name: "Rocky-v0.1.4.pkg",
+            browser_download_url: "https://downloads.example/Rocky-v0.1.4.pkg",
+            digest: `sha256:${checksum}`,
+          },
+        ],
+      });
+    },
+  });
+
+  await service.checkForUpdates();
+  const downloadPromise = service.downloadInstaller();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(service.getState().status, "downloading");
+
+  streamController!.enqueue(Buffer.from(installerBody));
+  streamController!.close();
+  const record = await downloadPromise;
+  assert.deepEqual(record.downloadProgress, {
+    bytesReceived: Buffer.byteLength(installerBody),
+    totalBytes: Buffer.byteLength(installerBody),
+    percent: 100,
+  });
+});
+
+test("AppUpdateService exposes a download reveal action for manual macOS recovery", async () => {
+  const service = new AppUpdateService({
+    platform: "darwin",
+  });
+  const revealDownload = (
+    service as unknown as {
+      revealDownload?: () => Promise<unknown>;
+    }
+  ).revealDownload;
+
+  assert.equal(typeof revealDownload, "function");
+});

@@ -8,8 +8,10 @@ import {
 } from "./update-safety.js";
 
 import type {
+  AppUpdateAssetKind,
   AppUpdateAssetRecord,
   AppUpdateChecksumSource,
+  AppUpdateDownloadProgress,
   AppUpdateRecord,
   AppUpdateServiceLike,
 } from "./app-update-types.js";
@@ -54,8 +56,14 @@ interface GitHubReleaseAsset {
 interface GitHubReleasePayload {
   tag_name?: string;
   name?: string;
+  body?: string;
   html_url?: string;
   assets?: GitHubReleaseAsset[];
+}
+
+interface SelectedInstallerAsset {
+  asset: GitHubReleaseAsset;
+  kind: AppUpdateAssetKind;
 }
 
 const DEFAULT_REPO_FULL_NAME = "rocky-projcet/rocky";
@@ -95,7 +103,9 @@ export class AppUpdateService implements AppUpdateServiceLike {
     this.githubToken = readNonEmptyString(
       options.githubToken ??
         process.env.ROCKY_GITHUB_TOKEN ??
-        process.env.GITHUB_PAT
+        process.env.GITHUB_TOKEN ??
+        process.env.GITHUB_PAT ??
+        process.env.GH_TOKEN
     );
     this.baseEnv = options.baseEnv ?? process.env;
     this.state = this.initialState();
@@ -110,7 +120,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
       return this.setState({
         status: "unsupported",
         checkedAt: this.now(),
-        lastError: "Windows installer updates are only supported on Windows.",
+        lastError: this.unsupportedMessage(),
       });
     }
 
@@ -138,9 +148,11 @@ export class AppUpdateService implements AppUpdateServiceLike {
           status: "current",
           latestVersion,
           releaseUrl: readNonEmptyString(release.html_url),
+          releaseNotes: readNonEmptyString(release.body),
           updateAvailable: false,
           installerAsset: null,
           download: null,
+          downloadProgress: null,
           checkedAt: this.now(),
           completedAt: this.now(),
           lastError: null,
@@ -148,11 +160,16 @@ export class AppUpdateService implements AppUpdateServiceLike {
       }
 
       const assets = Array.isArray(release.assets) ? release.assets : [];
-      const installerAsset = selectWindowsInstallerAsset(assets);
-      if (!installerAsset) {
+      const selection = selectInstallerAsset(this.platform, assets);
+      if (!selection) {
         this.checksumAssetDownloadUrl = null;
-        return this.fail("Latest GitHub Release does not include a Windows installer asset.");
+        return this.fail(
+          this.platform === "darwin"
+            ? "Latest GitHub Release does not include a macOS .pkg, .dmg, or .app.zip asset."
+            : "Latest GitHub Release does not include a Windows installer asset."
+        );
       }
+      const { asset: installerAsset, kind } = selection;
 
       const checksumAsset = selectChecksumAsset(assets, installerAsset.name);
       const digest = parseSha256Digest(installerAsset.digest);
@@ -164,8 +181,10 @@ export class AppUpdateService implements AppUpdateServiceLike {
         status: "update-available",
         latestVersion,
         releaseUrl: readNonEmptyString(release.html_url),
+        releaseNotes: readNonEmptyString(release.body),
         updateAvailable: true,
         installerAsset: {
+          kind,
           name: installerAsset.name,
           downloadUrl: resolveReleaseAssetUrl(installerAsset),
           size: Number.isFinite(installerAsset.size)
@@ -176,6 +195,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
           checksumAssetName: checksumAsset?.name ?? null,
         },
         download: null,
+        downloadProgress: null,
         checkedAt: this.now(),
         completedAt: this.now(),
         lastError: null,
@@ -187,7 +207,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
 
   async downloadInstaller(): Promise<AppUpdateRecord> {
     if (!this.isSupported()) {
-      return this.fail("Windows installer updates are only supported on Windows.");
+      return this.fail(this.unsupportedMessage());
     }
 
     try {
@@ -215,7 +235,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
         );
       }
 
-      const body = Buffer.from(await response.arrayBuffer());
+      const body = await this.readDownloadBody(response, asset.size);
       const actualSha256 = createHash("sha256").update(body).digest("hex");
       if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
         return this.fail(
@@ -240,6 +260,11 @@ export class AppUpdateService implements AppUpdateServiceLike {
           downloadedAt: timestamp,
           verifiedAt: timestamp,
         },
+        downloadProgress: {
+          bytesReceived: body.byteLength,
+          totalBytes: body.byteLength,
+          percent: 100,
+        },
         startedAt: null,
         completedAt: timestamp,
         lastError: null,
@@ -256,7 +281,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
       return this.fail("You must confirm the restart risk before running the installer.");
     }
     if (!this.isSupported()) {
-      return this.fail("Windows installer updates are only supported on Windows.");
+      return this.fail(this.unsupportedMessage());
     }
 
     const download = this.state.download;
@@ -272,7 +297,10 @@ export class AppUpdateService implements AppUpdateServiceLike {
         completedAt: null,
         lastError: null,
       });
-      const child = this.spawn(download.path, [], {
+      const command =
+        this.platform === "darwin" ? "/usr/bin/open" : download.path;
+      const args = this.platform === "darwin" ? [download.path] : [];
+      const child = this.spawn(command, args, {
         cwd: path.dirname(download.path),
         env: this.baseEnv,
         stdio: ["ignore", "ignore", "ignore"],
@@ -291,6 +319,43 @@ export class AppUpdateService implements AppUpdateServiceLike {
     }
   }
 
+  async revealDownload(): Promise<AppUpdateRecord> {
+    if (!this.isSupported()) {
+      return this.fail(this.unsupportedMessage());
+    }
+
+    const download = this.state.download;
+    if (!download?.verified) {
+      return this.fail(
+        "A verified Rocky installer download is required before opening its location."
+      );
+    }
+
+    try {
+      const command =
+        this.platform === "darwin" ? "/usr/bin/open" : "explorer.exe";
+      const args =
+        this.platform === "darwin"
+          ? ["-R", download.path]
+          : [`/select,${download.path}`];
+      const child = this.spawn(command, args, {
+        cwd: path.dirname(download.path),
+        env: this.baseEnv,
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      });
+      child.unref?.();
+
+      return this.setState({
+        status: "downloaded",
+        completedAt: this.now(),
+        lastError: null,
+      });
+    } catch (error) {
+      return this.fail(error);
+    }
+  }
+
   private initialState(): AppUpdateRecord {
     const supported = this.isSupported();
     return {
@@ -300,21 +365,26 @@ export class AppUpdateService implements AppUpdateServiceLike {
       status: supported ? "idle" : "unsupported",
       latestVersion: null,
       releaseUrl: null,
+      releaseNotes: null,
+      limitations: buildPlatformLimitations(this.platform),
       updateAvailable: false,
       installerAsset: null,
       download: null,
+      downloadProgress: null,
       preservedPathNames: [...preservedInstallPathNames],
       checkedAt: null,
       startedAt: null,
       completedAt: null,
-      lastError: supported
-        ? null
-        : "Windows installer updates are only supported on Windows.",
+      lastError: supported ? null : this.unsupportedMessage(),
     };
   }
 
   private isSupported(): boolean {
-    return this.platform === "win32";
+    return this.platform === "win32" || this.platform === "darwin";
+  }
+
+  private unsupportedMessage(): string {
+    return "Rocky installer updates are only supported on Windows and macOS.";
   }
 
   private async fetchLatestRelease(): Promise<GitHubReleasePayload> {
@@ -323,6 +393,11 @@ export class AppUpdateService implements AppUpdateServiceLike {
       this.githubRequestInit("application/vnd.github+json")
     );
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(
+          "No accessible GitHub Release was found. Private repositories require a GitHub token."
+        );
+      }
       throw new Error(`GitHub Release check failed with HTTP ${response.status}.`);
     }
 
@@ -332,6 +407,52 @@ export class AppUpdateService implements AppUpdateServiceLike {
     }
 
     return parsed as GitHubReleasePayload;
+  }
+
+  private async readDownloadBody(
+    response: Response,
+    assetSize: number | null
+  ): Promise<Buffer> {
+    const contentLength = Number.parseInt(
+      response.headers.get("content-length") ?? "",
+      10
+    );
+    const totalBytes = Number.isFinite(contentLength) && contentLength >= 0
+      ? contentLength
+      : assetSize;
+    const chunks: Buffer[] = [];
+    let bytesReceived = 0;
+
+    this.setState({
+      status: "downloading",
+      downloadProgress: createDownloadProgress(bytesReceived, totalBytes),
+      completedAt: null,
+      lastError: null,
+    });
+
+    if (!response.body) {
+      const body = Buffer.from(await response.arrayBuffer());
+      this.setState({
+        downloadProgress: createDownloadProgress(body.byteLength, totalBytes),
+      });
+      return body;
+    }
+
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      const chunk = Buffer.from(value);
+      chunks.push(chunk);
+      bytesReceived += chunk.byteLength;
+      this.setState({
+        downloadProgress: createDownloadProgress(bytesReceived, totalBytes),
+      });
+    }
+
+    return Buffer.concat(chunks, bytesReceived);
   }
 
   private async resolveExpectedSha256(
@@ -389,6 +510,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
       ...this.state,
       ...patch,
       preservedPathNames: [...preservedInstallPathNames],
+      limitations: buildPlatformLimitations(this.platform),
     };
     return this.state;
   }
@@ -434,6 +556,44 @@ function compareVersions(left: string, right: string): number {
 
 function resolveReleaseAssetUrl(asset: GitHubReleaseAsset): string {
   return readNonEmptyString(asset.url) ?? asset.browser_download_url;
+}
+
+function selectInstallerAsset(
+  platform: NodeJS.Platform,
+  assets: GitHubReleaseAsset[]
+): SelectedInstallerAsset | null {
+  if (platform === "win32") {
+    const asset = selectWindowsInstallerAsset(assets);
+    return asset ? { asset, kind: "windows-exe" } : null;
+  }
+
+  if (platform !== "darwin") {
+    return null;
+  }
+
+  const macCandidates: Array<{
+    kind: AppUpdateAssetKind;
+    pattern: RegExp;
+  }> = [
+    { kind: "macos-pkg", pattern: /\.pkg$/iu },
+    { kind: "macos-dmg", pattern: /\.dmg$/iu },
+    { kind: "macos-app-zip", pattern: /\.app\.zip$/iu },
+  ];
+  for (const candidate of macCandidates) {
+    const asset = assets.find(
+      (item) =>
+        /rocky/iu.test(item.name ?? "") &&
+        candidate.pattern.test(item.name ?? "")
+    );
+    if (asset) {
+      return {
+        asset,
+        kind: candidate.kind,
+      };
+    }
+  }
+
+  return null;
 }
 
 function selectWindowsInstallerAsset(
@@ -505,4 +665,31 @@ function parseChecksumText(text: string, installerName: string): string | null {
   }
 
   return null;
+}
+
+function createDownloadProgress(
+  bytesReceived: number,
+  totalBytes: number | null
+): AppUpdateDownloadProgress {
+  const percent =
+    totalBytes && totalBytes > 0
+      ? Math.min(100, Math.round((bytesReceived / totalBytes) * 100))
+      : null;
+  return {
+    bytesReceived,
+    totalBytes,
+    percent,
+  };
+}
+
+function buildPlatformLimitations(platform: NodeJS.Platform): string[] {
+  if (platform !== "darwin") {
+    return [];
+  }
+
+  return [
+    "서명 또는 공증되지 않은 빌드는 Gatekeeper 경고가 표시될 수 있어요.",
+    "일부 개발용 배포에서는 Node.js가 필요할 수 있어요.",
+    "설치 후에도 Rocky의 사용자 설정과 runtime 데이터는 유지돼요.",
+  ];
 }

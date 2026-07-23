@@ -51,4 +51,9 @@ export const registerAppUpdateRoutes: FastifyPluginAsync<
     const record = await options.appUpdateService.startInstaller(input);
     sendJson(reply, record.status === "install-started" ? 202 : 409, record);
   });
+
+  server.post("/rocky/app-update/reveal", async (_request, reply) => {
+    const record = await options.appUpdateService.revealDownload();
+    sendJson(reply, record.status === "downloaded" ? 202 : 409, record);
+  });
 };

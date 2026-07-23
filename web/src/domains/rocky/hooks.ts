@@ -71,6 +71,15 @@ export function useRockyAppUpdateQuery() {
   return useQuery({
     queryKey: rockyQueryKeys.appUpdate,
     queryFn: () => agentEngineClient.getRockyAppUpdate(),
+    refetchInterval: (query) => {
+      const status = (query.state.data as AppUpdateRecord | undefined)?.status;
+      return status === "downloading" ||
+        status === "checking" ||
+        status === "installing"
+        ? 250
+        : false;
+    },
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -108,6 +117,17 @@ export function useStartRockyAppUpdateInstallerMutation() {
 
   return useMutation({
     mutationFn: () => agentEngineClient.startRockyAppUpdateInstaller(),
+    onSuccess: (record) => {
+      setAppUpdateData(queryClient, record);
+    },
+  });
+}
+
+export function useRevealRockyAppUpdateInstallerMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => agentEngineClient.revealRockyAppUpdateInstaller(),
     onSuccess: (record) => {
       setAppUpdateData(queryClient, record);
     },

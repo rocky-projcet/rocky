@@ -1454,13 +1454,21 @@ export type AppUpdateStatus =
   | "checking"
   | "current"
   | "update-available"
+  | "downloading"
   | "downloaded"
   | "installing"
   | "install-started"
   | "unsupported"
   | "failed";
 
+export type AppUpdateAssetKind =
+  | "windows-exe"
+  | "macos-pkg"
+  | "macos-dmg"
+  | "macos-app-zip";
+
 export interface AppUpdateAssetRecord {
+  kind: AppUpdateAssetKind;
   name: string;
   downloadUrl: string;
   size: number | null;
@@ -1479,6 +1487,12 @@ export interface AppUpdateDownloadRecord {
   verifiedAt: string;
 }
 
+export interface AppUpdateDownloadProgress {
+  bytesReceived: number;
+  totalBytes: number | null;
+  percent: number | null;
+}
+
 export interface AppUpdateRecord {
   currentVersion: string;
   platform: string;
@@ -1486,9 +1500,12 @@ export interface AppUpdateRecord {
   status: AppUpdateStatus;
   latestVersion: string | null;
   releaseUrl: string | null;
+  releaseNotes: string | null;
+  limitations: string[];
   updateAvailable: boolean;
   installerAsset: AppUpdateAssetRecord | null;
   download: AppUpdateDownloadRecord | null;
+  downloadProgress: AppUpdateDownloadProgress | null;
   preservedPathNames: string[];
   checkedAt: string | null;
   startedAt: string | null;
@@ -2544,6 +2561,12 @@ export class AgentEngineClient {
       body: JSON.stringify({
         confirmedRestartRisk: true,
       }),
+    });
+  }
+
+  revealRockyAppUpdateInstaller(): Promise<AppUpdateRecord> {
+    return this.request<AppUpdateRecord>("/rocky/app-update/reveal", {
+      method: "POST",
     });
   }
 

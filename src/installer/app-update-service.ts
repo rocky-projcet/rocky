@@ -36,6 +36,7 @@ interface AppUpdateServiceOptions {
   stateRoot?: string;
   currentVersion?: string;
   platform?: NodeJS.Platform;
+  arch?: string;
   repoFullName?: string;
   githubToken?: string;
   fetchImpl?: typeof fetch;
@@ -79,6 +80,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
   private readonly spawn: AppUpdateSpawnLike;
   private readonly now: () => string;
   private readonly platform: NodeJS.Platform;
+  private readonly architecture: string;
   private readonly currentVersion: string;
   private readonly repoFullName: string;
   private readonly githubToken: string | null;
@@ -93,6 +95,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
     this.spawn = options.spawn ?? (defaultSpawn as unknown as AppUpdateSpawnLike);
     this.now = options.now ?? (() => new Date().toISOString());
     this.platform = options.platform ?? process.platform;
+    this.architecture = options.arch ?? process.arch;
     this.currentVersion = normalizeVersion(
       options.currentVersion ??
         process.env.ROCKY_APP_VERSION ??
@@ -160,7 +163,11 @@ export class AppUpdateService implements AppUpdateServiceLike {
       }
 
       const assets = Array.isArray(release.assets) ? release.assets : [];
-      const selection = selectInstallerAsset(this.platform, assets);
+      const selection = selectInstallerAsset(
+        this.platform,
+        assets,
+        this.architecture
+      );
       if (!selection) {
         this.checksumAssetDownloadUrl = null;
         return this.fail(
@@ -560,7 +567,8 @@ function resolveReleaseAssetUrl(asset: GitHubReleaseAsset): string {
 
 function selectInstallerAsset(
   platform: NodeJS.Platform,
-  assets: GitHubReleaseAsset[]
+  assets: GitHubReleaseAsset[],
+  architecture: string = process.arch
 ): SelectedInstallerAsset | null {
   if (platform === "win32") {
     const asset = selectWindowsInstallerAsset(assets);
@@ -580,11 +588,25 @@ function selectInstallerAsset(
     { kind: "macos-app-zip", pattern: /\.app\.zip$/iu },
   ];
   for (const candidate of macCandidates) {
-    const asset = assets.find(
-      (item) =>
-        /rocky/iu.test(item.name ?? "") &&
-        candidate.pattern.test(item.name ?? "")
-    );
+    const asset = assets
+      .map((item) => ({
+        item,
+        architectureScore: macAssetArchitectureScore(
+          item.name ?? "",
+          architecture
+        ),
+      }))
+      .filter(
+        ({ item, architectureScore }) =>
+          architectureScore > 0 &&
+          /rocky/iu.test(item.name ?? "") &&
+          candidate.pattern.test(item.name ?? "")
+      )
+      .sort(
+        (left, right) =>
+          right.architectureScore - left.architectureScore ||
+          left.item.name.localeCompare(right.item.name)
+      )[0]?.item;
     if (asset) {
       return {
         asset,
@@ -594,6 +616,29 @@ function selectInstallerAsset(
   }
 
   return null;
+}
+
+function macAssetArchitectureScore(
+  assetName: string,
+  architecture: string
+): number {
+  const lowerName = assetName.toLowerCase();
+  const architectureAliases =
+    architecture === "arm64"
+      ? ["arm64", "aarch64"]
+      : architecture === "x64"
+        ? ["x64", "x86_64", "amd64"]
+        : [architecture.toLowerCase()];
+  if (architectureAliases.some((alias) => lowerName.includes(alias))) {
+    return 2;
+  }
+  if (
+    lowerName.includes("universal") ||
+    !/(?:arm64|aarch64|x64|x86_64|amd64)/u.test(lowerName)
+  ) {
+    return 1;
+  }
+  return 0;
 }
 
 function selectWindowsInstallerAsset(

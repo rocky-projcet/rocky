@@ -319,6 +319,106 @@ test("AppUpdateService falls back from dmg to app.zip for macOS releases", async
   assert.equal(zipRecord.installerAsset?.kind, "macos-app-zip");
 });
 
+test("AppUpdateService skips macOS installers for a different architecture", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const currentArch = process.arch;
+  const otherArch = currentArch === "arm64" ? "x64" : "arm64";
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    fetchImpl: async () =>
+      response({
+        tag_name: "v0.1.4",
+        assets: [
+          {
+            name: `Rocky-v0.1.4-macos-${otherArch}.pkg`,
+            browser_download_url:
+              `https://downloads.example/Rocky-v0.1.4-macos-${otherArch}.pkg`,
+          },
+          {
+            name: `Rocky-v0.1.4-macos-${currentArch}.dmg`,
+            browser_download_url:
+              `https://downloads.example/Rocky-v0.1.4-macos-${currentArch}.dmg`,
+          },
+        ],
+      }),
+  });
+
+  const record = await service.checkForUpdates();
+
+  assert.equal(
+    record.installerAsset?.name,
+    `Rocky-v0.1.4-macos-${currentArch}.dmg`
+  );
+});
+
+test("AppUpdateService prefers an exact architecture over a universal asset of the same kind", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const currentArch = process.arch;
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    fetchImpl: async () =>
+      response({
+        tag_name: "v0.1.4",
+        assets: [
+          {
+            name: "Rocky-v0.1.4-macos-universal.pkg",
+            browser_download_url:
+              "https://downloads.example/Rocky-v0.1.4-macos-universal.pkg",
+          },
+          {
+            name: `Rocky-v0.1.4-macos-${currentArch}.pkg`,
+            browser_download_url:
+              `https://downloads.example/Rocky-v0.1.4-macos-${currentArch}.pkg`,
+          },
+        ],
+      }),
+  });
+
+  const record = await service.checkForUpdates();
+
+  assert.equal(
+    record.installerAsset?.name,
+    `Rocky-v0.1.4-macos-${currentArch}.pkg`
+  );
+});
+
+test("AppUpdateService can select x64 macOS assets independently of the host architecture", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    arch: "x64",
+    fetchImpl: async () =>
+      response({
+        tag_name: "v0.1.4",
+        assets: [
+          {
+            name: "Rocky-v0.1.4-macos-arm64.pkg",
+            browser_download_url:
+              "https://downloads.example/Rocky-v0.1.4-macos-arm64.pkg",
+          },
+          {
+            name: "Rocky-v0.1.4-macos-x64.pkg",
+            browser_download_url:
+              "https://downloads.example/Rocky-v0.1.4-macos-x64.pkg",
+          },
+        ],
+      }),
+  });
+
+  const record = await service.checkForUpdates();
+
+  assert.equal(
+    record.installerAsset?.name,
+    "Rocky-v0.1.4-macos-x64.pkg"
+  );
+});
+
 test("AppUpdateService opens a verified macOS pkg with Installer", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
   const installerBody = "macos-pkg-bytes";

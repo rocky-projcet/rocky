@@ -4,6 +4,7 @@ import path from "node:path";
 export interface ElectronAppRootInput {
   defaultAppRoot: string;
   isPackaged: boolean;
+  platform: NodeJS.Platform;
   resourcesPath: string;
   resourcesAppExists?: boolean;
 }
@@ -23,6 +24,7 @@ export interface ElectronWindowIconInput {
 export interface BackendLaunchInput {
   appRoot: string;
   host: string;
+  platform: NodeJS.Platform;
   port: number;
   stateRoot: string;
 }
@@ -43,9 +45,15 @@ export interface DesktopApiBaseUrlInput {
   port: number;
 }
 
+function pathForPlatform(platform: NodeJS.Platform): typeof path.posix {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
 export function resolveElectronAppRoot(input: ElectronAppRootInput): string {
+  const platformPath = pathForPlatform(input.platform);
+
   if (input.isPackaged) {
-    const resourcesAppRoot = path.resolve(input.resourcesPath, "app");
+    const resourcesAppRoot = platformPath.resolve(input.resourcesPath, "app");
     const resourcesAppExists =
       input.resourcesAppExists ?? existsSync(resourcesAppRoot);
     if (resourcesAppExists) {
@@ -53,24 +61,25 @@ export function resolveElectronAppRoot(input: ElectronAppRootInput): string {
     }
   }
 
-  return path.resolve(input.defaultAppRoot);
+  return platformPath.resolve(input.defaultAppRoot);
 }
 
 export function resolveElectronStateRoot(input: ElectronPlatformPathsInput): string {
+  const platformPath = pathForPlatform(input.platform);
   const configured = input.env.ROCKY_STATE_ROOT;
   if (configured && configured.trim()) {
-    return path.resolve(configured.trim());
+    return platformPath.resolve(configured.trim());
   }
 
   if (input.platform === "win32") {
     const localAppData = input.env.LOCALAPPDATA;
     if (localAppData && localAppData.trim()) {
-      return path.resolve(localAppData.trim(), "Rocky", "state");
+      return platformPath.resolve(localAppData.trim(), "Rocky", "state");
     }
   }
 
   if (input.platform === "darwin") {
-    return path.resolve(
+    return platformPath.resolve(
       input.homeDir,
       "Library",
       "Application Support",
@@ -79,27 +88,28 @@ export function resolveElectronStateRoot(input: ElectronPlatformPathsInput): str
     );
   }
 
-  return path.resolve(input.appRoot, ".runtime", "state");
+  return platformPath.resolve(input.appRoot, ".runtime", "state");
 }
 
 export function resolveElectronLogRoot(input: ElectronPlatformPathsInput): string {
+  const platformPath = pathForPlatform(input.platform);
   const configured = input.env.ROCKY_LOG_ROOT;
   if (configured && configured.trim()) {
-    return path.resolve(configured.trim());
+    return platformPath.resolve(configured.trim());
   }
 
   if (input.platform === "win32") {
     const localAppData = input.env.LOCALAPPDATA;
     if (localAppData && localAppData.trim()) {
-      return path.resolve(localAppData.trim(), "Rocky", "logs");
+      return platformPath.resolve(localAppData.trim(), "Rocky", "logs");
     }
   }
 
   if (input.platform === "darwin") {
-    return path.resolve(input.homeDir, "Library", "Logs", "Rocky");
+    return platformPath.resolve(input.homeDir, "Library", "Logs", "Rocky");
   }
 
-  return path.resolve(input.appRoot, ".runtime", "logs");
+  return platformPath.resolve(input.appRoot, ".runtime", "logs");
 }
 
 export function resolveElectronWindowIcon(
@@ -109,11 +119,19 @@ export function resolveElectronWindowIcon(
     return undefined;
   }
 
-  return path.resolve(input.appRoot, "assets", "windows", "rocky.ico");
+  return path.win32.resolve(
+    input.appRoot,
+    "assets",
+    "windows",
+    "rocky.ico"
+  );
 }
 
-export function resolveBackendEntry(appRoot: string): string {
-  return path.resolve(appRoot, "dist", "src", "cli.js");
+export function resolveBackendEntry(
+  appRoot: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  return pathForPlatform(platform).resolve(appRoot, "dist", "src", "cli.js");
 }
 
 export function resolveWebIndex(appRoot: string): string {
@@ -121,15 +139,17 @@ export function resolveWebIndex(appRoot: string): string {
 }
 
 export function buildBackendLaunchArgs(input: BackendLaunchInput): string[] {
+  const platformPath = pathForPlatform(input.platform);
+
   return [
-    resolveBackendEntry(input.appRoot),
+    resolveBackendEntry(input.appRoot, input.platform),
     "serve",
     "--host",
     input.host,
     "--port",
     String(input.port),
     "--state-root",
-    path.resolve(input.stateRoot),
+    platformPath.resolve(input.stateRoot),
   ];
 }
 

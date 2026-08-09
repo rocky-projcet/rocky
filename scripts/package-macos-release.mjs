@@ -5,7 +5,11 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { brandMacOSAppBundle, validateMacOSAppBundle } from "./macos-app-bundle.mjs";
+import {
+  brandMacOSAppBundle,
+  copyMacOSAppBundle,
+  validateMacOSAppBundle,
+} from "./macos-app-bundle.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -146,7 +150,7 @@ async function stageApp(options) {
 
   await rm(stageRoot, { recursive: true, force: true });
   await mkdir(stageRoot, { recursive: true });
-  await cp(electronAppSource, appRoot, { recursive: true, force: true });
+  await copyMacOSAppBundle(electronAppSource, appRoot);
   await brandMacOSAppBundle({
     appRoot,
     iconSourcePath: path.join(repoRoot, "assets", "macos", "Rocky.icns"),
@@ -284,10 +288,10 @@ async function createPkg(appRoot, stageRoot, outputDirectory, tag, arch, enabled
   await rm(componentsPlist, { force: true });
   await mkdir(path.join(pkgRoot, "Applications"), { recursive: true });
   await mkdir(scriptsRoot, { recursive: true });
-  await cp(appRoot, path.join(pkgRoot, "Applications", "Rocky.app"), {
-    recursive: true,
-    force: true,
-  });
+  await copyMacOSAppBundle(
+    appRoot,
+    path.join(pkgRoot, "Applications", "Rocky.app")
+  );
   await writeFile(path.join(scriptsRoot, "preinstall"), installScript(tag), "utf8");
   await writeFile(path.join(scriptsRoot, "postinstall"), postinstallScript(tag), "utf8");
   await chmod(path.join(scriptsRoot, "preinstall"), 0o755);

@@ -44,10 +44,9 @@ For pure web page layout, use `rocky-web-ui-dev`. For backend/runtime behavior, 
 - Add or update web tests for complete bridge detection and partial-bridge rejection.
 
 5. Verify in layers.
-- Run `npm.cmd run typecheck`.
-- Run `npm.cmd --prefix web run typecheck`.
-- Run `npm.cmd run electron:build`; on Windows, rerun outside the sandbox if Vite/esbuild hits `Access is denied`.
-- Run `npm.cmd test`.
+- On Windows, run `npm.cmd run typecheck`, `npm.cmd --prefix web run typecheck`, `npm.cmd run electron:build`, and `npm.cmd test`; on macOS, use the same commands without `.cmd`.
+- On Windows, rerun the Electron build outside the sandbox if Vite/esbuild hits `Access is denied`.
+- When the macOS artifact-first release fast path governs this smoke, its one final full suite satisfies this checklist's full-suite requirement; do not run `npm test` again after the release fast path.
 - Run Electron smokes that exercise the real shell, especially menu popup, navigation, and first-window rendering.
 - Inspect a screenshot when layout or titlebar placement changed; BrowserWindow captures should show `data-desktop-chrome` at the top of the renderer viewport and no unexpected scrollbars.
 
@@ -55,7 +54,7 @@ For pure web page layout, use `rocky-web-ui-dev`. For backend/runtime behavior, 
 - Use the artifact-first release checks before this smoke. Require `/Applications/Rocky.app/Contents/Info.plist` values `CFBundleDisplayName=Rocky`, `CFBundleName=Rocky`, `CFBundleExecutable=Rocky`, and `CFBundleIconFile=Rocky.icns`; require `/Applications/Rocky.app/Contents/Resources/Rocky.icns` to exist.
 - Require exactly these four helper bundles and matching executables: `Rocky Helper.app`, `Rocky Helper (GPU).app`, `Rocky Helper (Plugin).app`, and `Rocky Helper (Renderer).app`. Confirm no Electron-named app or executable remains.
 - Confirm every symlink inside `/Applications/Rocky.app` is relative; reject an absolute link rather than assuming the copied framework is intact.
-- Launch only the fixed installed bundle with `open /Applications/Rocky.app`, then poll briefly with a fixed bound for the exact full command `/Applications/Rocky.app/Contents/MacOS/Rocky` (for example, five one-second attempts of `ps -axo command= | grep -Fx '/Applications/Rocky.app/Contents/MacOS/Rocky'`). Fail after the bound; do not use a broad `pgrep`, bundle-name substring, arguments-containing command, or helper-process match as proof that the main app launched.
+- Before launch, obtain a clean baseline: if Rocky may be open for unrelated use, ask the user to quit it or approve a clean test window; do not quit or kill a user-opened instance. Snapshot the PIDs whose command is exactly `/Applications/Rocky.app/Contents/MacOS/Rocky`, then launch only the fixed installed bundle with `open /Applications/Rocky.app`. Poll for a bounded time and require an exact-command PID absent from the pre-launch snapshot. An existing exact-match PID is not launch evidence. Fail after the bound; do not use a broad `pgrep`, bundle-name substring, arguments-containing command, or helper-process match as proof that the main app launched.
 - Attempt unsupported Dock or Command-Tab automation no more than once. If it is unavailable or unreliable, leave Rocky open and ask the user to accept the Dock, Command-Tab, menu, and icon appearance; do not retry automation or relaunch solely for that visual check.
 
 ## Common Mistakes

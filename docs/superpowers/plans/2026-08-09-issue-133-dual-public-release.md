@@ -182,7 +182,9 @@ git commit -m "feat: validate dual release contracts (#133)"
 
 **Files:**
 - Create: `src/release/github-release-coordinator.ts`
+- Create: `src/release/github-release-client.ts`
 - Create: `test/release/github-release-coordinator.test.ts`
+- Create: `test/release/github-release-client.test.ts`
 - Modify: `scripts/dual-github-release.ts`
 
 **Interfaces:**
@@ -218,7 +220,8 @@ implemented.
 
 - [ ] **Step 3: Implement the REST client and coordinator**
 
-Use built-in `fetch` with GitHub REST endpoints. Use `GITHUB_TOKEN` only for
+Use built-in `fetch` with GitHub REST endpoints. `github-release-client.ts`
+maps GitHub JSON into the coordinator snapshots and uses `GITHUB_TOKEN` only for
 `rocky-projcet/rocky` and `PUBLIC_RELEASE_TOKEN` only for
 `rocky-projcet/rocky-release`. Treat an existing published release as complete
 only after verifying its immutable metadata and assets. Upload only the two
@@ -235,7 +238,7 @@ Expected: all fake-client state and call-order tests pass.
 - [ ] **Step 5: Commit the coordinator**
 
 ```bash
-git add src/release/github-release-coordinator.ts test/release/github-release-coordinator.test.ts scripts/dual-github-release.ts
+git add src/release/github-release-coordinator.ts src/release/github-release-client.ts test/release/github-release-coordinator.test.ts test/release/github-release-client.test.ts scripts/dual-github-release.ts
 git commit -m "feat: coordinate idempotent dual GitHub releases (#133)"
 ```
 

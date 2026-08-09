@@ -42,7 +42,7 @@ Before changing macOS packaging code, inspect the real staged `Rocky.app` tree a
 
 Set one acceptance checklist before iterating: Rocky bundle metadata, all helper bundle names, relative framework symlinks, `/Applications/Rocky.app` as the fixed install location, and the exact Rocky main-process command.
 
-During iteration, run only the focused packaging tests. Do not build, package, or install until they pass. Then run the full suite once against the final tree, build the artifacts, and perform one install verification. Rebuild only if a later change affects packaged contents or the packaging pipeline.
+During iteration, run only the focused packaging tests. Initial staging and `pkgbuild --analyze` inspection are allowed; defer final user-facing artifact packaging and installation until focused tests pass. Then run the full suite once against the final tree, build the artifacts, and perform one install verification. Rebuild only if a later change affects packaged contents or the packaging pipeline.
 
 Request the required execution permission immediately when a needed check binds a local port or invokes macOS packaging tools.
 

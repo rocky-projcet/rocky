@@ -25,7 +25,12 @@ export function LocaleSwitcher() {
         <Languages className="size-4 text-muted-foreground" />
         <SelectValue />
       </SelectTrigger>
-      <SelectContent align="end" className="rounded-2xl">
+      <SelectContent
+        align="end"
+        alignItemWithTrigger={false}
+        className="rounded-2xl"
+        sideOffset={8}
+      >
         {SUPPORTED_LOCALES.map((entry) => (
           <SelectItem key={entry} value={entry}>
             {t(`locale.${entry}`)}

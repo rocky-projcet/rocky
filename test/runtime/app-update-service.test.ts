@@ -45,7 +45,6 @@ test("AppUpdateService discovers the latest Windows installer release", async ()
     stateRoot,
     currentVersion: "0.1.3",
     platform: "win32",
-    githubToken: "test-token",
     now: () => "2026-06-25T00:00:00.000Z",
     fetchImpl: async (url, init) => {
       fetches.push(String(url));
@@ -78,9 +77,9 @@ test("AppUpdateService discovers the latest Windows installer release", async ()
     "https://api.github.com/repos/rocky-projcet/rocky/releases/assets/42"
   );
   assert.equal(record.installerAsset?.sha256, checksum);
-  assert.equal(authorization, "Bearer test-token");
+  assert.equal(authorization, null);
   assert.deepEqual(fetches, [
-    "https://api.github.com/repos/rocky-projcet/rocky/releases/latest",
+    "https://api.github.com/repos/rocky-projcet/rocky-release/releases/latest",
   ]);
 });
 
@@ -94,7 +93,12 @@ test("AppUpdateService downloads and verifies a checksum-backed installer", asyn
     stateRoot,
     currentVersion: "0.1.3",
     platform: "win32",
-    githubToken: "test-token",
+    baseEnv: {
+      ROCKY_GITHUB_TOKEN: "legacy-rocky-token",
+      GITHUB_TOKEN: "ambient-github-token",
+      GITHUB_PAT: "legacy-pat",
+      GH_TOKEN: "legacy-gh-token",
+    },
     now: () => "2026-06-25T00:00:00.000Z",
     fetchImpl: async (url, init) => {
       fetches.push(String(url));
@@ -136,7 +140,7 @@ test("AppUpdateService downloads and verifies a checksum-backed installer", asyn
   assert.equal(record.download?.sha256, checksum);
   assert.ok(record.download?.path.endsWith("Rocky-Setup-v0.1.4.exe"));
   assert.equal(await readFile(record.download!.path, "utf8"), installerBody);
-  assert.equal(authorization, "Bearer test-token");
+  assert.equal(authorization, null);
   assert.ok(
     fetches.includes(
       "https://api.github.com/repos/rocky-projcet/rocky/releases/assets/42"

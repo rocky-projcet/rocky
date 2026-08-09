@@ -38,7 +38,6 @@ interface AppUpdateServiceOptions {
   platform?: NodeJS.Platform;
   arch?: string;
   repoFullName?: string;
-  githubToken?: string;
   fetchImpl?: typeof fetch;
   checksumTextFetcher?: ChecksumTextFetcher;
   spawn?: AppUpdateSpawnLike;
@@ -67,7 +66,7 @@ interface SelectedInstallerAsset {
   kind: AppUpdateAssetKind;
 }
 
-const DEFAULT_REPO_FULL_NAME = "rocky-projcet/rocky";
+const DEFAULT_REPO_FULL_NAME = "rocky-projcet/rocky-release";
 const DEFAULT_CURRENT_VERSION = "0.0.0";
 const CHECKSUM_ASSET_PATTERN =
   /(?:^|[-_])(sha256sums?|checksums?)(?:[-_.].*)?\.txt$|\.sha256(?:sum)?$/iu;
@@ -83,7 +82,6 @@ export class AppUpdateService implements AppUpdateServiceLike {
   private readonly architecture: string;
   private readonly currentVersion: string;
   private readonly repoFullName: string;
-  private readonly githubToken: string | null;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private checksumAssetDownloadUrl: string | null = null;
   private state: AppUpdateRecord;
@@ -103,13 +101,6 @@ export class AppUpdateService implements AppUpdateServiceLike {
         DEFAULT_CURRENT_VERSION
     );
     this.repoFullName = options.repoFullName ?? DEFAULT_REPO_FULL_NAME;
-    this.githubToken = readNonEmptyString(
-      options.githubToken ??
-        process.env.ROCKY_GITHUB_TOKEN ??
-        process.env.GITHUB_TOKEN ??
-        process.env.GITHUB_PAT ??
-        process.env.GH_TOKEN
-    );
     this.baseEnv = options.baseEnv ?? process.env;
     this.state = this.initialState();
   }
@@ -402,7 +393,7 @@ export class AppUpdateService implements AppUpdateServiceLike {
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error(
-          "No accessible GitHub Release was found. Private repositories require a GitHub token."
+          "No public Rocky GitHub Release was found."
         );
       }
       throw new Error(`GitHub Release check failed with HTTP ${response.status}.`);
@@ -505,9 +496,6 @@ export class AppUpdateService implements AppUpdateServiceLike {
     return {
       headers: {
         Accept: accept,
-        ...(this.githubToken
-          ? { Authorization: `Bearer ${this.githubToken}` }
-          : {}),
       },
     };
   }

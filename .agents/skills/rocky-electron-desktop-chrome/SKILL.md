@@ -52,10 +52,10 @@ For pure web page layout, use `rocky-web-ui-dev`. For backend/runtime behavior, 
 - Inspect a screenshot when layout or titlebar placement changed; BrowserWindow captures should show `data-desktop-chrome` at the top of the renderer viewport and no unexpected scrollbars.
 
 6. Smoke a freshly installed macOS app deterministically.
-- Use the artifact-first release checks before this smoke. Inspect `/Applications/Rocky.app/Contents/Info.plist` for `CFBundleDisplayName`, `CFBundleName`, `CFBundleExecutable`, and `CFBundleIconFile`, all naming Rocky.
+- Use the artifact-first release checks before this smoke. Require `/Applications/Rocky.app/Contents/Info.plist` values `CFBundleDisplayName=Rocky`, `CFBundleName=Rocky`, `CFBundleExecutable=Rocky`, and `CFBundleIconFile=Rocky.icns`; require `/Applications/Rocky.app/Contents/Resources/Rocky.icns` to exist.
 - Require exactly these four helper bundles and matching executables: `Rocky Helper.app`, `Rocky Helper (GPU).app`, `Rocky Helper (Plugin).app`, and `Rocky Helper (Renderer).app`. Confirm no Electron-named app or executable remains.
 - Confirm every symlink inside `/Applications/Rocky.app` is relative; reject an absolute link rather than assuming the copied framework is intact.
-- Launch only the fixed installed bundle with `open /Applications/Rocky.app`, then match the main process by the exact command `/Applications/Rocky.app/Contents/MacOS/Rocky` (for example, `ps -axo command= | grep -Fx '/Applications/Rocky.app/Contents/MacOS/Rocky'`). Do not use a broad `pgrep`, bundle-name substring, or helper-process match as proof that the main app launched.
+- Launch only the fixed installed bundle with `open /Applications/Rocky.app`, then poll briefly with a fixed bound for the exact full command `/Applications/Rocky.app/Contents/MacOS/Rocky` (for example, five one-second attempts of `ps -axo command= | grep -Fx '/Applications/Rocky.app/Contents/MacOS/Rocky'`). Fail after the bound; do not use a broad `pgrep`, bundle-name substring, arguments-containing command, or helper-process match as proof that the main app launched.
 - Attempt unsupported Dock or Command-Tab automation no more than once. If it is unavailable or unreliable, leave Rocky open and ask the user to accept the Dock, Command-Tab, menu, and icon appearance; do not retry automation or relaunch solely for that visual check.
 
 ## Common Mistakes

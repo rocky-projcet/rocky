@@ -423,6 +423,39 @@ test("AppUpdateService can select x64 macOS assets independently of the host arc
   );
 });
 
+test("AppUpdateService can select arm64 macOS assets independently of the host architecture", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
+  const service = new AppUpdateService({
+    stateRoot,
+    currentVersion: "0.1.3",
+    platform: "darwin",
+    arch: "arm64",
+    fetchImpl: async () =>
+      response({
+        tag_name: "v0.1.4",
+        assets: [
+          {
+            name: "rocky-v0.1.4-macos-x64.pkg",
+            browser_download_url:
+              "https://downloads.example/rocky-v0.1.4-macos-x64.pkg",
+          },
+          {
+            name: "rocky-v0.1.4-macos-arm64.pkg",
+            browser_download_url:
+              "https://downloads.example/rocky-v0.1.4-macos-arm64.pkg",
+          },
+        ],
+      }),
+  });
+
+  const record = await service.checkForUpdates();
+
+  assert.equal(
+    record.installerAsset?.name,
+    "rocky-v0.1.4-macos-arm64.pkg"
+  );
+});
+
 test("AppUpdateService opens a verified macOS pkg with Installer", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-app-update-"));
   const installerBody = "macos-pkg-bytes";

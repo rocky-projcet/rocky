@@ -5,6 +5,8 @@ import {
   assertReleaseVersion,
   assertStableReleaseAssetNames,
   createSha256Sums,
+  expectedMacOSReleaseAssetNames,
+  expectedStableReleaseAssetNames,
   expectedWindowsReleaseAssetNames,
   parseReleaseTag,
   validateReleaseNotes,
@@ -19,6 +21,10 @@ Public update delivery.
 ## Windows Install
 
 Run Rocky-Setup-v0.1.4.exe.
+
+## macOS Install
+
+Use the matching arm64 or x64 PKG, DMG, or app zip. These artifacts are unsigned.
 
 ## Validation
 
@@ -56,6 +62,10 @@ test("release contracts require all user-facing release note sections", () => {
     () => validateReleaseNotes(RELEASE_NOTES.replace("## Checksums", ""), "v0.1.4"),
     /missing required section.*Checksums/u
   );
+  assert.throws(
+    () => validateReleaseNotes(RELEASE_NOTES.replace("## macOS Install", ""), "v0.1.4"),
+    /missing required section.*macOS Install/u
+  );
 });
 
 test("release contracts create deterministic sha256 lines sorted by asset name", () => {
@@ -71,19 +81,36 @@ test("release contracts create deterministic sha256 lines sorted by asset name",
   );
 });
 
-test("release contracts allow only the stable Windows release assets", () => {
+test("release contracts define the stable Windows and macOS release assets", () => {
   const assets = expectedWindowsReleaseAssetNames("v0.1.4");
+  const macAssets = expectedMacOSReleaseAssetNames("v0.1.4");
   assert.deepEqual(assets, {
     installer: "Rocky-Setup-v0.1.4.exe",
     checksums: "SHA256SUMS.txt",
   });
-  assert.doesNotThrow(() =>
-    assertStableReleaseAssetNames([assets.installer, assets.checksums], "v0.1.4")
+  assert.deepEqual(macAssets, [
+    "rocky-v0.1.4-macos-arm64.app.zip",
+    "rocky-v0.1.4-macos-arm64.dmg",
+    "rocky-v0.1.4-macos-arm64.pkg",
+    "rocky-v0.1.4-macos-x64.app.zip",
+    "rocky-v0.1.4-macos-x64.dmg",
+    "rocky-v0.1.4-macos-x64.pkg",
+  ]);
+  const stable = expectedStableReleaseAssetNames("v0.1.4");
+  assert.equal(stable.length, 8);
+  assert.doesNotThrow(() => assertStableReleaseAssetNames(stable, "v0.1.4"));
+  assert.throws(
+    () =>
+      assertStableReleaseAssetNames(
+        [assets.installer, assets.checksums, ...macAssets.slice(0, -1)],
+        "v0.1.4"
+      ),
+    /unexpected stable release assets/u
   );
   assert.throws(
     () =>
       assertStableReleaseAssetNames(
-        [assets.installer, assets.checksums, "rocky-v0.1.4-windows-app.zip"],
+        [...stable, "rocky-v0.1.4-windows-app.zip"],
         "v0.1.4"
       ),
     /unexpected stable release assets/u

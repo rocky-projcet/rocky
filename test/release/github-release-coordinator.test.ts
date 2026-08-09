@@ -94,6 +94,17 @@ class FakeReleaseClient implements GitHubReleaseClient {
 
 const installer = new TextEncoder().encode("installer");
 const checksums = new TextEncoder().encode("checksums");
+const macosAssets = [
+  "rocky-v0.1.4-macos-arm64.app.zip",
+  "rocky-v0.1.4-macos-arm64.dmg",
+  "rocky-v0.1.4-macos-arm64.pkg",
+  "rocky-v0.1.4-macos-x64.app.zip",
+  "rocky-v0.1.4-macos-x64.dmg",
+  "rocky-v0.1.4-macos-x64.pkg",
+].map((name) => {
+  const bytes = new TextEncoder().encode(name);
+  return { name, bytes, sha256: sha256(bytes) };
+});
 const assets: ReleaseAssetInput[] = [
   {
     name: "Rocky-Setup-v0.1.4.exe",
@@ -105,6 +116,7 @@ const assets: ReleaseAssetInput[] = [
     bytes: checksums,
     sha256: sha256(checksums),
   },
+  ...macosAssets,
 ];
 
 test("dual release coordinator prepares both drafts before publishing private then public", async () => {
@@ -125,10 +137,12 @@ test("dual release coordinator prepares both drafts before publishing private th
     "private:create",
     "private:upload:Rocky-Setup-v0.1.4.exe",
     "private:upload:SHA256SUMS.txt",
+    ...macosAssets.map((asset) => `private:upload:${asset.name}`),
     "public:find",
     "public:create",
     "public:upload:Rocky-Setup-v0.1.4.exe",
     "public:upload:SHA256SUMS.txt",
+    ...macosAssets.map((asset) => `public:upload:${asset.name}`),
     "private:publish",
     "public:publish",
   ]);

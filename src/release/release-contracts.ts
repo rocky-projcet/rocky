@@ -6,6 +6,7 @@ const RELEASE_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/u;
 const REQUIRED_RELEASE_NOTE_SECTIONS = [
   "Highlights",
   "Windows Install",
+  "macOS Install",
   "Validation",
   "Checksums",
   "Known Limitations",
@@ -66,16 +67,36 @@ export function expectedWindowsReleaseAssetNames(tag: string): {
   };
 }
 
+export function expectedMacOSReleaseAssetNames(tag: string): string[] {
+  const { tag: normalizedTag } = parseReleaseTag(tag);
+  return [
+    `rocky-${normalizedTag}-macos-arm64.app.zip`,
+    `rocky-${normalizedTag}-macos-arm64.dmg`,
+    `rocky-${normalizedTag}-macos-arm64.pkg`,
+    `rocky-${normalizedTag}-macos-x64.app.zip`,
+    `rocky-${normalizedTag}-macos-x64.dmg`,
+    `rocky-${normalizedTag}-macos-x64.pkg`,
+  ];
+}
+
+export function expectedStableReleaseAssetNames(tag: string): string[] {
+  const windows = expectedWindowsReleaseAssetNames(tag);
+  return [
+    windows.installer,
+    windows.checksums,
+    ...expectedMacOSReleaseAssetNames(tag),
+  ].sort();
+}
+
 export function assertStableReleaseAssetNames(
   names: string[],
   tag: string
 ): void {
-  const expected = expectedWindowsReleaseAssetNames(tag);
   const actual = [...new Set(names)].sort();
-  const stable = [expected.checksums, expected.installer].sort();
+  const stable = expectedStableReleaseAssetNames(tag);
   if (actual.length !== stable.length || actual.some((name, index) => name !== stable[index])) {
     throw new Error(
-      `Found unexpected stable release assets for ${expected.installer}: ${actual.join(", ")}.`
+      `Found unexpected stable release assets for ${stable.join(", ")}: ${actual.join(", ")}.`
     );
   }
 }

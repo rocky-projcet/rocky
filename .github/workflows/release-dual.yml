@@ -1,4 +1,4 @@
-name: Rocky dual Windows release
+name: Rocky dual Windows and macOS release
 
 on:
   push:
@@ -15,11 +15,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: rocky-dual-release-${{ github.ref_name }}
+  group: rocky-dual-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  windows-package:
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -56,9 +56,107 @@ jobs:
         shell: powershell
         run: npm run release:windows:installer -- -Tag $env:RELEASE_TAG
 
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocky-release-windows-${{ env.RELEASE_TAG }}
+          path: releases/${{ env.RELEASE_TAG }}
+          if-no-files-found: error
+
+  macos-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            architecture: x64
+          - runner: macos-14
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    steps:
+      - name: Check out the tagged source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install web dependencies
+        run: npm ci --prefix web
+
+      - name: Confirm runner architecture
+        run: test "$(node -p 'process.arch')" = "${{ matrix.architecture }}"
+
+      - name: Build application payload
+        run: |
+          npm run build --silent
+          npm --prefix web run build --silent
+
+      - name: Run focused macOS packaging tests
+        run: |
+          node --test dist/test/electron/macos-app-bundle.test.js dist/test/electron/macos-release-contracts.test.js
+
+      - name: Build macOS artifacts once
+        run: npm run release:macos -- --tag "$RELEASE_TAG" --skip-build
+
+      - name: Verify macOS artifact names
+        run: |
+          test -s "releases/$RELEASE_TAG/rocky-$RELEASE_TAG-macos-${{ matrix.architecture }}.app.zip"
+          test -s "releases/$RELEASE_TAG/rocky-$RELEASE_TAG-macos-${{ matrix.architecture }}.dmg"
+          test -s "releases/$RELEASE_TAG/rocky-$RELEASE_TAG-macos-${{ matrix.architecture }}.pkg"
+
+      - name: Upload macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocky-release-macos-${{ matrix.architecture }}-${{ env.RELEASE_TAG }}
+          path: releases/${{ env.RELEASE_TAG }}
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - windows-package
+      - macos-package
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    steps:
+      - name: Check out the tagged source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rocky-release-*
+          path: releases/${{ env.RELEASE_TAG }}
+          merge-multiple: true
+
+      - name: List release inputs
+        run: find "releases/$RELEASE_TAG" -maxdepth 1 -type f -print | sort
+
       - name: Publish matching private and public Releases
-        shell: powershell
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-        run: npm run release:dual -- --tag $env:RELEASE_TAG
+        run: npm run release:dual -- --tag "$RELEASE_TAG"

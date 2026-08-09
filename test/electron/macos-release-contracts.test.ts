@@ -16,6 +16,7 @@ async function releaseContracts() {
 function componentPlist({
   rootRelativeBundlePath = "Applications/Rocky.app",
   bundleIsRelocatable = false,
+  childBundles = "",
 } = {}) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -23,6 +24,7 @@ function componentPlist({
   <dict>
     <key>BundleIsRelocatable</key>
     <${bundleIsRelocatable}/>
+${childBundles}
     <key>RootRelativeBundlePath</key>
     <string>${rootRelativeBundlePath}</string>
   </dict>
@@ -45,6 +47,31 @@ test("accepts the fixed Rocky PKG component location", async (t) => {
   t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
   const plistPath = path.join(fixtureRoot, "components.plist");
   await writeFile(plistPath, componentPlist(), "utf8");
+  const { validatePkgComponentPlist } = await releaseContracts();
+
+  await validatePkgComponentPlist(plistPath);
+});
+
+test("accepts pkgbuild ChildBundles beneath the Rocky app component", async (t) => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-pkg-plist-"));
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  const plistPath = path.join(fixtureRoot, "components.plist");
+  const childBundles = `    <key>ChildBundles</key>
+    <array>
+      <dict>
+        <key>BundleHasStrictIdentifier</key>
+        <true/>
+        <key>RootRelativeBundlePath</key>
+        <string>Applications/Rocky.app/Contents/Frameworks/Rocky Helper (GPU).app</string>
+      </dict>
+      <dict>
+        <key>BundleOverwriteAction</key>
+        <string></string>
+        <key>RootRelativeBundlePath</key>
+        <string>Applications/Rocky.app/Contents/Frameworks/Electron Framework.framework</string>
+      </dict>
+    </array>`;
+  await writeFile(plistPath, componentPlist({ childBundles }), "utf8");
   const { validatePkgComponentPlist } = await releaseContracts();
 
   await validatePkgComponentPlist(plistPath);

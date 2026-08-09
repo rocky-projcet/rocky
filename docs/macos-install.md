@@ -155,7 +155,7 @@ test -f "$app/Contents/Resources/Rocky.icns"
 
 The four `plutil` commands must print `Rocky`, `Rocky`, `Rocky`, and
 `Rocky.icns`, respectively. Launch that exact bundle and confirm the live main
-process command starts with its executable path:
+process command is exactly its executable path:
 
 ```sh
 open "$app"
@@ -169,7 +169,7 @@ while [ -z "$pid" ] && [ "$attempt" -lt 50 ]; do
         {
           pid = $1
           sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
-          if (index($0, executable) == 1) {
+          if ($0 == executable) {
             print pid
             exit
           }
@@ -182,10 +182,7 @@ done
 
 test -n "$pid"
 process_command=$(ps -p "$pid" -o command=)
-case "$process_command" in
-  "$app/Contents/MacOS/Rocky"*) ;;
-  *) printf 'Unexpected Rocky process: %s\n' "$process_command" >&2; exit 1 ;;
-esac
+test "$process_command" = "$app/Contents/MacOS/Rocky"
 ```
 
 When the app is open, visually confirm all of the following:

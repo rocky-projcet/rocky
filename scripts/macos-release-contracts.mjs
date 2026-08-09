@@ -10,14 +10,17 @@ function plistValues(plistContents, key, valuePattern) {
 
 export async function validatePkgComponentPlist(plistPath) {
   const plistContents = await readFile(plistPath, "utf8");
+  const appRoot = "Applications/Rocky.app";
   const rootPaths = plistValues(
     plistContents,
     "RootRelativeBundlePath",
     "<string>([^<]+)</string>"
   );
   if (
-    rootPaths.length !== 1 ||
-    rootPaths[0] !== "Applications/Rocky.app"
+    rootPaths.filter((rootPath) => rootPath === appRoot).length !== 1 ||
+    rootPaths.some(
+      (rootPath) => rootPath !== appRoot && !rootPath.startsWith(`${appRoot}/`)
+    )
   ) {
     throw new Error(
       "PKG component RootRelativeBundlePath must be Applications/Rocky.app."

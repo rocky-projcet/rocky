@@ -110,6 +110,17 @@ export class DualReleaseCoordinator {
     this.assertReleaseMetadata(release, input);
     this.assertKnownAssets(release, input.tag);
 
+    if (!release.draft) {
+      const missing = input.assets.find(
+        (expected) => !release!.assets.some((asset) => asset.name === expected.name)
+      );
+      if (missing) {
+        throw new Error(
+          `Published release ${input.tag} is missing expected asset ${missing.name}.`
+        );
+      }
+    }
+
     for (const expected of input.assets) {
       const existing = release.assets.find((asset) => asset.name === expected.name);
       if (existing) {

@@ -209,3 +209,24 @@ test("dual release coordinator rejects unexpected assets in an existing release"
     /unexpected stable release assets/u
   );
 });
+
+test("dual release coordinator does not mutate a published release missing an asset", async () => {
+  const privateClient = new FakeReleaseClient(
+    "private",
+    release({ draft: false })
+  );
+
+  await assert.rejects(
+    () =>
+      new DualReleaseCoordinator().publish({
+        tag: "v0.1.4",
+        name: "Rocky v0.1.4",
+        body: "release notes",
+        assets,
+        privateClient,
+        publicClient: new FakeReleaseClient("public"),
+      }),
+    /Published release v0[.]1[.]4 is missing expected asset/u
+  );
+  assert.deepEqual(privateClient.calls, ["private:find"]);
+});

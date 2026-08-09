@@ -1,5 +1,6 @@
 import {
   assertStableReleaseAssetNames,
+  expectedStableReleaseAssetNames,
   type ReleaseTag,
   parseReleaseTag,
 } from "./release-contracts.js";
@@ -174,12 +175,7 @@ export class DualReleaseCoordinator {
     release: GitHubReleaseSnapshot,
     tag: string
   ): void {
-    const expectedNames = new Set([
-      ...Object.values({
-        installer: `Rocky-Setup-${tag}.exe`,
-        checksums: "SHA256SUMS.txt",
-      }),
-    ]);
+    const expectedNames = new Set(expectedStableReleaseAssetNames(tag));
     const unexpected = release.assets.find((asset) => !expectedNames.has(asset.name));
     if (unexpected) {
       throw new Error(

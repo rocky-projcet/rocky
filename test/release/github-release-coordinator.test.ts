@@ -16,8 +16,8 @@ function sha256(bytes: Uint8Array): string {
 function release(overrides: Partial<GitHubReleaseSnapshot> = {}): GitHubReleaseSnapshot {
   return {
     id: 1,
-    tagName: "v0.1.4",
-    name: "Rocky v0.1.4",
+    tagName: "v0.1.5",
+    name: "Rocky v0.1.5",
     body: "release notes",
     draft: true,
     prerelease: false,
@@ -94,9 +94,20 @@ class FakeReleaseClient implements GitHubReleaseClient {
 
 const installer = new TextEncoder().encode("installer");
 const checksums = new TextEncoder().encode("checksums");
+const macosAssets = [
+  "rocky-v0.1.5-macos-arm64.app.zip",
+  "rocky-v0.1.5-macos-arm64.dmg",
+  "rocky-v0.1.5-macos-arm64.pkg",
+  "rocky-v0.1.5-macos-x64.app.zip",
+  "rocky-v0.1.5-macos-x64.dmg",
+  "rocky-v0.1.5-macos-x64.pkg",
+].map((name) => {
+  const bytes = new TextEncoder().encode(name);
+  return { name, bytes, sha256: sha256(bytes) };
+});
 const assets: ReleaseAssetInput[] = [
   {
-    name: "Rocky-Setup-v0.1.4.exe",
+    name: "Rocky-Setup-v0.1.5.exe",
     bytes: installer,
     sha256: sha256(installer),
   },
@@ -105,6 +116,7 @@ const assets: ReleaseAssetInput[] = [
     bytes: checksums,
     sha256: sha256(checksums),
   },
+  ...macosAssets,
 ];
 
 test("dual release coordinator prepares both drafts before publishing private then public", async () => {
@@ -112,8 +124,8 @@ test("dual release coordinator prepares both drafts before publishing private th
   const privateClient = new FakeReleaseClient("private", null, timeline);
   const publicClient = new FakeReleaseClient("public", null, timeline);
   const result = await new DualReleaseCoordinator().publish({
-    tag: "v0.1.4",
-    name: "Rocky v0.1.4",
+    tag: "v0.1.5",
+    name: "Rocky v0.1.5",
     body: "release notes",
     assets,
     privateClient,
@@ -123,12 +135,14 @@ test("dual release coordinator prepares both drafts before publishing private th
   assert.deepEqual(timeline, [
     "private:find",
     "private:create",
-    "private:upload:Rocky-Setup-v0.1.4.exe",
+    "private:upload:Rocky-Setup-v0.1.5.exe",
     "private:upload:SHA256SUMS.txt",
+    ...macosAssets.map((asset) => `private:upload:${asset.name}`),
     "public:find",
     "public:create",
-    "public:upload:Rocky-Setup-v0.1.4.exe",
+    "public:upload:Rocky-Setup-v0.1.5.exe",
     "public:upload:SHA256SUMS.txt",
+    ...macosAssets.map((asset) => `public:upload:${asset.name}`),
     "private:publish",
     "public:publish",
   ]);
@@ -153,8 +167,8 @@ test("dual release coordinator resumes matching drafts without duplicate uploads
   );
 
   await new DualReleaseCoordinator().publish({
-    tag: "v0.1.4",
-    name: "Rocky v0.1.4",
+    tag: "v0.1.5",
+    name: "Rocky v0.1.5",
     body: "release notes",
     assets,
     privateClient,
@@ -183,14 +197,14 @@ test("dual release coordinator rejects an existing asset with a different digest
   await assert.rejects(
     () =>
       new DualReleaseCoordinator().publish({
-        tag: "v0.1.4",
-        name: "Rocky v0.1.4",
+        tag: "v0.1.5",
+        name: "Rocky v0.1.5",
         body: "release notes",
         assets,
         privateClient,
         publicClient: new FakeReleaseClient("public"),
       }),
-    /asset Rocky-Setup-v0[.]1[.]4[.]exe does not match expected size or SHA-256/u
+    /asset Rocky-Setup-v0[.]1[.]5[.]exe does not match expected size or SHA-256/u
   );
   assert.deepEqual(privateClient.calls, ["private:find"]);
 });
@@ -199,8 +213,8 @@ test("dual release coordinator rejects unexpected assets in an existing release"
   await assert.rejects(
     () =>
       new DualReleaseCoordinator().publish({
-        tag: "v0.1.4",
-        name: "Rocky v0.1.4",
+        tag: "v0.1.5",
+        name: "Rocky v0.1.5",
         body: "release notes",
         assets: [...assets, { ...assets[0], name: "source.zip" }],
         privateClient: new FakeReleaseClient("private"),
@@ -219,14 +233,14 @@ test("dual release coordinator does not mutate a published release missing an as
   await assert.rejects(
     () =>
       new DualReleaseCoordinator().publish({
-        tag: "v0.1.4",
-        name: "Rocky v0.1.4",
+        tag: "v0.1.5",
+        name: "Rocky v0.1.5",
         body: "release notes",
         assets,
         privateClient,
         publicClient: new FakeReleaseClient("public"),
       }),
-    /Published release v0[.]1[.]4 is missing expected asset/u
+    /Published release v0[.]1[.]5 is missing expected asset/u
   );
   assert.deepEqual(privateClient.calls, ["private:find"]);
 });

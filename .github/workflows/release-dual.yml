@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: rocky-dual-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  group: rocky-dual-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -68,7 +68,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13
+          - runner: macos-14
             architecture: x64
           - runner: macos-14
             architecture: arm64
@@ -86,6 +86,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          architecture: ${{ matrix.architecture }}
           cache: npm
 
       - name: Install dependencies

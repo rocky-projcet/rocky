@@ -9,9 +9,11 @@ assets by host architecture, and the repository already contains macOS bundle an
 installer packaging scripts. The missing integration is building those artifacts
 on macOS runners and publishing them with the Windows release assets.
 
-The existing v0.1.4 tag and release are published and immutable. The first release
-that contains macOS assets will therefore use the next patch version, `v0.1.5`,
-unless a release owner explicitly chooses a different version.
+The existing v0.1.4 tag and release are published. The release owner has
+explicitly approved deleting the private/public v0.1.4 releases and tags and
+recreating v0.1.4 with the complete Windows and macOS asset set. The current
+release metadata and checksums are backed up before deletion so the operation is
+auditable and recoverable.
 
 ## Goals
 
@@ -31,7 +33,7 @@ unless a release owner explicitly chooses a different version.
 - Apple Developer code signing or notarization.
 - A universal binary that combines arm64 and x64 Electron runtimes.
 - Changing the public repository or updater protocol.
-- Reusing or moving the already-published `v0.1.4` tag.
+- Deleting anything outside the private/public v0.1.4 releases and tags.
 
 ## Artifact and release contract
 
@@ -90,9 +92,12 @@ download path will continue to verify the GitHub asset digest or the combined
 - Missing artifacts, unexpected filenames, architecture mismatches, malformed
   PKG component metadata, absolute app-bundle symlinks, or checksum mismatches
   fail the workflow before either release is published.
-- Existing published releases are never mutated to add missing assets. A
-  published release with the wrong asset set fails closed; a new patch version is
-  required.
+- Before the approved reissue, save the current release JSON, asset list, and tag
+  target for both repositories. Delete only the v0.1.4 release and `v0.1.4` tag
+  in `rocky-projcet/rocky` and `rocky-projcet/rocky-release`, then recreate the
+  same tag from the release commit and publish the complete asset set.
+- After recreation, the release is immutable again; future corrections require a
+  new patch version.
 - The macOS installer keeps the fixed `/Applications/Rocky.app` destination and
   does not remove per-user state under `~/Library/Application Support/Rocky`.
 - Release notes explicitly state that artifacts are unsigned and not notarized and
@@ -111,4 +116,3 @@ download path will continue to verify the GitHub asset digest or the combined
 - A freshly installed macOS PKG verification confirms Rocky bundle metadata,
   helper bundle names, relative symlinks, `/Applications/Rocky.app`, and the
   exact main-process executable command.
-

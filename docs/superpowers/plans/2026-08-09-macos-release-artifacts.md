@@ -11,13 +11,13 @@
 ## Global Constraints
 
 - The public distribution repository is exactly `rocky-projcet/rocky-release`.
-- The first macOS-enabled release is `v0.1.5`; the published `v0.1.4` tag and assets remain immutable.
+- The macOS-enabled release is the reissued `v0.1.4`; delete/recreate is limited to the private/public v0.1.4 releases and tags after backing up their metadata.
 - macOS artifacts are unsigned and not notarized; release notes must mention Gatekeeper warnings.
 - macOS runners are `macos-13` for x64 and `macos-14` for arm64.
 - User-facing assets are `Rocky-Setup-<tag>.exe`, six architecture-specific macOS installers, and `SHA256SUMS.txt`; the Windows source-free app zip is validation-only and is not uploaded.
 - The combined checksum manifest contains every user-facing installer asset, sorted by filename, and never includes itself.
 - Existing updater API and unauthenticated public repository policy remain unchanged.
-- Never force-move `v0.1.4` or mutate its published assets.
+- Do not delete or mutate any release/tag other than the explicitly approved private/public `v0.1.4` targets. After reissue, treat `v0.1.4` as immutable again.
 - Preserve the user-owned unstaged change in `web/vite.config.ts`; never stage it.
 - Before any macOS packaging or installation command that needs host permission, request the required execution permission and do not claim installation verification without fresh evidence.
 
@@ -39,7 +39,7 @@
 
 - [ ] **Step 1: Add failing contract tests**
 
-Add tests using `v0.1.5` fixtures that assert the six exact macOS names, the complete stable asset set, and rejection of a missing architecture asset or an unexpected source archive. Extend the release-note fixture with `## macOS Install`, and assert that removing that heading fails validation. Update coordinator fixtures so their expected asset list includes all eight user-facing assets.
+Add tests using `v0.1.4` fixtures that assert the six exact macOS names, the complete stable asset set, and rejection of a missing architecture asset or an unexpected source archive. Extend the release-note fixture with `## macOS Install`, and assert that removing that heading fails validation. Update coordinator fixtures so their expected asset list includes all eight user-facing assets.
 
 - [ ] **Step 2: Run focused tests and verify the expected failures**
 
@@ -74,7 +74,7 @@ git commit -m "feat: define macOS release asset contract"
 
 **Files:**
 - Modify: `scripts/dual-github-release.ts`
-- Create: `docs/releases/v0.1.5.md`
+- Modify: `docs/releases/v0.1.4.md`
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Test: `test/release/release-contracts.test.ts`
@@ -86,7 +86,7 @@ git commit -m "feat: define macOS release asset contract"
 
 - [ ] **Step 1: Write the failing CLI/notes contract test cases**
 
-Extend the release fixture to `v0.1.5`, add `## macOS Install` with the exact filenames and unsigned warning, and assert missing macOS headings are rejected. Add a pure test-level list of expected asset names that the CLI must check before invoking a client; do not add network calls to the test suite.
+Extend the release fixture to `v0.1.4`, add `## macOS Install` with the exact filenames and unsigned warning, and assert missing macOS headings are rejected. Add a pure test-level list of expected asset names that the CLI must check before invoking a client; do not add network calls to the test suite.
 
 - [ ] **Step 2: Run the focused tests and verify they fail**
 
@@ -100,9 +100,9 @@ Expected: the current Windows-only release contract rejects or omits the macOS r
 
 Use `expectedWindowsReleaseAssetNames`, `expectedMacOSReleaseAssetNames`, and the checksum name to read files from `releases/<tag>`. Keep the Windows source-free zip existence check as validation-only. Build one `ReleaseAssetInput` per user-facing installer, calculate each SHA-256 once, write the combined manifest only when absent or byte-identical, and call `assertStableReleaseAssetNames` before creating either release draft.
 
-- [ ] **Step 4: Add v0.1.5 package metadata and release notes**
+- [ ] **Step 4: Update v0.1.4 release notes without changing package metadata**
 
-Change the root package version and both lockfile version fields from `0.1.4` to `0.1.5`. Create `docs/releases/v0.1.5.md` with these headings and concrete content:
+Keep the root package version and both lockfile version fields at `0.1.4`. Update `docs/releases/v0.1.4.md` with these headings and concrete content:
 
 ~~~markdown
 ## Highlights
@@ -113,13 +113,13 @@ Change the root package version and both lockfile version fields from `0.1.4` to
 ## Known Limitations
 ~~~
 
-Name the arm64/x64 PKG, DMG, and app zip assets, state that macOS artifacts are unsigned/not notarized, and state that Gatekeeper may warn. Do not edit `docs/releases/v0.1.4.md`.
+Name the arm64/x64 PKG, DMG, and app zip assets, state that macOS artifacts are unsigned/not notarized, and state that Gatekeeper may warn.
 
 - [ ] **Step 5: Run focused tests and commit the CLI/version change**
 
 ~~~bash
 npm run build --silent && node --test dist/test/release/release-contracts.test.js
-git add scripts/dual-github-release.ts docs/releases/v0.1.5.md package.json package-lock.json src/release/release-contracts.ts test/release/release-contracts.test.ts
+git add scripts/dual-github-release.ts docs/releases/v0.1.4.md
 git commit -m "feat: publish macOS release assets"
 ~~~
 
@@ -177,8 +177,8 @@ Expected: only the publication job runs `release:dual`, and the concurrency grou
 
 **Files:**
 - Modify only files required by a focused packaging failure.
-- Generated (ignored): `.tmp/macos-release/v0.1.5/`
-- Generated (ignored): `releases/v0.1.5/`
+- Generated (ignored): `.tmp/macos-release/v0.1.4/`
+- Generated (ignored): `releases/v0.1.4/`
 
 **Interfaces:**
 - The existing `scripts/package-macos-release.mjs` remains the packaging entry point.
@@ -200,7 +200,7 @@ Expected: focused tests pass before any user-facing artifact is built.
 On the current Apple Silicon host, run:
 
 ~~~bash
-npm run release:macos -- --tag v0.1.5
+npm run release:macos -- --tag v0.1.4
 ~~~
 
 Inspect the staged `Rocky.app` tree and the `pkg-components.plist` generated by `pkgbuild --analyze`. Confirm the main and helper bundle metadata, relative symlinks, fixed install location, and absence of Electron-named executables. Confirm the output directory contains the arm64 PKG, DMG, and app zip.
@@ -231,7 +231,7 @@ Expected: typecheck and all test suites pass. Do not rerun the full suite after 
 
 - [ ] **Step 1: Add public-release fixture coverage for both architectures**
 
-Use a v0.1.5 release payload containing both macOS PKGs, DMGs, app zips, the Windows installer, and `SHA256SUMS.txt`. Assert that a simulated `platform: "darwin", arch: "arm64"` service selects `rocky-v0.1.5-macos-arm64.pkg`, while `arch: "x64"` selects the x64 PKG, exposes the release notes, and retains the digest/checksum source. Keep the existing Windows selection assertion.
+Use a v0.1.4 release payload containing both macOS PKGs, DMGs, app zips, the Windows installer, and `SHA256SUMS.txt`. Assert that a simulated `platform: "darwin", arch: "arm64"` service selects `rocky-v0.1.4-macos-arm64.pkg`, while `arch: "x64"` selects the x64 PKG, exposes the release notes, and retains the digest/checksum source. Keep the existing Windows selection assertion.
 
 - [ ] **Step 2: Run focused updater tests**
 
@@ -275,17 +275,16 @@ Expected: exit code 0 with no failed tests.
 
 - [ ] **Step 3: Create the next release tag only after the implementation is pushed**
 
-Confirm `package.json` is `0.1.5`, the release notes are `docs/releases/v0.1.5.md`, and the release workflow source is on the remote branch. Then create and push the annotated tag `v0.1.5`; do not touch `v0.1.4`.
+Before deletion, save the private/public v0.1.4 release JSON, asset list, and tag targets under `/tmp/rocky-v0.1.4-backup`. Delete only release IDs `367467821` and `367467850` and the `v0.1.4` tag refs in both repositories. After the implementation is pushed, recreate the annotated `v0.1.4` tag at the release commit and push it; do not touch any other release or tag.
 
 - [ ] **Step 4: Verify the Actions run and public release**
 
-The successful workflow must show Windows checks/installer, both macOS matrix packages, publication success, and eight public assets. Verify anonymously through the public API that `v0.1.5` contains the Windows installer, six macOS installers, and `SHA256SUMS.txt` with matching digests.
+The successful workflow must show Windows checks/installer, both macOS matrix packages, publication success, and eight public assets. Verify anonymously through the public API that the recreated `v0.1.4` contains the Windows installer, six macOS installers, and `SHA256SUMS.txt` with matching digests.
 
 - [ ] **Step 5: Verify the updater against the public release**
 
-Run the app update service with simulated darwin arm64/x64 and win32 inputs against the public `v0.1.5` release. The expected statuses are `update-available`, `latestVersion: "0.1.5"`, and the architecture-specific installer names. A macOS app process already open for unrelated use must not be killed; any installed-app smoke requires explicit permission before writing `/Applications/Rocky.app`.
+Run the app update service with simulated darwin arm64/x64 and win32 inputs against the public recreated `v0.1.4` release. The expected architecture-specific installer names contain `rocky-v0.1.4-macos-arm64.pkg` or `rocky-v0.1.4-macos-x64.pkg`; a current-version `0.1.3` fixture must report `update-available` and `latestVersion: "0.1.4"`. A macOS app process already open for unrelated use must not be killed; any installed-app smoke requires explicit permission before writing `/Applications/Rocky.app`.
 
 - [ ] **Step 6: Report the result**
 
 Report the implementation commits, workflow URL, public release URL, artifact list, checksum verification, and the unsigned/notarized limitation. Call out any remaining `web/vite.config.ts` user modification without including it in the feature commits.
-

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -12,6 +13,7 @@ import {
   assertReleaseVersion,
   assertStableReleaseAssetNames,
   createSha256Sums,
+  expectedMacOSReleaseAssetNames,
   expectedWindowsReleaseAssetNames,
   parseReleaseTag,
   PUBLIC_RELEASE_REPOSITORY,
@@ -64,36 +66,41 @@ async function run(cli: CliOptions): Promise<void> {
   const releaseNotes = await readFile(notesPath, "utf8");
   validateReleaseNotes(releaseNotes, parsedTag.tag);
 
-  const assetNames = expectedWindowsReleaseAssetNames(parsedTag.tag);
-  const installerPath = path.join(cli.outputDirectory, assetNames.installer);
-  const checksumsPath = path.join(cli.outputDirectory, assetNames.checksums);
+  const windowsAssetNames = expectedWindowsReleaseAssetNames(parsedTag.tag);
+  const macOSAssetNames = expectedMacOSReleaseAssetNames(parsedTag.tag);
+  const installerNames = [windowsAssetNames.installer, ...macOSAssetNames];
+  const checksumsPath = path.join(cli.outputDirectory, windowsAssetNames.checksums);
   const sourceFreePayloadPath = path.join(
     cli.outputDirectory,
     `rocky-${parsedTag.tag}-windows-app.zip`
   );
-  await assertFile(installerPath, "Windows installer");
+  for (const installerName of installerNames) {
+    await assertFile(
+      path.join(cli.outputDirectory, installerName),
+      `Release installer ${installerName}`
+    );
+  }
   await assertFile(sourceFreePayloadPath, "source-free Windows payload");
 
-  const installerBytes = await readFile(installerPath);
-  const checksums = createSha256Sums([
-    { name: assetNames.installer, bytes: installerBytes },
-  ]);
+  const installerEntries = await Promise.all(
+    installerNames.map(async (name) => ({
+      name,
+      bytes: await readFile(path.join(cli.outputDirectory, name)),
+    }))
+  );
+  const checksums = createSha256Sums(installerEntries);
   await writeDeterministicFile(checksumsPath, checksums);
   const checksumsBytes = Buffer.from(checksums, "utf8");
   const assets: ReleaseAssetInput[] = [
+    ...installerEntries.map(({ name, bytes }) => ({
+      name,
+      bytes,
+      sha256: sha256(bytes),
+    })),
     {
-      name: assetNames.installer,
-      bytes: installerBytes,
-      sha256: createSha256Sums([
-        { name: assetNames.installer, bytes: installerBytes },
-      ]).slice(0, 64),
-    },
-    {
-      name: assetNames.checksums,
+      name: windowsAssetNames.checksums,
       bytes: checksumsBytes,
-      sha256: createSha256Sums([
-        { name: assetNames.checksums, bytes: checksumsBytes },
-      ]).slice(0, 64),
+      sha256: sha256(checksumsBytes),
     },
   ];
   assertStableReleaseAssetNames(
@@ -133,6 +140,10 @@ async function run(cli: CliOptions): Promise<void> {
       })),
     })
   );
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function assertFile(filePath: string, label: string): Promise<void> {

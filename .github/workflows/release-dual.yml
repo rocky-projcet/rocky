@@ -91,6 +91,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Ensure Electron runtime is available
+        run: |
+          node node_modules/electron/install.js
+          test -x node_modules/electron/dist/Electron.app/Contents/MacOS/Electron
+
       - name: Install web dependencies
         run: npm ci --prefix web
 

@@ -1,7 +1,7 @@
 {
   "name": "rocky-project",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "main": "dist/electron/main.js",
   "bin": {
@@ -20,8 +20,9 @@
     "uninstall:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-windows.ps1",
     "release:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-release.ps1",
     "release:windows:installer": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-installer.ps1",
+    "release:dual": "npm run build --silent && node dist/scripts/dual-github-release.js",
     "release:macos": "node scripts/package-macos-release.mjs",
-    "test": "npm run build --silent && node --test dist/test/agents/*.test.js dist/test/api/*.test.js dist/test/electron/*.test.js dist/test/runtime/*.test.js dist/test/web/*.test.js",
+    "test": "npm run build --silent && node --test dist/test/agents/*.test.js dist/test/api/*.test.js dist/test/electron/*.test.js dist/test/release/*.test.js dist/test/runtime/*.test.js dist/test/web/*.test.js",
     "test:e2e": "npm run build --silent && node --test dist/test/api/cli-http-workflow.e2e.test.js",
     "test:e2e:live": "npm run build --silent && node dist/scripts/live-e2e.js",
     "runtime:probe": "bash scripts/runtime-capability-probe.sh",

@@ -277,9 +277,11 @@ async function createPkg(appRoot, stageRoot, outputDirectory, tag, arch, enabled
   const pkgPath = path.join(outputDirectory, `rocky-${tag}-macos-${arch}.pkg`);
   const pkgRoot = path.join(stageRoot, "pkg-root");
   const scriptsRoot = path.join(stageRoot, "pkg-scripts");
+  const componentsPlist = path.join(stageRoot, "pkg-components.plist");
   await rm(pkgPath, { force: true });
   await rm(pkgRoot, { recursive: true, force: true });
   await rm(scriptsRoot, { recursive: true, force: true });
+  await rm(componentsPlist, { force: true });
   await mkdir(path.join(pkgRoot, "Applications"), { recursive: true });
   await mkdir(scriptsRoot, { recursive: true });
   await cp(appRoot, path.join(pkgRoot, "Applications", "Rocky.app"), {
@@ -291,9 +293,13 @@ async function createPkg(appRoot, stageRoot, outputDirectory, tag, arch, enabled
   await chmod(path.join(scriptsRoot, "preinstall"), 0o755);
   await chmod(path.join(scriptsRoot, "postinstall"), 0o755);
 
+  await run("pkgbuild", ["--analyze", "--root", pkgRoot, componentsPlist]);
+  await run("plutil", ["-replace", "0.BundleIsRelocatable", "-bool", "NO", componentsPlist]);
   await run("pkgbuild", [
     "--root",
     pkgRoot,
+    "--component-plist",
+    componentsPlist,
     "--scripts",
     scriptsRoot,
     "--identifier",

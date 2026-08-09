@@ -135,3 +135,60 @@ Run `open -a Rocky`, confirm the running bundle executable is `Rocky`, and leave
 - [ ] **Step 6: Review final scope**
 
 Run `git status --short`, `git diff --stat`, and `git diff --check`; confirm only issue 131 source, tests, asset, and docs are changed.
+
+### Task 5: Preserve Electron runtime links and rebrand helper bundles
+
+**Files:**
+- Modify: `scripts/macos-app-bundle.mjs`
+- Modify: `scripts/package-macos-release.mjs`
+- Modify: `test/electron/macos-app-bundle.test.ts`
+
+**Interfaces:**
+- Consumes: an Electron `.app` containing relative framework symlinks and four standard helper applications.
+- Produces: a self-contained Rocky bundle whose relative links remain relative and whose main/helper app directories, executables, and plist identities consistently use Rocky.
+
+- [ ] **Step 1: Extend the failing filesystem test**
+
+Create representative relative framework symlinks and Electron Helper, Electron Helper (GPU), Electron Helper (Plugin), and Electron Helper (Renderer) fixtures. Assert copy preserves each relative link and branding produces matching Rocky helper directories, executables, `CFBundleName`, `CFBundleDisplayName`, `CFBundleExecutable`, and unique `works.earendil.rocky.helper*` identifiers with no Electron-named helper app or executable remaining.
+
+- [ ] **Step 2: Run the test to verify it fails for the missing behavior**
+
+Run: `npm run build --silent && node --test dist/test/electron/macos-app-bundle.test.js`
+
+Expected: FAIL because the copied link becomes absolute or helper bundles retain Electron names.
+
+- [ ] **Step 3: Implement the minimal self-contained copy and helper branding**
+
+Add a copy helper that uses Node `fs.cp` with `verbatimSymlinks: true`, use it for both Electron-to-stage and stage-to-PKG copies, and rename/update only the four standard helper bundles and their plist values.
+
+- [ ] **Step 4: Strengthen real-bundle validation**
+
+Reject absolute symlinks inside the packaged app and require every Rocky helper directory, executable, and plist identity while rejecting their Electron-named counterparts.
+
+- [ ] **Step 5: Run focused and Electron tests**
+
+Run: `npm run build --silent && node --test dist/test/electron/*.test.js`
+
+Expected: all Electron tests PASS, including existing Windows icon coverage.
+
+### Task 6: Rebuild, reinstall, and launch the self-contained bundle
+
+**Files:**
+- Generated (ignored): refreshed v0.1.4 ZIP, DMG, and PKG artifacts.
+- Installed: `/Applications/Rocky.app`.
+
+- [ ] **Step 1: Run full validation**
+
+Run: `npm run typecheck && npm --prefix web run typecheck && npm run electron:build && npm test` outside the restricted listener sandbox when necessary.
+
+- [ ] **Step 2: Rebuild v0.1.4 artifacts and inspect symlinks**
+
+Run the macOS release command and assert every symlink in staged and PKG-root applications is relative.
+
+- [ ] **Step 3: Install the corrected non-relocatable PKG**
+
+Use macOS Installer, then assert `/Applications/Rocky.app` contains relative links, Rocky main/helper executables, Rocky plist identities, and no Electron-named app or executable.
+
+- [ ] **Step 4: Launch the exact installed path**
+
+Terminate only orphaned smoke processes, run `open /Applications/Rocky.app`, verify the live main process path and Computer Use application identity are Rocky, and leave the app open for Dock, Command-Tab, menu, and icon inspection.

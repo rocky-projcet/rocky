@@ -12,13 +12,13 @@ Package and run the macOS desktop application as Rocky rather than Electron, whi
 
 ## Design
 
-The macOS release script will remain the packaging boundary. It will stage `Electron.app` as `Rocky.app`, rename `Contents/MacOS/Electron` to `Contents/MacOS/Rocky`, and write an `Info.plist` whose display name, bundle name, executable, and icon file all reference Rocky. A committed `assets/macos/Rocky.icns` will be generated from the same canonical `web/public/android-chrome-512x512.png` source used by the Windows icon pipeline. Keeping the compiled icon in the repository makes package assembly deterministic and allows bundle validation without requiring icon-generation tools at package time.
+The macOS release script will remain the packaging boundary. It will stage `Electron.app` as `Rocky.app`, preserve the Electron runtime's relative framework symlinks, rename `Contents/MacOS/Electron` to `Contents/MacOS/Rocky`, and write an `Info.plist` whose display name, bundle name, executable, and icon file all reference Rocky. The four Electron helper bundles, their executables, and their bundle metadata will likewise be renamed to Rocky so Chromium subprocesses resolve their packaged resources correctly and do not expose Electron in Activity Monitor. A committed `assets/macos/Rocky.icns` will be generated from the same canonical `web/public/android-chrome-512x512.png` source used by the Windows icon pipeline. Keeping the compiled icon in the repository makes package assembly deterministic and allows bundle validation without requiring icon-generation tools at package time.
 
 The Electron main process will continue setting the application name before creating menus and windows. Windows keeps its current `assets/windows/rocky.ico` resolution and AppUserModelID behavior; no Windows packaging layout changes are introduced.
 
 ## Validation
 
-Automated tests will exercise the macOS packaging helper against a temporary bundle and assert observable output: the executable is renamed, `Info.plist` names Rocky and references the Rocky icon, and no Electron executable remains. The package script's built-in validation will enforce the same invariants on a real staged application.
+Automated tests will exercise the macOS packaging helper against a temporary bundle and assert observable output: runtime symlinks remain relative, the main and helper executables are renamed, their plist metadata names Rocky, `Info.plist` references the Rocky icon, and no Electron-named app or executable remains. The package script's built-in validation will enforce the same invariants on a real staged application.
 
 For manual verification, the implementation will build the v0.1.4 macOS app, DMG, and PKG, install the PKG into `/Applications/Rocky.app`, launch the installed application, and inspect bundle metadata and the running executable. The user can then confirm the Dock, app switcher, application menu, and displayed icon visually. Existing TypeScript, Electron, and Windows-related tests must continue to pass.
 

@@ -10,7 +10,7 @@ Rocky's shared `SelectContent` enables Base UI's `alignItemWithTrigger` behavior
 
 ## Design
 
-The locale switcher will opt out of item-aligned positioning by passing `alignItemWithTrigger={false}` to its `SelectContent`. Base UI will then use its regular anchored positioning with the existing `side="bottom"`, `sideOffset={4}`, and `align="end"` defaults and override. This keeps the menu below and right-aligned with the trigger while retaining Base UI's viewport collision handling.
+The locale switcher will opt out of item-aligned positioning by passing `alignItemWithTrigger={false}` to its `SelectContent`. It will also use `sideOffset={8}` because the 36-pixel trigger is vertically centered in the 48-pixel header and Base UI's default 4-pixel offset leaves the popup two pixels inside the header. Base UI will then use its regular bottom-anchored positioning with `align="end"`. This keeps the menu below and right-aligned with the trigger while retaining Base UI's viewport collision handling.
 
 The shared `SelectContent` default remains unchanged because other selects may depend on item-aligned behavior. The locale provider and translated labels also remain unchanged; remounting the select on locale changes would only mask the positioning mode rather than remove the cause.
 

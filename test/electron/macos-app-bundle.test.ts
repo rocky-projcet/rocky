@@ -224,6 +224,9 @@ test("brands an Electron app bundle as Rocky", async () => {
   await mkdir(electronHelperApp);
   await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper\.app/u);
   await rm(electronHelperApp, { recursive: true });
+  await symlink("Rocky Helper.app", electronHelperApp);
+  await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper\.app/u);
+  await rm(electronHelperApp);
 
   const electronHelperExecutable = path.join(
     copiedFrameworksRoot,
@@ -233,5 +236,8 @@ test("brands an Electron app bundle as Rocky", async () => {
     "Electron Helper"
   );
   await writeFile(electronHelperExecutable, "leftover", "utf8");
+  await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper/u);
+  await rm(electronHelperExecutable);
+  await symlink("Rocky Helper", electronHelperExecutable);
   await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper/u);
 });

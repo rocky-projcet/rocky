@@ -167,6 +167,9 @@ async function brandHelperBundle(frameworksRoot, helper) {
 async function validateBundleTree(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const entryPath = path.join(directory, entry.name);
+    if (electronHelperNames.has(entry.name)) {
+      throw new Error(`Electron-named helper must not exist: ${entryPath}`);
+    }
     if (entry.isSymbolicLink()) {
       const target = await readlink(entryPath);
       if (path.isAbsolute(target)) {
@@ -175,9 +178,6 @@ async function validateBundleTree(directory) {
         );
       }
       continue;
-    }
-    if (electronHelperNames.has(entry.name)) {
-      throw new Error(`Electron-named helper must not exist: ${entryPath}`);
     }
     if (entry.isDirectory()) {
       await validateBundleTree(entryPath);

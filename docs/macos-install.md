@@ -128,11 +128,68 @@ is available, but DMG and PKG creation are skipped because `hdiutil` and
 After building or downloading the artifact:
 
 1. Install `rocky-v0.1.3-macos-<arch>.pkg`, unzip the app zip, or mount the DMG.
-2. Open `/Applications/Rocky.app` or the staged `Rocky.app`.
+2. For an installed app, run the branding smoke below. For a staged app, replace
+   `/Applications/Rocky.app` in the commands with that app's path.
 3. Confirm the Rocky native window opens and shows the web UI.
 4. Confirm logs exist under `~/Library/Logs/Rocky/` if startup fails.
 5. For Codex-backed runs, authenticate Codex separately and run a minimal Rocky
    smoke from the UI or CLI.
+
+### Manual branding smoke
+
+The packaged app embeds `Contents/Resources/Rocky.icns` and runs
+`Contents/MacOS/Rocky`. After installing `/Applications/Rocky.app`, verify its
+metadata and bundled files:
+
+```sh
+app=/Applications/Rocky.app
+plist="$app/Contents/Info.plist"
+
+plutil -extract CFBundleDisplayName raw "$plist"
+plutil -extract CFBundleName raw "$plist"
+plutil -extract CFBundleExecutable raw "$plist"
+plutil -extract CFBundleIconFile raw "$plist"
+test -x "$app/Contents/MacOS/Rocky"
+test -f "$app/Contents/Resources/Rocky.icns"
+```
+
+The four `plutil` commands must print `Rocky`, `Rocky`, `Rocky`, and
+`Rocky.icns`, respectively. Launch that exact bundle and confirm the live main
+process command is exactly its executable path:
+
+```sh
+open "$app"
+
+pid=""
+attempt=0
+while [ -z "$pid" ] && [ "$attempt" -lt 50 ]; do
+  pid=$(
+    ps -axo pid=,command= |
+      awk -v executable="$app/Contents/MacOS/Rocky" '
+        {
+          pid = $1
+          sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
+          if ($0 == executable) {
+            print pid
+            exit
+          }
+        }
+      '
+  )
+  [ -n "$pid" ] || sleep 0.1
+  attempt=$((attempt + 1))
+done
+
+test -n "$pid"
+process_command=$(ps -p "$pid" -o command=)
+test "$process_command" = "$app/Contents/MacOS/Rocky"
+```
+
+When the app is open, visually confirm all of the following:
+
+1. The Dock shows Rocky with the Rocky icon.
+2. Command-Tab identifies the running app as Rocky and shows the Rocky icon.
+3. The macOS application menu (the leftmost menu-bar menu) is named Rocky.
 
 ## Signing and notarization decision
 
@@ -158,5 +215,4 @@ the artifact before publication.
 - No silent/background update flow is provided.
 - Rollback is best-effort command-line recovery, not a complete GUI rollback UX.
 - No LaunchAgent/service registration; closing the app stops the backend API.
-- No custom macOS app icon yet.
 - Codex login is not automated by the installer.

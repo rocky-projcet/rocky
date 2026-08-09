@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 
-import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  brandMacOSAppBundle,
+  copyMacOSAppBundle,
+  validateMacOSAppBundle,
+} from "./macos-app-bundle.mjs";
+import {
+  unsignedArtifactsNote,
+  validatePkgComponentPlist,
+} from "./macos-release-contracts.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -122,42 +131,11 @@ async function copyIfExists(source, target, options = {}) {
   }
 }
 
-function plist(version) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleDisplayName</key>
-  <string>Rocky</string>
-  <key>CFBundleExecutable</key>
-  <string>Electron</string>
-  <key>CFBundleIdentifier</key>
-  <string>works.earendil.rocky</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Rocky</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>${version.replace(/^v/, "")}</string>
-  <key>CFBundleVersion</key>
-  <string>${version.replace(/^v/, "")}</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-</dict>
-</plist>
-`;
-}
-
 async function stageApp(options) {
   const arch = os.arch();
   const stageRoot = path.join(repoRoot, ".tmp", "macos-release", options.tag);
   const appRoot = path.join(stageRoot, "Rocky.app");
-  const contentsRoot = path.join(appRoot, "Contents");
-  const resourcesRoot = path.join(contentsRoot, "Resources");
+  const resourcesRoot = path.join(appRoot, "Contents", "Resources");
   const payloadRoot = path.join(resourcesRoot, "app");
   const electronAppSource = path.join(
     repoRoot,
@@ -176,11 +154,14 @@ async function stageApp(options) {
 
   await rm(stageRoot, { recursive: true, force: true });
   await mkdir(stageRoot, { recursive: true });
-  await cp(electronAppSource, appRoot, { recursive: true, force: true });
+  await copyMacOSAppBundle(electronAppSource, appRoot);
+  await brandMacOSAppBundle({
+    appRoot,
+    iconSourcePath: path.join(repoRoot, "assets", "macos", "Rocky.icns"),
+    version: options.tag,
+  });
   await rm(payloadRoot, { recursive: true, force: true });
   await mkdir(payloadRoot, { recursive: true });
-
-  await writeFile(path.join(contentsRoot, "Info.plist"), plist(options.tag), "utf8");
 
   await cp(path.join(repoRoot, "dist"), path.join(payloadRoot, "dist"), {
     recursive: true,
@@ -204,6 +185,7 @@ async function stageApp(options) {
     await run("npm", ["ci", "--omit=dev", "--ignore-scripts"], { cwd: payloadRoot });
   }
 
+  await validateMacOSAppBundle(appRoot);
   await validateApp(appRoot);
   return { appRoot, stageRoot, arch };
 }
@@ -211,7 +193,6 @@ async function stageApp(options) {
 async function validateApp(appRoot) {
   const payloadRoot = path.join(appRoot, "Contents", "Resources", "app");
   await assertExists(path.join(appRoot, "Contents", "Info.plist"), "Info.plist");
-  await assertExists(path.join(appRoot, "Contents", "MacOS", "Electron"), "Electron executable");
   await assertExists(path.join(payloadRoot, "dist", "electron", "main.js"), "Electron main");
   await assertExists(path.join(payloadRoot, "dist", "electron", "preload.js"), "Electron preload");
   await assertExists(path.join(payloadRoot, "dist", "src", "cli.js"), "backend CLI");
@@ -304,23 +285,30 @@ async function createPkg(appRoot, stageRoot, outputDirectory, tag, arch, enabled
   const pkgPath = path.join(outputDirectory, `rocky-${tag}-macos-${arch}.pkg`);
   const pkgRoot = path.join(stageRoot, "pkg-root");
   const scriptsRoot = path.join(stageRoot, "pkg-scripts");
+  const componentsPlist = path.join(stageRoot, "pkg-components.plist");
   await rm(pkgPath, { force: true });
   await rm(pkgRoot, { recursive: true, force: true });
   await rm(scriptsRoot, { recursive: true, force: true });
+  await rm(componentsPlist, { force: true });
   await mkdir(path.join(pkgRoot, "Applications"), { recursive: true });
   await mkdir(scriptsRoot, { recursive: true });
-  await cp(appRoot, path.join(pkgRoot, "Applications", "Rocky.app"), {
-    recursive: true,
-    force: true,
-  });
+  await copyMacOSAppBundle(
+    appRoot,
+    path.join(pkgRoot, "Applications", "Rocky.app")
+  );
   await writeFile(path.join(scriptsRoot, "preinstall"), installScript(tag), "utf8");
   await writeFile(path.join(scriptsRoot, "postinstall"), postinstallScript(tag), "utf8");
   await chmod(path.join(scriptsRoot, "preinstall"), 0o755);
   await chmod(path.join(scriptsRoot, "postinstall"), 0o755);
 
+  await run("pkgbuild", ["--analyze", "--root", pkgRoot, componentsPlist]);
+  await run("plutil", ["-replace", "0.BundleIsRelocatable", "-bool", "NO", componentsPlist]);
+  await validatePkgComponentPlist(componentsPlist);
   await run("pkgbuild", [
     "--root",
     pkgRoot,
+    "--component-plist",
+    componentsPlist,
     "--scripts",
     scriptsRoot,
     "--identifier",
@@ -358,4 +346,4 @@ if (dmgPath) {
 if (pkgPath) {
   console.log(`- ${pkgPath}`);
 }
-console.log("Note: artifacts are unsigned and not notarized for v0.1.3.");
+console.log(unsignedArtifactsNote(options.tag));

@@ -10,6 +10,11 @@ on:
         description: Release tag to package and publish, such as v0.1.4
         required: true
         type: string
+      cleanup_public_v014:
+        description: Delete only the backed-up public v0.1.4 Release and tag before reissuing
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -19,7 +24,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cleanup-public-v014:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.cleanup_public_v014 == true }}
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+    steps:
+      - name: Verify the exact backed-up public v0.1.4 targets
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v0.1.4"
+          test -n "$PUBLIC_RELEASE_TOKEN"
+          release_id="$(curl -fsS \
+            -H "Authorization: Bearer $PUBLIC_RELEASE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/rocky-projcet/rocky-release/releases/tags/$RELEASE_TAG" | jq -r '.id')"
+          test "$release_id" = "367467850"
+          object_sha="$(curl -fsS \
+            -H "Authorization: Bearer $PUBLIC_RELEASE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/rocky-projcet/rocky-release/git/ref/tags/$RELEASE_TAG" | jq -r '.object.sha')"
+          test "$object_sha" = "cad845f6c87ecd676b68288591644f1ab654b779"
+
+      - name: Delete the exact public v0.1.4 Release
+        run: |
+          set -euo pipefail
+          curl -fsS -X DELETE \
+            -H "Authorization: Bearer $PUBLIC_RELEASE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/rocky-projcet/rocky-release/releases/367467850
+
+      - name: Delete the exact public v0.1.4 tag
+        run: |
+          set -euo pipefail
+          curl -fsS -X DELETE \
+            -H "Authorization: Bearer $PUBLIC_RELEASE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/rocky-projcet/rocky-release/git/refs/tags/v0.1.4
+
   windows-package:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true }}
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -64,6 +109,7 @@ jobs:
           if-no-files-found: error
 
   macos-package:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true }}
     strategy:
       fail-fast: false
       matrix:
@@ -123,6 +169,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true }}
     needs:
       - windows-package
       - macos-package

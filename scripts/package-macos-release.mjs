@@ -10,6 +10,10 @@ import {
   copyMacOSAppBundle,
   validateMacOSAppBundle,
 } from "./macos-app-bundle.mjs";
+import {
+  unsignedArtifactsNote,
+  validatePkgComponentPlist,
+} from "./macos-release-contracts.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -299,6 +303,7 @@ async function createPkg(appRoot, stageRoot, outputDirectory, tag, arch, enabled
 
   await run("pkgbuild", ["--analyze", "--root", pkgRoot, componentsPlist]);
   await run("plutil", ["-replace", "0.BundleIsRelocatable", "-bool", "NO", componentsPlist]);
+  await validatePkgComponentPlist(componentsPlist);
   await run("pkgbuild", [
     "--root",
     pkgRoot,
@@ -341,4 +346,4 @@ if (dmgPath) {
 if (pkgPath) {
   console.log(`- ${pkgPath}`);
 }
-console.log("Note: artifacts are unsigned and not notarized for v0.1.3.");
+console.log(unsignedArtifactsNote(options.tag));

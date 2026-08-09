@@ -62,8 +62,9 @@ function helperPlist(name: string, identifier: string) {
 `;
 }
 
-test("brands an Electron app bundle as Rocky", async () => {
+test("brands an Electron app bundle as Rocky", async (t) => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "rocky-macos-bundle-"));
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
   const electronAppRoot = path.join(fixtureRoot, "Electron.app");
   const appRoot = path.join(fixtureRoot, "stage", "Rocky.app");
   const electronMacOSRoot = path.join(electronAppRoot, "Contents", "MacOS");
@@ -79,15 +80,21 @@ test("brands an Electron app bundle as Rocky", async () => {
   );
   await writeFile(iconSourcePath, iconBytes);
 
-  const frameworkRoot = path.join(frameworksRoot, "Electron Framework.framework");
-  await mkdir(path.join(frameworkRoot, "Versions", "A", "Resources"), {
-    recursive: true,
-  });
-  await symlink("A", path.join(frameworkRoot, "Versions", "Current"));
-  await symlink(
-    "Versions/Current/Resources",
-    path.join(frameworkRoot, "Resources")
-  );
+  const supportsSymlinks = process.platform !== "win32";
+  if (supportsSymlinks) {
+    const frameworkRoot = path.join(
+      frameworksRoot,
+      "Electron Framework.framework"
+    );
+    await mkdir(path.join(frameworkRoot, "Versions", "A", "Resources"), {
+      recursive: true,
+    });
+    await symlink("A", path.join(frameworkRoot, "Versions", "Current"));
+    await symlink(
+      "Versions/Current/Resources",
+      path.join(frameworkRoot, "Resources")
+    );
+  }
 
   for (const helper of helpers) {
     const helperContents = path.join(
@@ -146,20 +153,22 @@ test("brands an Electron app bundle as Rocky", async () => {
   assert.equal(plistValue(plist, "CFBundleShortVersionString"), "0.1.4");
   assert.equal(plistValue(plist, "CFBundleVersion"), "0.1.4");
 
-  const copiedFrameworkRoot = path.join(
-    appRoot,
-    "Contents",
-    "Frameworks",
-    "Electron Framework.framework"
-  );
-  assert.equal(
-    await readlink(path.join(copiedFrameworkRoot, "Versions", "Current")),
-    "A"
-  );
-  assert.equal(
-    await readlink(path.join(copiedFrameworkRoot, "Resources")),
-    "Versions/Current/Resources"
-  );
+  if (supportsSymlinks) {
+    const copiedFrameworkRoot = path.join(
+      appRoot,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework"
+    );
+    assert.equal(
+      await readlink(path.join(copiedFrameworkRoot, "Versions", "Current")),
+      "A"
+    );
+    assert.equal(
+      await readlink(path.join(copiedFrameworkRoot, "Resources")),
+      "Versions/Current/Resources"
+    );
+  }
 
   const copiedFrameworksRoot = path.join(appRoot, "Contents", "Frameworks");
   for (const helper of helpers) {
@@ -207,15 +216,31 @@ test("brands an Electron app bundle as Rocky", async () => {
     );
   }
 
-  const absoluteLink = path.join(
-    appRoot,
-    "Contents",
-    "Resources",
-    "absolute-link"
+  const unexpectedRockyHelperApp = path.join(
+    copiedFrameworksRoot,
+    "Rocky Helper (Utility).app"
   );
-  await symlink("/tmp/rocky-invalid-absolute-link", absoluteLink);
-  await assert.rejects(validateMacOSAppBundle(appRoot), /absolute symbolic link/u);
-  await rm(absoluteLink);
+  await mkdir(unexpectedRockyHelperApp);
+  await assert.rejects(
+    validateMacOSAppBundle(appRoot),
+    /unexpected Rocky helper bundle/u
+  );
+  await rm(unexpectedRockyHelperApp, { recursive: true });
+
+  if (supportsSymlinks) {
+    const absoluteLink = path.join(
+      appRoot,
+      "Contents",
+      "Resources",
+      "absolute-link"
+    );
+    await symlink("/tmp/rocky-invalid-absolute-link", absoluteLink);
+    await assert.rejects(
+      validateMacOSAppBundle(appRoot),
+      /absolute symbolic link/u
+    );
+    await rm(absoluteLink);
+  }
 
   const electronHelperApp = path.join(
     copiedFrameworksRoot,
@@ -224,9 +249,11 @@ test("brands an Electron app bundle as Rocky", async () => {
   await mkdir(electronHelperApp);
   await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper\.app/u);
   await rm(electronHelperApp, { recursive: true });
-  await symlink("Rocky Helper.app", electronHelperApp);
-  await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper\.app/u);
-  await rm(electronHelperApp);
+  if (supportsSymlinks) {
+    await symlink("Rocky Helper.app", electronHelperApp);
+    await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper\.app/u);
+    await rm(electronHelperApp);
+  }
 
   const electronHelperExecutable = path.join(
     copiedFrameworksRoot,
@@ -238,6 +265,8 @@ test("brands an Electron app bundle as Rocky", async () => {
   await writeFile(electronHelperExecutable, "leftover", "utf8");
   await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper/u);
   await rm(electronHelperExecutable);
-  await symlink("Rocky Helper", electronHelperExecutable);
-  await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper/u);
+  if (supportsSymlinks) {
+    await symlink("Rocky Helper", electronHelperExecutable);
+    await assert.rejects(validateMacOSAppBundle(appRoot), /Electron Helper/u);
+  }
 });

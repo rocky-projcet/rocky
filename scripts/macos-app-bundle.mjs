@@ -46,6 +46,9 @@ const helperBundles = [
 const electronHelperNames = new Set(
   helperBundles.flatMap(({ electronName }) => [electronName, `${electronName}.app`])
 );
+const rockyHelperAppNames = new Set(
+  helperBundles.map(({ rockyName }) => `${rockyName}.app`)
+);
 
 function plist(version) {
   const normalizedVersion = version.replace(/^v/, "");
@@ -185,6 +188,23 @@ async function validateBundleTree(directory) {
   }
 }
 
+async function validateRockyHelperSet(frameworksRoot) {
+  const helperAppNames = (await readdir(frameworksRoot, { withFileTypes: true }))
+    .map((entry) => entry.name)
+    .filter((name) => name.startsWith("Rocky Helper") && name.endsWith(".app"));
+  const unexpectedHelper = helperAppNames.find(
+    (name) => !rockyHelperAppNames.has(name)
+  );
+  if (unexpectedHelper) {
+    throw new Error(
+      `App bundle contains an unexpected Rocky helper bundle: ${path.join(
+        frameworksRoot,
+        unexpectedHelper
+      )}`
+    );
+  }
+}
+
 export async function copyMacOSAppBundle(source, target) {
   await cp(source, target, {
     recursive: true,
@@ -226,6 +246,7 @@ export async function validateMacOSAppBundle(appRoot) {
     assertMetadata(plistContents, key, value);
   }
 
+  await validateRockyHelperSet(frameworksRoot);
   for (const helper of helperBundles) {
     const helperRoot = path.join(
       frameworksRoot,

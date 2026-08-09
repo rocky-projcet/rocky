@@ -25,10 +25,10 @@ concurrency:
 
 jobs:
   cleanup-public-v014:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.cleanup_public_v014 == true }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.cleanup_public_v014 == true) || (github.event_name == 'push' && github.ref_name == 'v0.1.4') }}
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
       PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
     steps:
       - name: Verify the exact backed-up public v0.1.4 targets
@@ -64,7 +64,7 @@ jobs:
             https://api.github.com/repos/rocky-projcet/rocky-release/git/refs/tags/v0.1.4
 
   windows-package:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true) && (github.event_name != 'push' || github.ref_name != 'v0.1.4') }}
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -109,7 +109,7 @@ jobs:
           if-no-files-found: error
 
   macos-package:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true) && (github.event_name != 'push' || github.ref_name != 'v0.1.4') }}
     strategy:
       fail-fast: false
       matrix:
@@ -169,7 +169,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.cleanup_public_v014 != true) && (github.event_name != 'push' || github.ref_name != 'v0.1.4') }}
     needs:
       - windows-package
       - macos-package

@@ -16,7 +16,7 @@
 | Codex CLI를 걷어내고 자체 하네스로 교체 | **가능, 권장** | 지금 엔진의 대부분은 CLI 플래그 조립·이벤트 파싱·홈 디렉터리 복제다. LLM API를 직접 부르는 루프는 수천 줄이면 된다. |
 | ChatGPT(Codex) 구독 연결 | **가능 (공식)** | OpenAI "Sign in with ChatGPT" 플랜 사용량 공유(2026-09 프리뷰). 사용자 OAuth 토큰으로 공개 `POST /v1/responses`를 부른다. Plus/Pro만 해당. 세부는 §3.4. |
 | OpenAI / Anthropic API 키 | **가능** | 공식 API. 가장 안정적인 기본 경로. |
-| Claude 구독(Pro/Max) 연결 | **자체 하네스에서는 불가** | Anthropic 정책이 서드파티 앱의 claude.ai 로그인 제공·구독 자격증명 경유·토큰 보관을 금지한다(2026-01부터 서버 차단). 대신 Max/Team 플랜의 월 API 크레딧 + API 키로 안내한다. 선택지는 §3.5. |
+| Claude 연결 | **API 크레딧으로 (결정)** | 서드파티 앱의 claude.ai 로그인·구독 토큰 사용·로그인을 통한 키 자동 발급은 Anthropic 정책상 금지다. Claude는 사용자가 Console에서 만든 API 키로 연결하고, 과금은 사용자의 API 크레딧에서 차감된다(Max·Team 구독자는 매달 포함된 크레딧). §3.5, ADR 0004. |
 | 로컬/오픈 모델 (Ollama, LM Studio, vLLM, OpenRouter 등) | **가능** | 전부 OpenAI 호환 API로 붙는다. |
 
 > 정책 내용은 2026-10-21 기준 웹 조사 결과다(출처는 §3.4·§3.5 끝). 구독 정책은 자주 바뀌므로 구현 직전에 다시 확인한다. 법률 자문이 아니다.
@@ -228,26 +228,30 @@ OpenAI가 서드파티 하네스에서 ChatGPT 플랜 사용량을 쓰는 공식
 
 출처: developers.openai.com/siwc (quickstart, token-sharing-open-source, models-and-inference, preview-limitations), learn.chatgpt.com/docs/sign-in-with-chatgpt, github.com/earendil-works/pi `packages/ai` CHANGELOG(0.99.0). OpenAI 이용약관 페이지는 조사 중 403으로 직접 확인하지 못했다.
 
-### 3.5 Claude 구독
+### 3.5 Claude — API 크레딧으로 연결 (결정)
 
-**결론: Rocky의 자체 하네스에서 Claude Pro/Max 구독 토큰은 쓰지 않는다.**
+**결정 (2026-10-22, [ADR 0004](../adr/0004-claude-connects-via-api-key.md)): Claude 모델은 Anthropic API 키로만 연결한다.** 과금은 키 주인인 사용자의 Console API 크레딧에서 차감된다. Max·Team 구독자는 매달 포함되는 API 크레딧을 이 경로로 쓴다.
 
-- Claude Code 법률·준수 페이지는 서드파티 개발자가 ① 자기 앱에 Claude.ai 로그인을 제공하는 것, ② 사용자를 대신해 Free/Pro/Max 자격증명으로 요청을 보내는 것, ③ Claude.ai 자격증명·세션 토큰을 수집·저장·중계하는 것을 금지한다.
-- Agent SDK 문서도 "사전 승인 없이는 서드파티가 claude.ai 로그인이나 구독 한도를 제공할 수 없다"고 명시한다. 소비자 약관은 API 키 외의 자동화 접근을 금지한다.
-- 2026-01-09부터 서버에서 Claude Code 위장 하네스를 차단하고 있고, 계정 정지 사례도 보고됐다.
-- 그러니 `~/.claude/.credentials.json`이나 `CLAUDE_CODE_OAUTH_TOKEN`을 읽는 것도 하지 않는다. (현재 `claude-status-service.ts`가 이 파일을 읽어 사용량을 조회하는데, v2에서 삭제된다.)
+**하지 않는 것**과 근거:
 
-**대신 제공하는 것**:
+- **Claude.ai 로그인 제공, 구독 토큰 사용.** Claude Code 법률 페이지는 서드파티 개발자가 자기 앱에 Claude.ai 로그인을 제공하는 것, Free/Pro/Max 자격증명으로 요청을 보내는 것, Claude.ai 자격증명·세션 토큰을 수집·저장·중계하는 것을 금지한다. 로그인은 "Anthropic 자체 흐름에서 끝나야" 한다.
+- **pi 방식.** pi(`earendil-works/pi`)의 Anthropic OAuth는 Claude Code의 OAuth 클라이언트 ID와 `user:inference` 범위로 구독 토큰을 받아 API 키 자리에 넣는다(`isSubscription: true`). Anthropic 서버는 2026-04-04부터 이런 서드파티 트래픽을 플랜 한도가 아니라 사용자의 "사용량 크레딧"(종량제 추가 사용량)에서 차감한다. 고객센터 문서는 이를 "재량에 따라 일부 서드파티 도구를 허용"하는 것으로 설명하면서도, "서버에 정체를 속이는 도구"는 금지한다. 허가가 아니라 묵인 상태이고 정책이 몇 달 단위로 바뀌고 있다(5월 별도 크레딧 계획 발표, 6월 보류).
+- **로그인으로 API 키 자동 발급.** `org:create_api_key` 범위로 키를 만들 수는 있지만, 서드파티가 자기 OAuth 클라이언트를 등록할 공개 방법이 없어서 결국 Claude Code 클라이언트를 사칭하고 Claude.ai 로그인을 앱에서 띄워야 한다. 과금이 사용자 크레딧이어도 로그인 단계가 금지 조항에 걸린다.
+- **사용자가 설치한 Claude Code에 맡기기.** Commercial Terms 동의가 필요하고 Agent SDK 문서와 충돌하며, Rocky 루프가 아닌 Claude Code 루프로 돈다. 하지 않는다.
+- `~/.claude/.credentials.json`이나 `CLAUDE_CODE_OAUTH_TOKEN`을 읽지 않는다. (이 파일을 읽던 v1 `claude-status-service.ts`는 M0에서 삭제했다.)
 
-| 경로 | 위험 | 설명 |
-| --- | --- | --- |
-| Anthropic API 키 | 없음 | 기본 경로. 연결 화면에서 "Max/Team 플랜이면 매달 API 크레딧이 포함돼요(Max 5x $100, Max 20x $200, Team 최대 $500)"라고 안내하고, Console 조직 연결 → 키 발급 방법을 보여 준다. Pro·Free 플랜은 크레딧이 없다. |
-| Bedrock / Vertex | 없음 | 회사 클라우드 계정이 있는 사용자용. 후순위. |
-| 내 컴퓨터의 Claude Code에 맡기기 (선택, 실험) | 회색(중간~낮음) | 사용자가 직접 설치하고 자기 터미널에서 로그인한 **수정하지 않은** `claude` 바이너리를 "외부 작업자"로 실행(`claude -p`). Rocky는 로그인 UI를 띄우지 않고 자격증명도 만지지 않는다. 법률 페이지가 "최종 사용자가 수정하지 않은 Claude Code 바이너리에 자기 구독으로 로그인하는 것"은 막지 않는다고 하지만, 제품에 Claude Code를 넣으려면 Commercial Terms 동의가 필요하고 Agent SDK 문서 문구와 충돌한다. 이 경로는 Rocky 루프가 아니라 Claude Code 루프로 돈다(Rocky 도구는 MCP로 노출). 배포 전 Anthropic의 서면 확인을 받는 것이 안전하다. 기능 이름에 "Claude Code"를 쓰지 않는다. |
+**연결 흐름** (M2 연결 화면):
 
-권장: v2 첫 출시는 **API 키만** 지원하고, "Claude Code에 맡기기"는 M7 이후 별도 판단(§11).
+1. "Claude 연결"을 누르면 기본 브라우저로 Console의 API 키 화면(platform.claude.com)을 연다. 로그인은 Anthropic 페이지에서 사용자가 직접 한다.
+2. 사용자가 키를 만들어 복사하고 Rocky로 돌아오면, 창이 다시 포커스될 때 클립보드를 한 번 읽어 `sk-ant-api`로 시작하는 키가 있으면 "이 키로 연결할까요?"를 띄운다. 키 형식이 아니면 바로 버린다. 직접 붙여넣기 칸도 항상 둔다.
+3. 모델 목록 조회(`GET /v1/models`)로 키를 확인하고, Electron `safeStorage`로 암호화해 저장한다. 웹 UI에는 끝 4자리만 보낸다.
+4. 안내 문구: Max·Team 구독자는 매달 API 크레딧이 포함돼 있다(Max 5x $100, Max 20x $200, Team 최대 $500, 2026-10-07부터)는 것과 Console 조직 연결 방법 링크. Pro·Free는 크레딧이 없고 종량제다.
+5. 사용량: 일반 API 키로는 남은 크레딧을 조회할 수 없으므로, 응답의 `usage`에 모델 단가를 곱해 "이번 달 Rocky에서 쓴 금액(추정)"을 보여 주고 잔액은 Console 링크로 대신한다.
+6. 크레딧 부족·한도 초과 오류는 런을 `error`로 끝내고 결정 카드("Claude 크레딧이 부족해요. 다른 연결로 이어갈까요?")를 띄운다.
 
-출처: code.claude.com/docs/en/legal-and-compliance, code.claude.com/docs/en/agent-sdk/overview, anthropic.com/legal/consumer-terms, platform.claude.com/docs/en/about-claude/api-credits-for-subscribers, support.claude.com/en/articles/15036540. 구독 사용량이 서드파티 앱에서 어떻게 과금되는지(추가 사용량 vs 플랜 한도)는 공지 간 표현이 엇갈려 확정하지 못했다.
+**다시 볼 조건**: Anthropic이 Rocky 전용 OAuth 클라이언트(키 발급용)나 허용 도구 등록을 승인하면 1~2단계만 "Claude로 로그인"으로 바꾼다. 이를 위해 연결의 인증 방식(키 직접 입력 / OAuth)과 저장 형태(API 키)를 분리해 둔다. 회사 클라우드 계정 사용자를 위한 Bedrock·Vertex는 후순위다.
+
+출처: code.claude.com/docs/en/legal-and-compliance, code.claude.com/docs/en/agent-sdk/overview, support.claude.com/en/articles/13189465, platform.claude.com/docs/en/about-claude/api-credits-for-subscribers, github.com/earendil-works/pi `packages/ai/src/auth/oauth/anthropic.ts`·이슈 #3372, techcrunch.com (2026-04-04).
 
 ### 3.6 그 밖의 공급자 메모
 
@@ -607,7 +611,7 @@ Fastify와 `api/http/*` 헬퍼(아티팩트, 워크스페이스, 오피스 미�
 | --- | --- | --- |
 | M0 정리 | `feature/v2-m0-cleanup` 브랜치에서 §9 삭제(세션·런·예약 작업 포함), 빌드가 깨지지 않게 남은 진입점 정리 | `npm run typecheck`, 남은 테스트 통과, 웹 타입체크·빌드 통과 |
 | M1 엔진 코어 | `llm/`(OpenAI API + Anthropic API + OpenAI 호환), `harness/`, 기본 도구, 세션 JSONL, `rocky chat` CLI | 가짜 공급자(스크립트 응답)로 루프·도구·중단·컴팩션 단위 테스트, 실제 키로 수동 스모크 |
-| M2 API + 새 셸 | 세션/런/SSE 라우트, 새 홈(로키 대화), 연결 화면(API 키 + 로컬 탐지) | 앱에서 로키와 도구 쓰는 대화가 된다 |
+| M2 API + 새 셸 | 세션/런/SSE 라우트, 새 홈(로키 대화), 연결 화면(API 키 + 로컬 탐지, Claude API 키 안내 연결 §3.5) | 앱에서 로키와 도구 쓰는 대화가 된다 |
 | M3 구독 | ChatGPT 구독 OAuth, 한도 표시 | 구독만 연결한 상태로 M2 흐름이 된다 |
 | M4 에이전트 + 위임 | 에이전트 CRUD·버전, `delegate`(동기/백그라운드), 위임 카드 UI | 로키가 에이전트 둘에 병렬 위임하고 결과를 정리한다 |
 | M5 결정 | 결정함, 권한 게이트, 에스컬레이션, 대기 중 재시작 | 셸 명령 승인 대기 중 앱을 재시작해도 이어진다 |
@@ -620,7 +624,7 @@ Fastify와 `api/http/*` 헬퍼(아티팩트, 워크스페이스, 오피스 미�
 
 ## 11. 열린 결정 (사용자 확인 필요)
 
-1. **Claude 구독**: v2 첫 출시는 API 키(+ Max/Team API 크레딧 안내)만 지원하는 것을 권장. "내 컴퓨터의 Claude Code에 맡기기"를 나중에라도 넣을지.
+1. ~~**Claude 구독**~~: 결정됨(2026-10-22). Claude는 API 키(Console API 크레딧)로만 연결한다. §3.5, ADR 0004.
 2. **라이선스**: Sign in with ChatGPT 자격을 분명히 하려면 저장소에 MIT 또는 Apache-2.0을 추가할지. 추가하지 않으면 OpenAI 신청서(대기열) 경로.
 3. **기존 데이터**: v1 에이전트의 이름·지침·색상만 가져오는 것으로 충분한지, 완전 초기화할지.
 4. **웹 앱 재작성 위치**: 기존 `web/` 안에서 도메인을 교체할지(빌드·Electron 연결 유지), 새 디렉터리에서 시작해 교체할지. 권장은 전자.

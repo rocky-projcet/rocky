@@ -1,18 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 import { agentEngineClient } from "@/shared/lib/api-client";
-import { useMdTemplates } from "@/domains/template/hooks";
-import { ensureTemplateSkillDefinition } from "@/domains/template/lib/md-template-definitions";
-import { resolveTemplateSkillInstallFiles } from "@/domains/template/lib/runtime-template-files";
-import { skillKindTheme } from "@/domains/skill/lib/skill-kind-theme";
-import type { MdTemplateDefinition } from "@/domains/template/types";
-import { useAgentsQuery, useCreateAgentMutation } from "../hooks";
-import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
+import { useCreateAgentMutation } from "../hooks";
 import { fireMilestone } from "@/domains/onboarding/milestones";
-import { useMiniTour } from "@/domains/onboarding/use-mini-tour";
 import { SoulStep } from "../components/soul-step";
 import {
   buildSoulMarkdown,
@@ -32,31 +25,11 @@ import {
   writeAgentEmoji,
 } from "../lib/agent-avatar-store";
 
-const STEPS = ["프로필", "설명", "정체성", "행동 방식", "공용 스킬"] as const;
+const STEPS = ["프로필", "설명", "정체성", "행동 방식"] as const;
 
 export function AgentNewPage() {
   const navigate = useNavigate();
   const createAgentMutation = useCreateAgentMutation();
-  const { userTemplates } = useMdTemplates();
-  const agentsQuery = useAgentsQuery({ includeArchived: false });
-  const hasNoAgents =
-    !agentsQuery.isLoading &&
-    filterUserManagedAgents(agentsQuery.data ?? []).filter(
-      (agent) => agent.lifecycle === "active",
-    ).length === 0;
-
-  useMiniTour({
-    key: "agent-new",
-    enabled: hasNoAgents,
-    spotlight: {
-      element: '[data-tour="agent-name-input"]',
-      side: "bottom",
-      align: "center",
-      title: "친근한 별명을 적어주세요",
-      description:
-        "직원의 이름이에요. 아래 이모지·색상까지 정한 다음 마지막 단계에서 '에이전트 만들기'를 누르면 끝!",
-    },
-  });
 
   const [stepIndex, setStepIndex] = useState(0);
   const [name, setName] = useState("");
@@ -64,20 +37,11 @@ export function AgentNewPage() {
   const [color, setColor] = useState<string>(AGENT_AVATAR_COLORS[0]);
   const [description, setDescription] = useState("");
   const [soulAnswers, setSoulAnswers] = useState<SoulAnswers>(() => emptySoulAnswers());
-  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   const isLastStep = stepIndex === STEPS.length - 1;
   const progress = ((stepIndex + 1) / STEPS.length) * 100;
   const stepValid = stepIndex === 0 ? name.trim().length > 0 : true;
-
-  function toggleSkill(skillId: string) {
-    setSelectedSkillIds((current) =>
-      current.includes(skillId)
-        ? current.filter((id) => id !== skillId)
-        : [...current, skillId],
-    );
-  }
 
   function goBack() {
     if (stepIndex === 0) {
@@ -113,56 +77,16 @@ export function AgentNewPage() {
         }
       }
 
-      let attachedSkillCount = 0;
-      const selectedSkills = userTemplates.filter((skill) =>
-        selectedSkillIds.includes(skill.id),
-      );
-      if (selectedSkills.length > 0) {
-        try {
-          await Promise.all(
-            selectedSkills.map(async (skill) => {
-              const normalized = ensureTemplateSkillDefinition(skill);
-              return agentEngineClient.upsertAgentLocalSkill(
-                created.id,
-                normalized.skill.id,
-                {
-                  replace: true,
-                  files: await resolveTemplateSkillInstallFiles(normalized),
-                },
-              );
-            }),
-          );
-          attachedSkillCount = selectedSkills.length;
-        } catch (error) {
-          toast.warning("에이전트는 만들었지만 일부 스킬을 장착하지 못했습니다.", {
-            description: error instanceof Error ? error.message : undefined,
-          });
-        }
-      }
-
       const navigateToAgent = () =>
         navigate(`/agents/${encodeURIComponent(created.id)}`, { replace: true });
 
       const milestoneFired = fireMilestone("first-agent", {
         title: `첫 직원 완성! 🎉 ${created.name}`,
-        description:
-          attachedSkillCount > 0
-            ? `스킬 ${attachedSkillCount}개를 장착했어요. 이제 작업을 보내볼까요?`
-            : "이제 직원에게 줄 능력(스킬)을 만들어볼까요?",
-        action:
-          attachedSkillCount > 0
-            ? undefined
-            : {
-                label: "스킬 만들기",
-                onClick: () => navigate("/templates"),
-              },
+        description: "프로필과 성격은 에이전트 화면에서 언제든 바꿀 수 있어요.",
       });
       if (!milestoneFired) {
         toast.success("에이전트를 만들었습니다.", {
-          description:
-            attachedSkillCount > 0
-              ? `${created.name}에 스킬 ${attachedSkillCount}개를 장착했습니다.`
-              : created.name,
+          description: created.name,
         });
       }
       navigateToAgent();
@@ -222,13 +146,6 @@ export function AgentNewPage() {
               onChange={setSoulAnswers}
             />
           ) : null}
-          {stepIndex === 4 ? (
-            <SkillPickerStep
-              skills={userTemplates}
-              selectedIds={selectedSkillIds}
-              onToggle={toggleSkill}
-            />
-          ) : null}
         </div>
 
         <div className="flex items-center justify-between gap-2 pt-2">
@@ -273,7 +190,6 @@ function ProfileStep({
       <div className="mt-8 flex flex-col items-center gap-4">
         <AgentAvatar emoji={emoji} color={color} size="xl" />
         <Input
-          data-tour="agent-name-input"
           value={name}
           onChange={(event) => onChangeName(event.target.value)}
           placeholder="에이전트 이름 (예: 영업 도우미)"
@@ -370,92 +286,5 @@ function DescriptionStep({
         </div>
       </div>
     </div>
-  );
-}
-
-function SkillPickerStep({
-  skills,
-  selectedIds,
-  onToggle,
-}: {
-  skills: MdTemplateDefinition[];
-  selectedIds: string[];
-  onToggle: (skillId: string) => void;
-}) {
-  return (
-    <div>
-      <h2 className="text-2xl font-semibold tracking-normal text-foreground">
-        어떤 스킬을 장착할까요?
-      </h2>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        에이전트는 장착된 스킬을 필살기처럼 발사해 작업을 처리해요. 0개로 시작해도 나중에 추가할 수 있습니다.
-      </p>
-
-      {skills.length === 0 ? (
-        <div className="mt-8 rounded-2xl border border-dashed bg-muted/30 px-4 py-12 text-center text-sm text-muted-foreground">
-          아직 만든 스킬이 없어요. 일단 에이전트만 만들고 나중에 스킬을 추가하세요.
-        </div>
-      ) : (
-        <ul className="mt-6 grid gap-2 sm:grid-cols-2">
-          {skills.map((skill) => (
-            <li key={skill.id}>
-              <SkillSlotChoice
-                skill={skill}
-                selected={selectedIds.includes(skill.id)}
-                onToggle={() => onToggle(skill.id)}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="mt-4 text-xs text-muted-foreground">
-        선택된 스킬 {selectedIds.length}개
-      </p>
-    </div>
-  );
-}
-
-function SkillSlotChoice({
-  skill,
-  selected,
-  onToggle,
-}: {
-  skill: MdTemplateDefinition;
-  selected: boolean;
-  onToggle: () => void;
-}) {
-  const theme = skillKindTheme(skill);
-  const Icon = theme.Icon;
-
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={cn(
-        "flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition",
-        selected
-          ? "border-foreground bg-foreground/5"
-          : "border-border/70 bg-card hover:border-foreground/40 hover:bg-muted/40",
-      )}
-    >
-      <div className={cn("flex size-9 items-center justify-center rounded-xl", theme.icon)}>
-        <Icon className="size-4" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-foreground">{skill.title}</p>
-        <p className="truncate text-xs text-muted-foreground">{skill.triggerLabel}</p>
-      </div>
-      <span
-        className={cn(
-          "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border",
-          selected
-            ? "border-foreground bg-foreground text-background"
-            : "border-border/80 text-transparent",
-        )}
-        aria-hidden="true"
-      >
-        <Check className="size-3.5" />
-      </span>
-    </button>
   );
 }

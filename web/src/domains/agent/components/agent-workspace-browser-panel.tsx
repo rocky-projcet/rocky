@@ -949,7 +949,7 @@ export function AgentWorkspaceBrowserPanel(props: {
               </h4>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
                 {props.description ??
-                  "이 에이전트의 모든 세션은 동일한 워크스페이스를 읽고 씁니다."}
+                  "이 에이전트가 읽고 쓰는 파일이에요."}
               </p>
             </div>
 

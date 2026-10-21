@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Download, FolderOpen, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
-import { PptxArtifactPreview } from "@/domains/run/components/pptx-artifact-preview";
+import { PptxArtifactPreview } from "@/shared/components/pptx-artifact-preview";
 import { Button } from "@/shared/ui/button";
 import { agentEngineClient } from "@/shared/lib/api-client";
 import type { AgentWorkspaceFilePreviewRecord } from "@/shared/lib/agent-engine-client";

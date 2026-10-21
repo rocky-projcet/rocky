@@ -582,18 +582,18 @@ Fastify와 `api/http/*` 헬퍼(아티팩트, 워크스페이스, 오피스 미�
 | `favorites/` | 188 | 삭제 | |
 | `account/` | 4,161 | 삭제 | CLI 로그인·텔레메트리. 제목 요약·에이전트 추천 헬퍼 2개는 새 LLM 클라이언트로 재구현 |
 | `auth/` | 366 | 삭제 | CODEX_HOME 프로필 |
-| `runtime/` | 4,978 | 대부분 삭제 | `async-event-queue`, `windows-command-spawn`, `runtime-artifact-metadata`, 워크스페이스 스냅샷-비교만 `harness/`·`tools/`로 이동 |
-| `sessions/` | 3,460 | 재작성 | 레코드/파일 저장/복구 아이디어 유지. 셸 우회 휴리스틱 ~900줄, 프롬프트 XML 래핑 삭제 |
-| `rocky-chat/` | 9,366 | 재작성 → `rocky/` | 스킬 라우팅, 템플릿 인터뷰, Instagram/Tistory/ECOUNT 경로 삭제 |
-| `agents/` | 2,315 | 재작성 | 폴더 레이아웃·매니저 골격 유지. 로컬 스킬 서비스, 스킬 브리지, Windows ACL 정리 삭제 |
-| `tasks/` | 1,101 | 흡수 | 업무 트리거 실행기로 |
-| `api/` | 6,401 | 재작성 | 헬퍼·SSE·워크스페이스·아티팩트·앱 업데이트 라우트 유지 |
-| `installer/`, `release/`, `system/`, `cli/` | 2,551 | 유지 | `cli/`의 session/run 명령만 새 API에 맞춤 |
+| `runtime/` | 4,978 | 삭제 (M0 완료) | `async-event-queue`, `runtime-artifact-metadata`, `process-types`만 남김(`windows-command-spawn`은 Codex `.cmd` 우회용이라 삭제). 워크스페이스 스냅샷-비교 로직은 M1 도구 구현 때 git 기록(`c20147e`의 `codex-runtime-artifacts.ts`)에서 가져온다 |
+| `sessions/` | 3,460 | 삭제 (M0 완료) | 사용자 승인으로 M0에서 함께 삭제. Codex 플래그·프롬프트 XML·셸 우회 휴리스틱이 대부분이었다. 세션은 M1의 JSONL 저장소로 새로 만든다 |
+| `rocky-chat/` | 9,366 | 삭제 (M0 완료) → M2에서 `rocky/` 신규 | |
+| `agents/` | 2,315 | 정리 (M0) → M4 재작성 | M0: 로컬 스킬 서비스, 스킬 브리지(AGENTS.md 오버레이, 스킬 폴더), Windows ACL 정리, `skillPolicy`, `defaultRuntime`, 세션 생성 헬퍼 삭제. `sandboxPolicy`·`approvalPolicy`·`modelProfile`·`runtimeHome`·`runtimePolicy`는 레거시 필드로 남아 있고 M4에서 지침·도구·모델·버전 모델로 바꾼다 |
+| `tasks/` | 1,101 | 삭제 (M0 완료) | 일정 실행은 M6의 업무 트리거로 새로 만든다 |
+| `api/` | 6,401 | 정리 (M0) | 남은 라우트: 에이전트 CRUD, 워크스페이스, `/settings/hardware`(새 `system-routes`), 앱 업데이트. SSE·아티팩트 헬퍼는 M2에서 다시 만든다 |
+| `installer/`, `release/`, `system/`, `cli/` | 2,551 | 유지 | `cli/`의 session/run 명령은 M0에서 삭제 |
 | `electron/` | 826 | 유지 | preload에 자격증명 IPC 추가 |
 
 삭제 전에 끊어야 할 의존: `agents/agent-local-skill-service → connectors`, `api/agent-engine-server·api-types → messenger/connectors/favorites/skills/integrations`, `rocky-chat → skills/integrations/connectors`, `tasks → messenger-types`, `runtime/codex-runtime-environment·sessions/session-service → agents/agent-workspace(스킬 브리지)`.
 
-함께 정리: `playwright` 의존성(커넥터·ECOUNT 전용), `scripts/runtime-capability-probe.sh`, `scripts/oauth-callback-broker.mjs`, ECOUNT 스크립트, `.agents/skills/ecount-oapi`, `rocky-runtime-probe`, 기존 `CONTEXT.md`와 `docs/adr/0001~0003`(v1 커넥터 도메인 → 보관 처리).
+함께 정리(M0 완료, 단 `playwright` 의존성 제거는 `package-lock.json`·`pnpm-lock.yaml` 동기화가 필요해 후속으로 남김): `playwright` 의존성(커넥터·ECOUNT 전용), `scripts/runtime-capability-probe.sh`, `scripts/oauth-callback-broker.mjs`, ECOUNT 스크립트, `.agents/skills/ecount-oapi`, `rocky-runtime-probe`, 기존 `CONTEXT.md`와 `docs/adr/0001~0003`(v1 커넥터 도메인 → 보관 처리).
 
 웹(`web/src`, 54.3k LOC)은 `codex`, `connector`, `skill`, `template`, `messenger`, `favorite` 도메인을 지우고 `rocky` 도메인을 새 IA로 재작성한다. `shared/ui`, `agent-avatar`, 첨부, 아티팩트 미리보기, 마크다운/엑셀 미리보기, i18n, 데스크톱 크롬은 재사용한다.
 
@@ -605,7 +605,7 @@ Fastify와 `api/http/*` 헬퍼(아티팩트, 워크스페이스, 오피스 미�
 
 | 단계 | 내용 | 끝났다는 기준 |
 | --- | --- | --- |
-| M0 정리 | `feature/v2` 브랜치에서 §9 삭제, 빌드가 깨지지 않게 남은 진입점 정리 | `npm run typecheck`, 남은 테스트 통과 |
+| M0 정리 | `feature/v2-m0-cleanup` 브랜치에서 §9 삭제(세션·런·예약 작업 포함), 빌드가 깨지지 않게 남은 진입점 정리 | `npm run typecheck`, 남은 테스트 통과, 웹 타입체크·빌드 통과 |
 | M1 엔진 코어 | `llm/`(OpenAI API + Anthropic API + OpenAI 호환), `harness/`, 기본 도구, 세션 JSONL, `rocky chat` CLI | 가짜 공급자(스크립트 응답)로 루프·도구·중단·컴팩션 단위 테스트, 실제 키로 수동 스모크 |
 | M2 API + 새 셸 | 세션/런/SSE 라우트, 새 홈(로키 대화), 연결 화면(API 키 + 로컬 탐지) | 앱에서 로키와 도구 쓰는 대화가 된다 |
 | M3 구독 | ChatGPT 구독 OAuth, 한도 표시 | 구독만 연결한 상태로 M2 흐름이 된다 |

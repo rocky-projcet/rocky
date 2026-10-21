@@ -1,4 +1,3 @@
-import type { RuntimeKind } from "../types";
 import { LayoutGrid, List } from "lucide-react";
 
 import { AgentCard } from "./agent-card";
@@ -11,7 +10,6 @@ export interface AgentSummary {
   description: string;
   color: string | null;
   lifecycle: "active" | "archived";
-  defaultRuntime: RuntimeKind;
   sandboxPolicy: string;
   approvalPolicy: string;
 }

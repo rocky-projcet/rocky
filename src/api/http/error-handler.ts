@@ -2,19 +2,14 @@ import { URL } from "node:url";
 
 import type { FastifyInstance } from "fastify";
 
-import { SessionPolicyError } from "../../sessions/session-policy.js";
 import { sendJson } from "./reply.js";
 
 function resolveErrorStatus(error: unknown): number {
-  if (error instanceof SessionPolicyError) {
-    return error.statusCode;
-  }
-
   if (!(error instanceof Error)) {
     return 500;
   }
 
-  if (/^Unknown (agent|session|run|artifact role|auth profile): /.test(error.message)) {
+  if (/^Unknown agent: /.test(error.message)) {
     return 404;
   }
 

@@ -20,7 +20,6 @@ export async function handleServeCommand(context: CliContext): Promise<number> {
     now: context.dependencies.now,
     idGenerator: context.dependencies.idGenerator,
     agentService: context.service,
-    sessionService: context.sessionService,
   });
 
   await server.listen({

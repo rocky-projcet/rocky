@@ -4,10 +4,8 @@ import type {
   AgentCreateInput,
   AgentRecord,
   AgentRegistryServiceOptions,
-  AgentSessionOverrides,
   AgentUpdatePatch,
 } from "./agent-types.js";
-import type { RuntimeSessionInput } from "../runtime/runtime-types.js";
 
 export class AgentRegistryService {
   private readonly manager;
@@ -37,21 +35,5 @@ export class AgentRegistryService {
 
   async deleteAgent(agentId: string): Promise<void> {
     return this.manager.deleteAgent(agentId);
-  }
-
-  async createCodexSession<T>(
-    runtime: { createSession(input: RuntimeSessionInput): Promise<T> },
-    agentOrId: string | AgentRecord,
-    overrides: AgentSessionOverrides = {}
-  ): Promise<T> {
-    return this.manager.createRuntimeSession(runtime, agentOrId, overrides);
-  }
-
-  async createRuntimeSession<T>(
-    runtime: { createSession(input: RuntimeSessionInput): Promise<T> },
-    agentOrId: string | AgentRecord,
-    overrides: AgentSessionOverrides = {}
-  ): Promise<T> {
-    return this.manager.createRuntimeSession(runtime, agentOrId, overrides);
   }
 }

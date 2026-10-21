@@ -4,10 +4,7 @@ import type {
   AgentRegistryServiceOptions,
   AgentUpdatePatch,
 } from "../agents/agent-types.js";
-import type {
-  AgentServiceLike as HttpAgentServiceLike,
-  SessionServiceLike,
-} from "../api/api-types.js";
+import type { AgentServiceLike as HttpAgentServiceLike } from "../api/api-types.js";
 
 export type OutputWriter = {
   write(chunk: string): unknown;
@@ -22,7 +19,6 @@ export interface CliDependencies extends AgentRegistryServiceOptions {
   stdout?: OutputWriter;
   stderr?: OutputWriter;
   service?: CliAgentServiceLike;
-  sessionService?: SessionServiceLike;
 }
 
 export interface CliOptionValues {
@@ -31,13 +27,9 @@ export interface CliOptionValues {
   port?: string;
   id?: string;
   name?: string;
-  title?: string;
   description?: string;
-  prompt?: string;
-  stream?: boolean;
   "workspace-root"?: string;
   "runtime-home"?: string;
-  runtime?: string;
   sandbox?: string;
   approval?: string;
   "model-profile"?: string;
@@ -46,13 +38,12 @@ export interface CliOptionValues {
   help?: boolean;
 }
 
-export type CliResource = "serve" | "agent" | "session" | "run";
+export type CliResource = "serve" | "agent";
 
 export interface CliContext {
   values: CliOptionValues;
   stdout: OutputWriter;
   stderr: OutputWriter;
   service: CliAgentServiceLike;
-  sessionService: SessionServiceLike;
   dependencies: CliDependencies;
 }

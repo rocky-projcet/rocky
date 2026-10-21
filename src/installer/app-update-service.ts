@@ -15,7 +15,7 @@ import type {
   AppUpdateRecord,
   AppUpdateServiceLike,
 } from "./app-update-types.js";
-import type { RuntimeChildProcess } from "../runtime/runtime-types.js";
+import type { RuntimeChildProcess } from "../runtime/process-types.js";
 
 interface AppUpdateSpawnOptions {
   cwd: string;

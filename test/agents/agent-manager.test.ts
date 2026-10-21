@@ -1,44 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
 import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import {
   AgentManager,
   ensureUvVirtualEnvironment,
 } from "../../src/agents/agent-manager.js";
-import { CodexCliRuntime } from "../../src/runtime/codex-cli-runtime.js";
-
-import type {
-  RuntimeChildProcess,
-  RuntimeSpawnOptions,
-} from "../../src/runtime/runtime-types.js";
-
-function createFakeChild(
-  exitCode = 0
-): EventEmitter & RuntimeChildProcess {
-  const child = new EventEmitter() as EventEmitter & RuntimeChildProcess;
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  child.kill = () => {
-    queueMicrotask(() => {
-      child.stdout.end();
-      child.stderr.end();
-      child.emit("close", null, "SIGTERM");
-    });
-  };
-
-  queueMicrotask(() => {
-    child.stdout.end();
-    child.stderr.end();
-    child.emit("close", exitCode, null);
-  });
-
-  return child;
-}
 
 test("AgentManager creates isolated workspace and runtime-home layout", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-manager-state-"));
@@ -65,10 +34,8 @@ test("AgentManager creates isolated workspace and runtime-home layout", async ()
 
   for (const relativePath of [
     "",
-    ".codex",
     "config",
     "rules",
-    "skills",
     "state",
     "xdg-cache",
     "xdg-config",
@@ -88,10 +55,6 @@ test("AgentManager creates isolated workspace and runtime-home layout", async ()
   );
   const envTemplate = await readFile(
     path.join(agent.workspaceRoot, ".env.template"),
-    "utf8"
-  );
-  const workspaceAgentsOverlay = await readFile(
-    path.join(agent.workspaceRoot, "AGENTS.md"),
     "utf8"
   );
 
@@ -118,16 +81,20 @@ test("AgentManager creates isolated workspace and runtime-home layout", async ()
     path.join(agent.workspaceRoot, ".venv")
   );
   assert.match(envTemplate, /AGENT_ID=agent-1/);
-  assert.match(envTemplate, /CODEX_SANDBOX=workspace-write/);
+  assert.doesNotMatch(envTemplate, /CODEX_/);
   assert.match(envTemplate, /AGENT_WORKSPACE_MODE=directory/);
   assert.ok(
     envTemplate.includes(`AGENT_PYTHON_VENV=${path.join(agent.workspaceRoot, ".venv")}`)
   );
   assert.match(envTemplate, /AGENT_SSH_COMMAND=ssh/);
-  await access(path.join(agent.workspaceRoot, ".agents", "skills"));
-  await access(path.join(agent.workspaceRoot, "skills"));
-  assert.match(workspaceAgentsOverlay, /Workspace-local AGENTS overlay/);
-  assert.match(workspaceAgentsOverlay, /Create or edit agent-local skills under `skills`/);
+  assert.equal(workspaceConfig.policies.skills, undefined);
+  for (const removedPath of [
+    "AGENTS.md",
+    "skills",
+    path.join(".agents", "skills"),
+  ]) {
+    await assert.rejects(access(path.join(agent.workspaceRoot, removedPath)));
+  }
 });
 
 test("AgentManager rejects unmanaged custom workspace/runtime paths", async () => {
@@ -236,66 +203,6 @@ test("AgentManager deletes managed agent roots and preserves list ordering", asy
   assert.equal(created.archivedAt, null);
 });
 
-test("AgentManager binds CodexCliRuntime sessions to isolated agent paths", async () => {
-  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-manager-runtime-"));
-  const captured: {
-    command?: string;
-    args?: string[];
-    options?: RuntimeSpawnOptions;
-  } = {};
-  const runtime = new CodexCliRuntime({
-    spawn: (command, args, options) => {
-      captured.command = command;
-      captured.args = args;
-      captured.options = options;
-      return createFakeChild(0);
-    },
-    idGenerator: (() => {
-      const ids = ["agent-session", "agent-run"];
-      return () => ids.shift() ?? "";
-    })(),
-  });
-  const manager = new AgentManager({
-    stateRoot,
-    idGenerator: () => "agent-runtime",
-    now: () => "2026-03-13T00:00:00.000Z",
-  });
-
-  const agent = await manager.createAgent({
-    name: "runtime-agent",
-    sandboxPolicy: "read-only",
-    modelProfile: "default",
-  });
-  const session = await manager.createCodexSession(runtime, agent.id, {
-    model: "gpt-5.4",
-    skipGitRepoCheck: true,
-  });
-  const run = await runtime.sendTurn({
-    sessionId: session.id,
-    prompt: "hello",
-  });
-
-  await runtime.getRunResult(run.runId);
-
-  assert.equal(session.agentId, agent.id);
-  assert.equal(session.workspaceRoot, agent.workspaceRoot);
-  assert.equal(session.runtimeHome, agent.runtimeHome);
-  assert.equal(session.config.sandbox, "read-only");
-  assert.equal(session.config.dangerouslyBypassApprovalsAndSandbox, false);
-  assert.equal(session.config.approval, "on-request");
-  assert.equal(session.config.profile, "default");
-  assert.equal(session.config.model, "gpt-5.4");
-  assert.ok(!captured.args?.includes("--dangerously-bypass-approvals-and-sandbox"));
-  assert.ok(captured.args?.includes("--ask-for-approval"));
-  assert.ok(captured.args?.includes("never"));
-  assert.equal(captured.options?.cwd, agent.workspaceRoot);
-  assert.equal(captured.options?.env.HOME, agent.runtimeHome);
-  assert.equal(
-    captured.options?.env.XDG_CONFIG_HOME,
-    path.join(agent.runtimeHome, "xdg-config")
-  );
-});
-
 test("AgentManager bootstraps a uv virtual environment only once when requested", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "agent-manager-uv-"));
   const commands: Array<{
@@ -388,12 +295,16 @@ test("AgentManager refreshes the workspace env template on update", async () => 
   });
 
   const created = await manager.createAgent({
-    modelProfile: "default",
-    sandboxPolicy: "workspace-write",
+    name: "env-template-agent",
   });
   await manager.updateAgent("agent-template", {
-    modelProfile: "ops",
-    sandboxPolicy: "read-only",
+    toolPolicy: {
+      ...created.toolPolicy,
+      ssh: {
+        ...created.toolPolicy.ssh,
+        command: "ssh -F ops_config",
+      },
+    },
   });
 
   const envTemplate = await readFile(
@@ -401,8 +312,8 @@ test("AgentManager refreshes the workspace env template on update", async () => 
     "utf8"
   );
 
-  assert.match(envTemplate, /CODEX_SANDBOX=read-only/);
-  assert.match(envTemplate, /CODEX_MODEL_PROFILE=ops/);
+  assert.match(envTemplate, /AGENT_SSH_COMMAND=ssh -F ops_config/);
+  assert.doesNotMatch(envTemplate, /CODEX_/);
 });
 
 test("AgentManager repairs legacy agent records onto managed workspace/runtime paths", async () => {
@@ -481,7 +392,7 @@ test("AgentManager repairs legacy agent records onto managed workspace/runtime p
   });
 
   await access(path.join(agent.workspaceRoot, ".agents", "agent.config.json"));
-  await access(path.join(agent.workspaceRoot, "AGENTS.md"));
+  await access(path.join(agent.workspaceRoot, ".env.template"));
 
   const persisted = JSON.parse(await readFile(metadataPath, "utf8"));
   assert.equal(persisted.workspaceRoot, agent.workspaceRoot);

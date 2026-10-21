@@ -1,8 +1,3 @@
-import type {
-  RuntimeKind,
-  RuntimeSessionInput,
-} from "../runtime/runtime-types.js";
-
 export interface AgentRuntimePolicy {
   workspaceMode: string;
   gitBackedWorkspace: boolean;
@@ -29,10 +24,6 @@ export interface AgentToolPolicy {
   ssh: AgentSshToolPolicy;
 }
 
-export interface AgentSkillPolicy {
-  automaticSkillCreation: boolean;
-}
-
 export interface PythonEnvironment {
   manager: string;
   type: string;
@@ -49,13 +40,11 @@ export interface AgentRecord {
   color: string | null;
   workspaceRoot: string;
   runtimeHome: string;
-  defaultRuntime: RuntimeKind;
   sandboxPolicy: string;
   approvalPolicy: string;
   modelProfile: string | null;
   runtimePolicy: AgentRuntimePolicy;
   toolPolicy: AgentToolPolicy;
-  skillPolicy: AgentSkillPolicy;
   status: string;
   lifecycle: AgentLifecycle;
   archivedAt: string | null;
@@ -97,31 +86,6 @@ export interface AgentUpdatePatch extends Partial<AgentRecord> {
   uvVenvPath?: string;
 }
 
-export interface AgentSessionOverrides {
-  sessionId?: string;
-  runtimeKind?: RuntimeKind;
-  runtimeSessionId?: string | null;
-  workspaceRoot?: string;
-  runtimeHome?: string;
-  codexBin?: string;
-  sandbox?: string;
-  approval?: string | null;
-  profile?: string | null;
-  authProfileId?: string | null;
-  model?: string | null;
-  ollamaLaunchTarget?: RuntimeSessionInput["ollamaLaunchTarget"];
-  reasoningEffort?: RuntimeSessionInput["reasoningEffort"];
-  serviceTier?: RuntimeSessionInput["serviceTier"];
-  fullAuto?: boolean;
-  dangerouslyBypassApprovalsAndSandbox?: boolean;
-  additionalWritableDirs?: string[];
-  configOverrides?: string[];
-  enableFeatures?: string[];
-  disableFeatures?: string[];
-  skipGitRepoCheck?: boolean;
-  ephemeral?: boolean;
-}
-
 export interface AgentManagerOptions {
   stateRoot?: string;
   now?: () => string;
@@ -135,16 +99,6 @@ export interface AgentRegistryManagerLike {
   listAgents(): Promise<AgentRecord[]>;
   updateAgent(agentId: string, patch?: AgentUpdatePatch): Promise<AgentRecord>;
   deleteAgent(agentId: string): Promise<void>;
-  createRuntimeSession<T>(
-    runtime: { createSession(input: RuntimeSessionInput): Promise<T> },
-    agentOrId: string | AgentRecord,
-    overrides?: AgentSessionOverrides
-  ): Promise<T>;
-  createCodexSession<T>(
-    runtime: { createSession(input: RuntimeSessionInput): Promise<T> },
-    agentOrId: string | AgentRecord,
-    overrides?: AgentSessionOverrides
-  ): Promise<T>;
 }
 
 export interface AgentRegistryServiceOptions extends AgentManagerOptions {

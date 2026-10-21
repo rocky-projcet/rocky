@@ -1,0 +1,1192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rocky v2 시안</title>
+<link rel="icon" type="image/png" href="../../../web/public/favicon-32x32.png" />
+<link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.1"></script>
+<script src="https://unpkg.com/lucide@1.7.0/dist/umd/lucide.min.js"></script>
+<style type="text/tailwindcss">
+  /* web/src/styles.css 토큰을 그대로 옮김 (neutral / black & white) */
+  @theme {
+    --font-sans: "Pretendard", sans-serif;
+    --color-background: oklch(1 0 0);
+    --color-foreground: oklch(0.145 0 0);
+    --color-card: oklch(1 0 0);
+    --color-primary: oklch(0.205 0 0);
+    --color-primary-foreground: oklch(0.985 0 0);
+    --color-secondary: oklch(0.97 0 0);
+    --color-muted: oklch(0.97 0 0);
+    --color-muted-foreground: oklch(0.556 0 0);
+    --color-border: oklch(0.922 0 0);
+    --color-input: oklch(0.922 0 0);
+    --color-ring: oklch(0.708 0 0);
+    --color-sidebar: oklch(0.985 0 0);
+    --color-destructive: oklch(0.577 0.245 27.325);
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+    --radius-2xl: 18px;
+    --radius-3xl: 22px;
+    --radius-4xl: 26px;
+  }
+</style>
+<style>
+  /* 유틸리티가 아래 컴포넌트 스타일을 덮어쓸 수 있도록 Tailwind 레이어 순서에 맞춘다 */
+  @layer theme, base, components, utilities;
+  @layer components {
+  *, ::before, ::after { border-color: oklch(0.922 0 0); }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: "Pretendard", sans-serif; -webkit-font-smoothing: antialiased; color: oklch(0.145 0 0); overflow: hidden; word-break: keep-all; }
+  [data-lucide] { width: 16px; height: 16px; }
+  svg.lucide { flex-shrink: 0; }
+
+  /* ── 기존 애니메이션 재사용 (styles.css) ── */
+  @keyframes ia-streaming-dot-pulse { 0%, 80%, 100% { transform: translateY(0); opacity: .35 } 40% { transform: translateY(-2px); opacity: 1 } }
+  .ia-streaming-dots { display: inline-flex; align-items: center; gap: .32rem; vertical-align: middle }
+  .ia-streaming-dot { width: .36rem; height: .36rem; border-radius: 999px; background: currentColor; animation: ia-streaming-dot-pulse 1s ease-in-out infinite }
+  .ia-streaming-dot:nth-child(2) { animation-delay: .14s } .ia-streaming-dot:nth-child(3) { animation-delay: .28s }
+
+  @keyframes neon-pulse { 0%, 100% { box-shadow: none; filter: none } 40%, 60% { box-shadow: 0 0 3px var(--neon-color), 0 0 8px var(--neon-color), 0 0 14px var(--neon-color); filter: drop-shadow(0 0 .2rem var(--neon-color)) } }
+  .neon-dot { --neon-color: transparent; width: .5rem; height: .5rem; border-radius: 9999px; background: var(--neon-color); flex-shrink: 0 }
+  .neon-dot[data-status="active"] { --neon-color: #22c55e; animation: neon-pulse 3s ease-in-out infinite }
+  .neon-dot[data-status="pending"] { --neon-color: #eab308; animation: neon-pulse 2s ease-in-out infinite }
+  .neon-dot[data-status="error"] { --neon-color: #ef4444; animation: neon-pulse 1.5s ease-in-out infinite }
+  .neon-dot[data-status="off"] { background: oklch(0.556 0 0 / .25) }
+
+  @keyframes tw-shimmer { from { background-position: 100% 0 } to { background-position: 0 0 } }
+  .shimmer { background: linear-gradient(90deg, #737373 0%, #737373 40%, #0a0a0a 50%, #737373 60%, #737373 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: tw-shimmer 2s linear infinite; }
+
+  /* 마일스톤 토스트 진입 (animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-300) */
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-16px) scale(.95) } to { opacity: 1; transform: none } }
+  @keyframes rise-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+  @keyframes soft-float { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
+  @keyframes field-glow { 0%, 100% { box-shadow: 0 0 0 0 oklch(0.145 0 0 / .0) } 50% { box-shadow: 0 0 0 4px oklch(0.145 0 0 / .07) } }
+  @media (prefers-reduced-motion) { .neon-dot, .ia-streaming-dot, .shimmer, .float { animation: none !important } }
+
+  /* 에이전트 아바타: 이모지 + 색 틴트 (agent-avatar.tsx) */
+  .av { display: inline-flex; align-items: center; justify-content: center; border-radius: 18px; border: 1px solid oklch(0.922 0 0 / .6); background: oklch(0.97 0 0 / .6); box-shadow: 0 1px 2px rgb(0 0 0 / .05); line-height: 1; flex-shrink: 0 }
+  .av[style*="--c"] { background: color-mix(in srgb, var(--c) 18%, white); border-color: color-mix(in srgb, var(--c) 40%, #e5e5e5) }
+  .av > span { display: block; transform: translateY(1px) }
+  .av-sm { width: 28px; height: 28px; font-size: 16px; border-radius: 10px }
+  .av-md { width: 40px; height: 40px; font-size: 20px; border-radius: 14px }
+  .av-lg { width: 56px; height: 56px; font-size: 26px }
+  .av-xl { width: 80px; height: 80px; font-size: 38px; border-radius: 22px }
+  .tint-soft { background: color-mix(in srgb, var(--c) 6%, white); border-color: color-mix(in srgb, var(--c) 32%, #e5e5e5) }
+  .tint-card { background: color-mix(in srgb, var(--c) 7%, white); border-color: color-mix(in srgb, var(--c) 32%, #e5e5e5); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 12%, transparent), 0 12px 24px color-mix(in srgb, var(--c) 10%, transparent) }
+
+  /* 로키 답장 마크 (home-page RockyReplyMark) */
+  .rocky-mark { display: inline-flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 8px; background: oklch(0.97 0 0 / .85); flex-shrink: 0 }
+  .rocky-mark img { width: 78%; height: 78%; object-fit: contain }
+
+  /* 공급자 글리프 (provider-glyph.tsx) */
+  .pg { display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid oklch(0.922 0 0 / .7); background: oklch(1 0 0 / .8); box-shadow: 0 1px 2px rgb(0 0 0 / .05); flex-shrink: 0 }
+  .pg svg { width: 70%; height: 70% }
+
+  /* 레일 */
+  .rail-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 56px; padding: 9px 0 7px; border-radius: 14px; color: #525252; transition: background-color .12s }
+  .rail-btn:hover { background: #efefef }
+  .rail-btn.active { background: #e5e5e5; color: #0a0a0a }
+  .rail-btn [data-lucide], .rail-btn svg.lucide { width: 20px; height: 20px }
+  .rail-lb { font-size: 10.5px; font-weight: 500; letter-spacing: -.01em }
+  .rail-badge { position: absolute; top: 5px; right: 9px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: #0a0a0a; color: #fff; font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px #fafafa }
+
+  /* 화면 전환 */
+  .screen { position: absolute; inset: 0; display: none }
+  .screen.on { display: flex; animation: rise-in .2s ease-out }
+
+  /* 오른쪽 패널 / 결정함 시트 */
+  .panel { transform: translateX(105%); transition: transform .26s cubic-bezier(.2,.8,.2,1) }
+  .panel.open { transform: none }
+  .scrim { opacity: 0; pointer-events: none; transition: opacity .2s }
+  .scrim.open { opacity: 1; pointer-events: auto }
+
+  .toast { animation: toast-in .3s ease-out both }
+  .float { animation: soft-float 4s ease-in-out infinite }
+  .glow { animation: field-glow 2s ease-in-out infinite }
+
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: oklch(0.556 0 0 / .2) transparent }
+  .scroll-thin::-webkit-scrollbar { width: 10px }
+  .scroll-thin::-webkit-scrollbar-thumb { background: oklch(0.556 0 0 / .18); border-radius: 9999px; border: 2px solid transparent; background-clip: content-box }
+
+  /* 버튼 (shared/ui/button: 알약 모양) */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px; font-size: 14px; font-weight: 500; border: 1px solid transparent; white-space: nowrap; transition: background-color .12s, border-color .12s, transform .05s }
+  .btn:active { transform: translateY(1px) }
+  .btn-sm { height: 32px; padding: 0 12px; font-size: 13px }
+  .btn-xs { height: 26px; padding: 0 10px; font-size: 12px }
+  .btn-primary { background: oklch(0.205 0 0); color: #fff } .btn-primary:hover { background: oklch(0.205 0 0 / .85) }
+  .btn-outline { background: #fff; border-color: oklch(0.922 0 0) } .btn-outline:hover { background: oklch(0.97 0 0) }
+  .btn-ghost:hover { background: oklch(0.97 0 0) }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; color: #525252 } .icon-btn:hover { background: oklch(0.97 0 0); color: #0a0a0a }
+
+  .chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid oklch(0.922 0 0); font-size: 12px; font-weight: 500; background: #fff; white-space: nowrap }
+  .chip-dark { background: #0a0a0a; color: #fff; border-color: #0a0a0a }
+  .tag { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap }
+  .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .18em; color: oklch(0.556 0 0); font-weight: 600 }
+
+  .opt { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid oklch(0.922 0 0); font-size: 13px; font-weight: 500; background: #fff; transition: all .12s }
+  .opt:hover { border-color: oklch(0.145 0 0 / .4); background: oklch(0.97 0 0 / .5) }
+  .opt.rec { border-color: #0a0a0a; background: #0a0a0a; color: #fff }
+  .opt.rec:hover { background: #262626 }
+  .opt .rec-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; background: rgb(255 255 255 / .16) }
+
+  /* 위임 단계 사다리 */
+  .rung { flex: 1; border: 1px solid oklch(0.922 0 0); border-radius: 14px; padding: 10px 12px; background: #fff; text-align: left; transition: all .15s; position: relative }
+  .rung:hover:not(.locked) { border-color: oklch(0.145 0 0 / .4) }
+  .rung.sel { border-color: #0a0a0a; box-shadow: 0 0 0 1px #0a0a0a; background: oklch(0.145 0 0 / .03) }
+  .rung.locked { background: oklch(0.97 0 0 / .6); color: oklch(0.556 0 0) }
+  .dots { display: inline-flex; gap: 3px } .dots i { width: 6px; height: 6px; border-radius: 99px; background: oklch(0.922 0 0); display: block } .dots i.f { background: #0a0a0a }
+
+  .seg { display: inline-flex; padding: 4px; border-radius: 999px; background: oklch(0.97 0 0 / .9); border: 1px solid oklch(0.922 0 0) }
+  .seg button { height: 30px; padding: 0 14px; border-radius: 999px; font-size: 13px; font-weight: 500; color: oklch(0.145 0 0 / .6); display: inline-flex; align-items: center; gap: 6px }
+  .seg button.on { background: #fff; color: #0a0a0a; box-shadow: 0 1px 2px rgb(0 0 0 / .08) }
+
+  .tabs { display: inline-flex; padding: 4px; border-radius: 999px; background: oklch(0.97 0 0) }
+  .tabs button { height: 30px; padding: 0 13px; border-radius: 999px; font-size: 13px; font-weight: 500; color: oklch(0.145 0 0 / .6) }
+  .tabs button.on { background: #fff; color: #0a0a0a; box-shadow: 0 1px 2px rgb(0 0 0 / .08) }
+
+  .switch { width: 34px; height: 20px; border-radius: 999px; background: oklch(0.922 0 0); position: relative; flex-shrink: 0; transition: background .15s }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 99px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .2); transition: transform .15s }
+  .switch.on { background: #0a0a0a } .switch.on::after { transform: translateX(14px) }
+
+  .lift { transition: transform .15s, box-shadow .15s } .lift:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1) }
+
+  .diff-add { background: #f0fdf4; color: #166534 } .diff-del { background: #fef2f2; color: #991b1b; text-decoration: line-through; text-decoration-color: rgb(153 27 27 / .35) }
+
+  /* 리뷰 툴바 */
+  .rv-tab { height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: rgb(255 255 255 / .6); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap }
+  .rv-tab:hover { color: #fff; background: rgb(255 255 255 / .08) }
+  .rv-tab.on { color: #0a0a0a; background: #fff }
+  .rv-tab b { font-weight: 600; opacity: .55; font-size: 11px }
+  }
+</style>
+</head>
+<body class="bg-[#e7e7e5]">
+
+<!-- ═════════════ 리뷰 툴바 (앱 밖) ═════════════ -->
+<header class="h-12 bg-[#0a0a0a] text-white flex items-center gap-4 px-4">
+  <div class="flex items-center gap-2.5 shrink-0">
+    <img src="../../../web/public/Rocky_logo_inline.svg" alt="Rocky" class="h-[15px] invert" />
+    <span class="text-[12px] text-white/50 font-medium">v2 디자인 시안</span>
+  </div>
+  <nav id="rv-tabs" class="flex items-center gap-1 overflow-x-auto mx-auto">
+    <button class="rv-tab" data-screen="onboarding"><b>1</b>첫 만남</button>
+    <button class="rv-tab" data-screen="home"><b>2</b>로키 홈</button>
+    <button class="rv-tab" data-screen="decisions"><b>3</b>결정함</button>
+    <button class="rv-tab" data-screen="handover"><b>4</b>업무 넘기기</button>
+    <button class="rv-tab" data-screen="team"><b>5</b>팀</button>
+    <button class="rv-tab" data-screen="agent"><b>6</b>에이전트 키우기</button>
+    <button class="rv-tab" data-screen="connections"><b>7</b>연결</button>
+  </nav>
+  <button id="notes-toggle" class="rv-tab on shrink-0"><i data-lucide="sticky-note"></i>설계 메모</button>
+</header>
+
+<!-- ═════════════ 스테이지 ═════════════ -->
+<div id="stage" class="relative h-[calc(100%-48px)] overflow-hidden">
+  <div id="canvas" class="absolute left-0 top-0 origin-top-left" style="width:1360px;height:860px">
+    <div class="w-full h-full rounded-[14px] overflow-hidden bg-background border border-black/10 shadow-[0_30px_80px_-20px_rgba(0,0,0,.35)] flex flex-col">
+
+      <!-- Electron 타이틀바 (desktop-chrome.tsx) -->
+      <div class="h-9 shrink-0 border-b bg-background flex items-center text-[13px] text-muted-foreground select-none">
+        <div class="flex items-center gap-0.5 pl-2">
+          <button class="icon-btn !w-7 !h-7 !rounded-md"><i data-lucide="panel-left"></i></button>
+          <button class="icon-btn !w-7 !h-7 !rounded-md"><i data-lucide="arrow-left"></i></button>
+          <button class="icon-btn !w-7 !h-7 !rounded-md opacity-40"><i data-lucide="arrow-right"></i></button>
+          <span class="ml-1 flex items-center">
+            <button class="h-7 rounded-md px-2 hover:bg-muted">파일</button>
+            <button class="h-7 rounded-md px-2 hover:bg-muted">편집</button>
+            <button class="h-7 rounded-md px-2 hover:bg-muted">보기</button>
+            <button class="h-7 rounded-md px-2 hover:bg-muted">도움말</button>
+          </span>
+        </div>
+        <div class="ml-auto flex items-center h-full">
+          <span class="chip !h-6 !text-[11px] mr-3"><i data-lucide="download" class="!w-3 !h-3"></i>v0.2.0 업데이트</span>
+          <span class="w-[46px] h-full flex items-center justify-center hover:bg-muted"><i data-lucide="minus" class="!w-3.5 !h-3.5"></i></span>
+          <span class="w-[46px] h-full flex items-center justify-center hover:bg-muted"><i data-lucide="square" class="!w-3 !h-3"></i></span>
+          <span class="w-[46px] h-full flex items-center justify-center hover:bg-red-500 hover:text-white"><i data-lucide="x" class="!w-4 !h-4"></i></span>
+        </div>
+      </div>
+
+      <div class="flex-1 flex min-h-0 relative">
+
+        <!-- ── 레일 ── -->
+        <nav id="rail" class="w-[72px] shrink-0 bg-sidebar border-r flex flex-col items-center py-3 gap-1">
+          <button class="rail-btn" data-go="home" data-rail="home">
+            <span class="w-5 h-5 flex items-center justify-center"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" class="w-5 h-5 object-contain" /></span>
+            <span class="rail-lb">로키</span>
+          </button>
+          <button class="rail-btn" data-open="decisions" data-rail="decisions">
+            <i data-lucide="inbox"></i><span class="rail-lb">결정</span><span class="rail-badge" id="rail-badge">3</span>
+          </button>
+          <button class="rail-btn" data-go="handover" data-rail="handover">
+            <i data-lucide="briefcase-business"></i><span class="rail-lb">업무</span>
+          </button>
+          <button class="rail-btn" data-go="team" data-rail="team">
+            <i data-lucide="users"></i><span class="rail-lb">팀</span>
+          </button>
+          <div class="flex-1"></div>
+          <button class="rail-btn" data-go="connections" data-rail="connections">
+            <i data-lucide="plug"></i><span class="rail-lb">연결</span>
+          </button>
+          <button class="rail-btn" title="나">
+            <span class="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center"><i data-lucide="user-round" class="!w-4 !h-4"></i></span>
+          </button>
+        </nav>
+
+        <div id="screens" class="flex-1 relative min-w-0">
+
+<!-- ═════════════════════════ 1. 첫 만남 ═════════════════════════ -->
+<section class="screen flex-col items-center bg-background" data-screen="onboarding">
+  <div class="w-full max-w-[880px] mx-auto flex flex-col items-center justify-center pb-12 px-8 h-full">
+    <video src="../../../web/public/rocky-start-screen.mp4" class="h-[132px] w-auto object-contain" autoplay muted loop playsinline></video>
+    <h1 class="mt-3 text-[28px] font-semibold tracking-[-0.02em] text-center">안녕하세요, 로키예요.</h1>
+    <p class="mt-2 text-[15px] leading-7 text-muted-foreground text-center">오늘부터 당신의 일을 하나씩 넘겨받을 비서예요.<br/>세 가지만 하면 바로 시작할 수 있어요.</p>
+
+    <!-- 단계 -->
+    <div class="mt-7 flex items-center gap-2" id="ob-steps">
+      <button class="ob-step chip !h-9 !px-4 !text-[13px]" data-step="1"><span class="ob-num w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold">1</span>생각할 모델 연결</button>
+      <i data-lucide="chevron-right" class="text-muted-foreground !w-4 !h-4"></i>
+      <button class="ob-step chip !h-9 !px-4 !text-[13px]" data-step="2"><span class="ob-num w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold">2</span>나에 대해 알려주기</button>
+      <i data-lucide="chevron-right" class="text-muted-foreground !w-4 !h-4"></i>
+      <button class="ob-step chip !h-9 !px-4 !text-[13px]" data-step="3"><span class="ob-num w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold">3</span>첫 번째 일 넘기기</button>
+    </div>
+
+    <!-- 1단계 -->
+    <div class="ob-panel mt-7 w-full" data-step="1">
+      <div class="grid grid-cols-3 gap-3">
+        <button class="text-left rounded-2xl border-2 border-foreground bg-card p-5 lift relative">
+          <span class="tag bg-foreground text-white absolute top-4 right-4">추천</span>
+          <span class="pg w-10 h-10 !rounded-xl" data-glyph="openai"></span>
+          <p class="mt-4 font-semibold text-[15px]">ChatGPT로 로그인</p>
+          <p class="mt-1 text-[13px] leading-5 text-muted-foreground">Plus·Pro 구독이 있으면 추가 비용 없이 시작해요. 브라우저에서 로그인만 하면 끝.</p>
+          <span class="mt-4 btn btn-primary btn-sm w-full"><i data-lucide="log-in"></i>로그인하기</span>
+        </button>
+        <button class="text-left rounded-2xl border bg-card p-5 lift">
+          <span class="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center"><i data-lucide="key-round" class="!w-5 !h-5"></i></span>
+          <p class="mt-4 font-semibold text-[15px]">API 키 입력</p>
+          <p class="mt-1 text-[13px] leading-5 text-muted-foreground">OpenAI · Anthropic · Gemini · OpenRouter. 쓴 만큼 내요.</p>
+          <div class="mt-4 flex items-center gap-1.5">
+            <span class="pg w-7 h-7" data-glyph="openai"></span><span class="pg w-7 h-7" data-glyph="anthropic"></span><span class="pg w-7 h-7 text-[10px] font-bold">G</span><span class="pg w-7 h-7 text-[10px] font-bold">OR</span>
+          </div>
+        </button>
+        <button class="text-left rounded-2xl border bg-card p-5 lift">
+          <span class="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center"><i data-lucide="hard-drive" class="!w-5 !h-5"></i></span>
+          <p class="mt-4 font-semibold text-[15px]">내 컴퓨터의 모델</p>
+          <p class="mt-1 text-[13px] leading-5 text-muted-foreground">데이터가 컴퓨터 밖으로 나가지 않아요. 민감한 일에 좋아요.</p>
+          <div class="mt-4 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 flex items-center gap-2 text-[12px] text-emerald-800">
+            <span class="neon-dot" data-status="active"></span>Ollama에서 모델 3개를 찾았어요
+          </div>
+        </button>
+      </div>
+      <p class="mt-5 text-center text-[12px] text-muted-foreground">하나만 있어도 돼요. 나중에 <b class="font-medium text-foreground">연결</b>에서 언제든 더하거나 바꿀 수 있어요.</p>
+    </div>
+
+    <!-- 2단계 -->
+    <div class="ob-panel mt-7 w-full max-w-[640px] hidden" data-step="2">
+      <div class="flex gap-3">
+        <div class="rocky-mark w-8 h-7 mt-0.5"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+        <div class="text-[14px] leading-6">
+          <p>일을 잘 넘겨받으려면 당신을 조금 알아야 해요. 편하게 말해 주세요. 나중에 언제든 고칠 수 있어요.</p>
+        </div>
+      </div>
+      <div class="mt-4 ml-11 space-y-2.5">
+        <div class="rounded-2xl border bg-card p-3.5">
+          <p class="text-[12px] font-semibold text-muted-foreground">어떤 일을 하세요?</p>
+          <p class="mt-1 text-[14px]">스타트업 운영 총괄이에요. 투자 유치, 재무, 채용을 같이 봐요.</p>
+        </div>
+        <div class="rounded-2xl border-2 border-foreground/80 bg-card p-3.5 glow">
+          <p class="text-[12px] font-semibold text-muted-foreground">요즘 가장 시간을 많이 쓰는 일은요?</p>
+          <p class="mt-1 text-[14px] text-muted-foreground/70">예: 매주 보고서 정리, 메일 답장, 회의 준비…<span class="inline-block w-px h-4 bg-foreground align-middle ml-0.5 animate-pulse"></span></p>
+        </div>
+        <div class="rounded-2xl border border-dashed bg-muted/30 p-3.5 text-[13px] text-muted-foreground">로키가 조심해야 할 것 (예: 숫자는 반올림하지 않기)</div>
+        <div class="flex items-center justify-between pt-1">
+          <button class="btn btn-ghost btn-sm text-muted-foreground"><i data-lucide="paperclip"></i>소개 자료나 이력서로 알려주기</button>
+          <button class="btn btn-primary btn-sm">다음<i data-lucide="arrow-right"></i></button>
+        </div>
+        <p class="text-[11.5px] text-muted-foreground flex items-center gap-1.5"><i data-lucide="lock" class="!w-3.5 !h-3.5"></i>이 내용은 내 컴퓨터의 <b class="font-medium">지식</b> 파일로만 저장돼요.</p>
+      </div>
+    </div>
+
+    <!-- 3단계 -->
+    <div class="ob-panel mt-7 w-full max-w-[720px] hidden" data-step="3">
+      <p class="text-center text-[14px] text-muted-foreground">처음엔 작은 일 하나로 시작해 보세요. 로키가 하는 걸 보고 조금씩 더 맡기면 돼요.</p>
+      <div class="mt-5 grid grid-cols-2 gap-3">
+        <button class="text-left rounded-2xl border bg-card p-4 lift flex gap-3"><span class="w-10 h-10 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0"><i data-lucide="chart-line" class="!w-5 !h-5"></i></span><span><b class="block text-[14px] font-semibold">매주 하는 보고서 정리</b><span class="text-[12.5px] text-muted-foreground">엑셀을 보여 주면 같은 방식으로 만들어요</span></span></button>
+        <button class="text-left rounded-2xl border bg-card p-4 lift flex gap-3"><span class="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0"><i data-lucide="mail" class="!w-5 !h-5"></i></span><span><b class="block text-[14px] font-semibold">메일·메시지 초안</b><span class="text-[12.5px] text-muted-foreground">보내기 전엔 항상 보여 드려요</span></span></button>
+        <button class="text-left rounded-2xl border bg-card p-4 lift flex gap-3"><span class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0"><i data-lucide="file-search" class="!w-5 !h-5"></i></span><span><b class="block text-[14px] font-semibold">자료 조사·비교</b><span class="text-[12.5px] text-muted-foreground">출처를 붙여 표로 정리해요</span></span></button>
+        <button class="text-left rounded-2xl border bg-card p-4 lift flex gap-3"><span class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><i data-lucide="presentation" class="!w-5 !h-5"></i></span><span><b class="block text-[14px] font-semibold">회의·발표 준비</b><span class="text-[12.5px] text-muted-foreground">자료를 모아 구성안을 짜요</span></span></button>
+      </div>
+      <div class="mt-4 rounded-2xl border bg-card p-2 shadow-sm flex items-center gap-2">
+        <button class="icon-btn"><i data-lucide="paperclip"></i></button>
+        <span class="flex-1 text-[14px] text-muted-foreground">아니면 직접 말해 주세요. "매주 월요일에 하는 이 일 좀 맡아줘"</span>
+        <button class="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center" data-go="handover"><i data-lucide="arrow-up"></i></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════════════════ 2. 로키 홈 ═════════════════════════ -->
+<section class="screen" data-screen="home">
+  <div class="flex-1 flex flex-col min-w-0">
+    <header class="h-12 shrink-0 flex items-center px-5 gap-3">
+      <button class="icon-btn" title="대화 기록"><i data-lucide="history"></i></button>
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="text-[14px] font-semibold truncate">투자사 미팅 준비</span>
+        <span class="text-[12px] text-muted-foreground">오늘 · 오후 2:10</span>
+      </div>
+      <div class="ml-auto flex items-center gap-1.5">
+        <button class="chip !h-8"><span class="pg w-5 h-5 !rounded-md" data-glyph="openai"></span>gpt-5.4<span class="text-muted-foreground font-normal">· ChatGPT Pro</span><i data-lucide="chevron-down" class="!w-3.5 !h-3.5 text-muted-foreground"></i></button>
+        <button class="icon-btn" title="새 대화"><i data-lucide="square-pen"></i></button>
+      </div>
+    </header>
+
+    <!-- 브리핑 줄 -->
+    <div class="shrink-0 px-5 pb-2">
+      <div class="max-w-[760px] mx-auto flex items-center gap-2">
+        <button class="chip chip-dark" data-open="decisions"><i data-lucide="inbox" class="!w-3.5 !h-3.5"></i>결정 <b id="brief-count">3</b>건이 기다려요</button>
+        <button class="chip"><span class="relative flex w-2 h-2"><span class="absolute inset-0 rounded-full bg-blue-500 opacity-40 animate-ping"></span><span class="relative w-2 h-2 rounded-full bg-blue-500"></span></span>진행 중 2</button>
+        <button class="chip text-muted-foreground"><i data-lucide="calendar-clock" class="!w-3.5 !h-3.5"></i>월 08:30 주간 리포트</button>
+      </div>
+    </div>
+
+    <!-- 대화 -->
+    <div class="flex-1 overflow-y-auto scroll-thin px-5" id="chat-scroll">
+      <div class="max-w-[760px] mx-auto py-5 space-y-5 text-[14px] leading-6">
+
+        <div class="flex justify-end">
+          <div class="max-w-[78%] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3">
+            다음 주 화요일 투자사 미팅 준비 좀 도와줘. 3분기 지표랑 경쟁사 동향 정리해서 10장 안쪽으로.
+            <div class="mt-2 flex"><span class="chip !h-7 !bg-white/70"><i data-lucide="file-spreadsheet" class="!w-3.5 !h-3.5 text-emerald-600"></i>3분기_매출.xlsx</span></div>
+          </div>
+        </div>
+
+        <div class="flex gap-3">
+          <div class="rocky-mark w-7 h-6 mt-0.5"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+          <div class="flex-1 min-w-0">
+            <p>좋아요. 미팅이 화요일 오전 10시니까 <b>월요일 저녁까지</b> 초안을 드릴게요. 세 갈래로 나눠서 진행할게요.</p>
+
+            <div class="mt-3 rounded-2xl border bg-card shadow-sm divide-y overflow-hidden">
+              <button class="w-full flex items-start gap-3 px-4 py-3 hover:bg-muted/40 text-left" data-panel="research">
+                <span class="av av-sm" style="--c:#0ea5e9"><span>🦉</span></span>
+                <span class="flex-1 min-w-0">
+                  <span class="flex items-center gap-2"><b class="font-semibold">리서치</b><span class="text-muted-foreground truncate">경쟁사 3곳 동향·가격 정리</span></span>
+                  <span class="mt-1.5 flex items-center gap-2">
+                    <span class="chip !h-7"><i data-lucide="file-spreadsheet" class="!w-3.5 !h-3.5 text-emerald-600"></i>경쟁사_비교.xlsx</span>
+                    <span class="text-[12px] text-muted-foreground">출처 9개</span>
+                  </span>
+                </span>
+                <span class="tag border border-emerald-200 bg-emerald-50 text-emerald-700 mt-0.5">완료 · 4분</span>
+                <i data-lucide="chevron-right" class="text-muted-foreground mt-1"></i>
+              </button>
+              <button class="w-full flex items-start gap-3 px-4 py-3 hover:bg-muted/40 text-left">
+                <span class="av av-sm" style="--c:#8b5cf6"><span>🐙</span></span>
+                <span class="flex-1 min-w-0">
+                  <span class="flex items-center gap-2"><b class="font-semibold">데이터 분석</b><span class="text-muted-foreground truncate">3분기 매출·리텐션 지표 요약</span></span>
+                  <span class="mt-1 flex items-center gap-2 text-[12px]">
+                    <span class="text-amber-700 font-medium flex items-center gap-1"><i data-lucide="pause" class="!w-3.5 !h-3.5"></i>결정 기다리는 중</span>
+                    <span class="text-muted-foreground">· 그래프 2/3 완성</span>
+                  </span>
+                </span>
+                <span class="tag border border-amber-500/30 bg-amber-500/10 text-amber-700 mt-0.5">대기</span>
+                <i data-lucide="chevron-right" class="text-muted-foreground mt-1"></i>
+              </button>
+              <div class="flex items-start gap-3 px-4 py-3">
+                <div class="rocky-mark w-7 h-7"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+                <span class="flex-1 min-w-0">
+                  <span class="flex items-center gap-2"><b class="font-semibold">로키</b><span class="text-muted-foreground truncate">10장 구성안 작성</span></span>
+                  <span class="mt-1 block text-[12px] text-muted-foreground">위의 두 작업이 끝나면 시작해요</span>
+                </span>
+                <span class="tag border bg-secondary mt-0.5">준비</span>
+              </div>
+            </div>
+
+            <button class="mt-2.5 flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground" data-open="decisions" data-tab="proxy">
+              <i data-lucide="sparkles" class="!w-3.5 !h-3.5"></i>팀원이 물어본 질문 1건은 로키가 대신 답했어요<span class="underline underline-offset-2">보기</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 인라인 결정 카드 -->
+        <div class="ml-10" id="inline-decision">
+          <div class="rounded-2xl border border-foreground/15 bg-card shadow-sm p-4" id="inline-decision-body">
+            <div class="flex items-center gap-2 text-[12px]">
+              <span class="tag bg-foreground text-white">결정 필요</span>
+              <span class="text-muted-foreground flex items-center gap-1.5"><span class="av !w-5 !h-5 !text-[11px] !rounded-md" style="--c:#8b5cf6"><span>🐙</span></span>데이터 분석의 질문 · 로키도 정할 수 없었어요</span>
+            </div>
+            <p class="mt-2.5 text-[15px] font-semibold leading-6">3분기 매출에 7월 일회성 매출(2.1억)을 포함할까요?</p>
+            <p class="mt-1 text-[13px] leading-5 text-muted-foreground">지난 미팅 자료에는 포함했지만, 투자사 자료에서는 보통 빼요. 지식에 정해진 기준이 없어서 직접 정해 주셔야 해요.</p>
+            <div class="mt-3.5 flex flex-wrap gap-2">
+              <button class="opt rec" data-resolve="제외하고 각주로 표시">제외하고 각주로 표시<span class="rec-tag">로키 추천</span></button>
+              <button class="opt" data-resolve="포함">포함</button>
+              <button class="opt !border-dashed text-muted-foreground"><i data-lucide="message-square-text" class="!w-3.5 !h-3.5"></i>직접 말하기</button>
+            </div>
+            <label class="mt-3 flex items-center gap-2 text-[12px] text-muted-foreground cursor-pointer">
+              <span class="w-4 h-4 rounded-[5px] bg-foreground text-white flex items-center justify-center"><i data-lucide="check" class="!w-3 !h-3"></i></span>
+              다음부터 일회성 항목은 이 기준으로 기억하기
+            </label>
+          </div>
+        </div>
+
+        <div class="ml-10 flex items-center gap-2 text-[12.5px] text-muted-foreground">
+          <span class="av !w-5 !h-5 !text-[11px] !rounded-md" style="--c:#8b5cf6"><span>🐙</span></span>
+          <span class="shimmer font-medium">데이터 분석이 기다리는 중</span> · 2분 14초
+          <span class="ia-streaming-dots"><span class="ia-streaming-dot"></span><span class="ia-streaming-dot"></span><span class="ia-streaming-dot"></span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 입력 -->
+    <footer class="shrink-0 px-5 pb-5 pt-2">
+      <div class="max-w-[760px] mx-auto">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-[11px] text-muted-foreground font-medium mr-0.5">다음 한 걸음</span>
+          <button class="chip hover:bg-muted" data-panel="research"><i data-lucide="eye" class="!w-3.5 !h-3.5"></i>경쟁사 비교표 먼저 보기</button>
+          <button class="chip hover:bg-muted" data-go="handover"><i data-lucide="briefcase-business" class="!w-3.5 !h-3.5"></i>이 준비 과정을 업무로 넘기기</button>
+        </div>
+        <div class="rounded-2xl border bg-card p-2 shadow-sm focus-within:ring-2 ring-ring/10">
+          <div class="px-2 pt-1.5 pb-2 text-[14px] text-muted-foreground">로키에게 말하기 · <span class="font-medium">@</span>로 팀원에게 바로 말할 수 있어요</div>
+          <div class="flex items-center gap-1">
+            <button class="icon-btn"><i data-lucide="paperclip"></i></button>
+            <button class="icon-btn"><i data-lucide="at-sign"></i></button>
+            <div class="flex-1"></div>
+            <button class="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center"><i data-lucide="arrow-up"></i></button>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 오른쪽 패널: 위임 작업 상세 -->
+  <aside class="panel absolute right-0 top-0 bottom-0 w-[420px] bg-card border-l shadow-[-16px_0_40px_-24px_rgba(0,0,0,.25)] flex flex-col z-20" id="panel-research">
+    <div class="h-12 shrink-0 border-b flex items-center gap-2.5 px-4">
+      <span class="av av-sm" style="--c:#0ea5e9"><span>🦉</span></span>
+      <div class="min-w-0">
+        <p class="text-[13.5px] font-semibold leading-4">리서치</p>
+        <p class="text-[11.5px] text-muted-foreground leading-4 truncate">경쟁사 3곳 동향·가격 정리 · 4분 12초</p>
+      </div>
+      <button class="icon-btn ml-auto" data-close-panel><i data-lucide="x"></i></button>
+    </div>
+    <div class="flex-1 overflow-y-auto scroll-thin p-4 space-y-5 text-[13px]">
+      <div>
+        <p class="eyebrow">로키가 넘긴 요청</p>
+        <div class="mt-2 rounded-xl bg-muted/70 px-3.5 py-3 leading-5">A사·B사·C사의 최근 6개월 가격 변경과 신규 기능을 표로. 출처 링크 필수. 투자사 미팅용이라 추측은 빼 줘.</div>
+      </div>
+      <div>
+        <p class="eyebrow">진행 과정</p>
+        <ol class="mt-2.5 relative pl-5 space-y-3 before:absolute before:left-[7px] before:top-1 before:bottom-1 before:w-px before:bg-border">
+          <li class="relative"><span class="absolute -left-5 top-0.5 w-[15px] h-[15px] rounded-full bg-white border flex items-center justify-center"><i data-lucide="globe" class="!w-2.5 !h-2.5"></i></span><b class="font-medium">웹 가져오기</b> <span class="text-muted-foreground">a-company.com/pricing 외 5곳</span></li>
+          <li class="relative"><span class="absolute -left-5 top-0.5 w-[15px] h-[15px] rounded-full bg-white border flex items-center justify-center"><i data-lucide="file-text" class="!w-2.5 !h-2.5"></i></span><b class="font-medium">파일 읽기</b> <span class="text-muted-foreground">지식 · projects/투자유치.md</span></li>
+          <li class="relative"><span class="absolute -left-5 top-0.5 w-[15px] h-[15px] rounded-full bg-foreground text-white flex items-center justify-center"><i data-lucide="sparkles" class="!w-2.5 !h-2.5"></i></span><b class="font-medium">질문 → 로키가 대신 답함</b>
+            <div class="mt-1.5 rounded-xl border px-3 py-2 text-[12px] leading-5">
+              <p class="text-muted-foreground">"유료 리포트 내용을 써도 되나요?"</p>
+              <p class="mt-0.5">→ 요약 인용만, 출처 표기 <span class="text-muted-foreground">(규칙: preferences.md #4)</span></p>
+            </div>
+          </li>
+          <li class="relative"><span class="absolute -left-5 top-0.5 w-[15px] h-[15px] rounded-full bg-white border flex items-center justify-center"><i data-lucide="file-pen-line" class="!w-2.5 !h-2.5"></i></span><b class="font-medium">파일 쓰기</b> <span class="text-muted-foreground">경쟁사_비교.xlsx</span></li>
+        </ol>
+      </div>
+      <div>
+        <p class="eyebrow">결과</p>
+        <div class="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 items-center rounded-2xl border bg-card px-3 py-3 shadow-sm">
+          <span class="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center"><i data-lucide="file-spreadsheet"></i></span>
+          <span class="min-w-0"><b class="block text-[13.5px] font-semibold truncate">경쟁사_비교.xlsx</b><span class="text-[12px] text-muted-foreground">시트 2개 · 18KB</span></span>
+          <span class="flex gap-1.5"><span class="w-8 h-8 rounded-full border bg-secondary flex items-center justify-center"><i data-lucide="eye" class="!w-3.5 !h-3.5"></i></span><span class="w-8 h-8 rounded-full border bg-secondary flex items-center justify-center"><i data-lucide="download" class="!w-3.5 !h-3.5"></i></span></span>
+        </div>
+        <ul class="mt-3 space-y-1.5 leading-5 text-[13px]">
+          <li class="flex gap-2"><span class="text-muted-foreground">·</span>A사는 8월에 기본 요금을 15% 올렸어요.</li>
+          <li class="flex gap-2"><span class="text-muted-foreground">·</span>B사는 9월에 우리와 같은 리포트 기능을 냈어요.</li>
+          <li class="flex gap-2"><span class="text-muted-foreground">·</span>C사는 공개된 변경이 없어요(출처 확인 불가 2건은 뺐어요).</li>
+        </ul>
+      </div>
+    </div>
+    <div class="shrink-0 border-t p-3 flex gap-2">
+      <button class="btn btn-outline btn-sm flex-1"><i data-lucide="message-circle"></i>리서치와 직접 대화</button>
+      <button class="btn btn-primary btn-sm flex-1"><i data-lucide="folder-open"></i>결과 열기</button>
+    </div>
+  </aside>
+</section>
+
+<!-- ═════════════════════════ 4. 업무 넘기기 ═════════════════════════ -->
+<section class="screen flex-col" data-screen="handover">
+  <header class="h-14 shrink-0 border-b flex items-center px-6 gap-4">
+    <div>
+      <p class="text-[15px] font-semibold leading-5">업무 넘기기</p>
+      <p class="text-[12px] text-muted-foreground leading-4">평소 하던 대로 설명해 주면, 로키가 업무 카드로 정리해요</p>
+    </div>
+    <div class="ml-auto flex items-center gap-1.5 text-[12px]" id="ho-progress">
+      <span class="chip !h-7 !bg-foreground !text-white !border-foreground"><i data-lucide="check" class="!w-3 !h-3"></i>무엇을</span>
+      <span class="chip !h-7 !bg-foreground !text-white !border-foreground"><i data-lucide="check" class="!w-3 !h-3"></i>언제</span>
+      <span class="chip !h-7 !bg-foreground !text-white !border-foreground"><i data-lucide="check" class="!w-3 !h-3"></i>결과물</span>
+      <span class="chip !h-7 !border-foreground glow">잘했다의 기준</span>
+      <span class="chip !h-7 text-muted-foreground">주의할 점</span>
+      <span class="chip !h-7 text-muted-foreground">맡길 팀원</span>
+    </div>
+  </header>
+  <div class="flex-1 flex min-h-0">
+    <!-- 인터뷰 -->
+    <div class="w-[52%] flex flex-col border-r">
+      <div class="flex-1 overflow-y-auto scroll-thin px-6 py-5 space-y-5 text-[14px] leading-6">
+        <div class="flex gap-3">
+          <div class="rocky-mark w-7 h-6 mt-0.5"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+          <p>어떤 일을 넘기고 싶으세요? 평소에 하시는 순서대로 편하게 말해 주세요.</p>
+        </div>
+        <div class="flex justify-end"><div class="max-w-[82%] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3">매주 월요일 아침에 지난주 매출이랑 광고비 정리해서 팀 채널에 올리는 거. 보통 30분 넘게 걸려.</div></div>
+        <div class="flex gap-3">
+          <div class="rocky-mark w-7 h-6 mt-0.5"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+          <div>
+            <p>월요일 아침, 매주 하는 일이군요. 결과물은 어떤 모양이면 될까요? 지난번 것이 있으면 보여 주세요.</p>
+            <div class="mt-2 flex flex-wrap gap-2"><span class="chip">표 + 3줄 요약</span><span class="chip">그래프도 포함</span><span class="chip"><i data-lucide="paperclip" class="!w-3.5 !h-3.5"></i>지난번 파일 보여주기</span></div>
+          </div>
+        </div>
+        <div class="flex justify-end"><div class="max-w-[82%] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3">이런 식으로.<div class="mt-2"><span class="chip !h-7 !bg-white/70"><i data-lucide="file-spreadsheet" class="!w-3.5 !h-3.5 text-emerald-600"></i>주간리포트_10월2주.xlsx</span></div></div></div>
+        <div class="flex gap-3">
+          <div class="rocky-mark w-7 h-6 mt-0.5"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+          <div class="flex-1">
+            <p>확인했어요. 매출·광고 시트를 합쳐서 전주 대비를 계산하고, 맨 위에 요약 3줄을 쓰시네요. 이 정도면 "잘했다"고 볼까요? 아니면 빼거나 더해 주세요.</p>
+            <div class="mt-2.5 rounded-2xl border bg-card divide-y">
+              <label class="flex items-center gap-2.5 px-3.5 py-2.5"><span class="w-4 h-4 rounded-[5px] bg-foreground text-white flex items-center justify-center"><i data-lucide="check" class="!w-3 !h-3"></i></span>숫자가 원본 시트 합계와 정확히 같다</label>
+              <label class="flex items-center gap-2.5 px-3.5 py-2.5"><span class="w-4 h-4 rounded-[5px] bg-foreground text-white flex items-center justify-center"><i data-lucide="check" class="!w-3 !h-3"></i></span>전주 대비 ±20% 넘는 항목은 이유를 단다</label>
+              <label class="flex items-center gap-2.5 px-3.5 py-2.5 text-muted-foreground"><span class="w-4 h-4 rounded-[5px] border"></span>요약은 3줄을 넘지 않는다</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="shrink-0 px-6 pb-5">
+        <div class="rounded-2xl border bg-card p-2 shadow-sm flex items-center gap-1">
+          <button class="icon-btn"><i data-lucide="paperclip"></i></button>
+          <span class="flex-1 px-1 text-[14px] text-muted-foreground">답하거나 고쳐 주세요</span>
+          <button class="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center"><i data-lucide="arrow-up"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 업무 카드 -->
+    <div class="flex-1 overflow-y-auto scroll-thin bg-muted/40 px-6 py-5">
+      <div class="rounded-2xl border bg-card shadow-sm">
+        <div class="px-5 pt-4 pb-3 border-b flex items-center gap-2">
+          <i data-lucide="briefcase-business" class="text-muted-foreground"></i>
+          <span class="eyebrow">업무 카드 · 작성 중</span>
+        </div>
+        <div class="px-5 py-4 space-y-3.5 text-[13px]">
+          <p class="text-[17px] font-semibold">주간 매출·광고비 리포트</p>
+          <div class="grid grid-cols-[88px_1fr] gap-x-3 gap-y-3 items-start">
+            <span class="text-muted-foreground pt-0.5">무엇을</span><span>지난주 매출·광고비 집계, 전주 대비 계산, 요약 3줄</span>
+            <span class="text-muted-foreground pt-0.5">언제</span><span class="flex items-center gap-1.5"><i data-lucide="calendar-clock" class="!w-3.5 !h-3.5"></i>매주 월요일 08:30</span>
+            <span class="text-muted-foreground pt-0.5">결과물</span><span>엑셀 1장 + 팀 채널 메시지 초안</span>
+            <span class="text-muted-foreground pt-1.5">잘했다의 기준</span>
+            <span class="rounded-xl border-2 border-foreground/70 px-3 py-2 glow leading-5">원본 합계와 일치 · ±20% 항목 이유 달기 <span class="text-muted-foreground">· …</span></span>
+            <span class="text-muted-foreground pt-0.5">주의할 점</span><span class="text-muted-foreground/70">아직 안 물어봤어요</span>
+          </div>
+        </div>
+        <div class="mx-5 mb-4 rounded-xl border px-3.5 py-3 flex items-center gap-3">
+          <span class="av av-md" style="--c:#8b5cf6"><span>🐙</span></span>
+          <div class="flex-1 min-w-0 text-[13px]">
+            <p class="flex items-center gap-1.5"><b class="font-semibold">데이터 분석</b><span class="tag bg-secondary">로키 추천</span></p>
+            <p class="text-[12px] text-muted-foreground">엑셀·계산 작업 12번 · 수정 없이 승인 83%</p>
+          </div>
+          <button class="btn btn-ghost btn-xs text-muted-foreground">바꾸기</button>
+        </div>
+        <div class="px-5 pb-5">
+          <p class="text-[13px] font-semibold">얼마나 맡길까요?</p>
+          <p class="text-[12px] text-muted-foreground">처음엔 초안까지만 맡기고, 기록이 쌓이면 로키가 다음 단계를 제안해요.</p>
+          <div class="mt-3 flex gap-2" id="ladder">
+            <button class="rung" data-rung="0"><span class="dots"><i class="f"></i><i></i><i></i><i></i></span><b class="block mt-2 text-[13px]">함께 하기</b><span class="text-[11.5px] text-muted-foreground leading-4 block">하는 걸 보며 배워요</span></button>
+            <button class="rung sel" data-rung="1"><span class="dots"><i class="f"></i><i class="f"></i><i></i><i></i></span><b class="block mt-2 text-[13px]">초안까지</b><span class="text-[11.5px] text-muted-foreground leading-4 block">매번 검토 후 승인</span></button>
+            <button class="rung locked" data-rung="2"><span class="dots"><i class="f"></i><i class="f"></i><i class="f"></i><i></i></span><b class="block mt-2 text-[13px] flex items-center gap-1">하고 보고<i data-lucide="lock" class="!w-3 !h-3"></i></b><span class="text-[11.5px] leading-4 block">5번 승인 후 열려요</span></button>
+            <button class="rung locked" data-rung="3"><span class="dots"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></span><b class="block mt-2 text-[13px] flex items-center gap-1">맡기기<i data-lucide="lock" class="!w-3 !h-3"></i></b><span class="text-[11.5px] leading-4 block">예외만 알려요</span></button>
+          </div>
+        </div>
+        <div class="border-t px-5 py-3.5 flex items-center gap-2">
+          <span class="text-[12px] text-muted-foreground">첫 실행 결과는 항상 먼저 보여 드려요</span>
+          <button class="btn btn-primary btn-sm ml-auto"><i data-lucide="play"></i>지난주 데이터로 한번 해보기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════════════════ 5. 팀 ═════════════════════════ -->
+<section class="screen flex-col overflow-y-auto scroll-thin" data-screen="team">
+  <div class="max-w-[1040px] w-full mx-auto px-10 pt-8 pb-10">
+    <div class="flex items-end">
+      <div>
+        <h1 class="text-2xl font-semibold">팀</h1>
+        <p class="mt-1.5 text-[14px] text-muted-foreground">로키와 함께 일하는 에이전트들이에요. 로키가 키우거나, 직접 키울 수 있어요.</p>
+      </div>
+      <button class="btn btn-primary ml-auto"><i data-lucide="plus"></i>새 에이전트</button>
+    </div>
+
+    <!-- 로키 -->
+    <div class="mt-6 rounded-2xl bg-[#0a0a0a] text-white p-5 flex items-center gap-4">
+      <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center shrink-0"><img src="../../../web/public/Rocky_logo_mark.svg" class="w-9 h-9 object-contain float" alt="" /></div>
+      <div class="flex-1 min-w-0">
+        <p class="flex items-center gap-2"><b class="text-[16px] font-semibold">로키</b><span class="tag bg-white/12 text-white/80">총괄 비서</span></p>
+        <p class="mt-0.5 text-[13px] text-white/60">당신의 지식을 관리하고, 일을 나눠 맡기고, 팀원을 키워요.</p>
+      </div>
+      <div class="flex items-center gap-6 text-[12px] text-white/60 pr-2">
+        <div><p class="text-[18px] font-semibold text-white">14</p>지식 파일</div>
+        <div><p class="text-[18px] font-semibold text-white">4</p>팀원</div>
+        <div><p class="text-[18px] font-semibold text-white">3</p>맡은 업무</div>
+      </div>
+      <span class="chip !bg-white/8 !border-white/15 !text-white/80"><span class="pg w-5 h-5 !rounded-md !bg-white" data-glyph="openai"></span>gpt-5.4</span>
+    </div>
+
+    <div class="mt-4 grid grid-cols-3 gap-4">
+      <!-- 리서치 -->
+      <button class="text-left rounded-2xl border p-4 tint-card lift flex flex-col" style="--c:#0ea5e9" data-go="agent">
+        <div class="flex items-start justify-between">
+          <span class="av av-lg" style="--c:#0ea5e9"><span>🦉</span></span>
+          <span class="flex flex-col items-end gap-1">
+            <span class="tag border bg-white"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>방금 완료</span>
+            <span class="tag border bg-white text-muted-foreground"><i data-lucide="sprout" class="!w-3 !h-3"></i>로키와 함께</span>
+          </span>
+        </div>
+        <p class="mt-3 text-[14px] font-semibold">리서치</p>
+        <p class="text-[12.5px] text-muted-foreground">자료 조사·비교 정리. 출처를 꼭 붙여요.</p>
+        <div class="mt-3 pt-3 border-t border-black/5 space-y-2 text-[12px]">
+          <p class="flex items-center gap-2"><span class="pg w-5 h-5 !rounded-md" data-glyph="anthropic"></span>Claude Sonnet 5.5 <span class="text-muted-foreground">· Anthropic API</span></p>
+          <p class="flex items-center gap-2"><span class="dots"><i class="f"></i><i class="f"></i><i class="f"></i><i></i></span>경쟁사 동향 모니터링 <span class="text-muted-foreground">· 하고 보고</span></p>
+        </div>
+      </button>
+      <!-- 데이터 분석 -->
+      <button class="text-left rounded-2xl border p-4 tint-card lift flex flex-col" style="--c:#8b5cf6" data-go="agent">
+        <div class="flex items-start justify-between">
+          <span class="av av-lg" style="--c:#8b5cf6"><span>🐙</span></span>
+          <span class="flex flex-col items-end gap-1">
+            <span class="tag border border-amber-500/30 bg-amber-50 text-amber-700">결정 기다림</span>
+            <span class="tag border bg-white text-muted-foreground"><i data-lucide="sprout" class="!w-3 !h-3"></i>로키와 함께</span>
+          </span>
+        </div>
+        <p class="mt-3 text-[14px] font-semibold">데이터 분석</p>
+        <p class="text-[12.5px] text-muted-foreground">엑셀·지표 정리와 그래프.</p>
+        <div class="mt-3 pt-3 border-t border-black/5 space-y-2 text-[12px]">
+          <p class="flex items-center gap-2"><span class="pg w-5 h-5 !rounded-md" data-glyph="openai"></span>gpt-5.4 <span class="text-muted-foreground">· ChatGPT Pro</span></p>
+          <p class="flex items-center gap-2"><span class="dots"><i class="f"></i><i class="f"></i><i></i><i></i></span>주간 매출·광고비 리포트 <span class="text-muted-foreground">· 초안까지</span></p>
+        </div>
+      </button>
+      <!-- 글쓰기 -->
+      <button class="text-left rounded-2xl border p-4 tint-card lift flex flex-col" style="--c:#f97316">
+        <div class="flex items-start justify-between">
+          <span class="av av-lg" style="--c:#f97316"><span>🦊</span></span>
+          <span class="flex flex-col items-end gap-1">
+            <span class="tag border bg-white text-muted-foreground"><i data-lucide="pencil" class="!w-3 !h-3"></i>직접 키우는 중</span>
+          </span>
+        </div>
+        <p class="mt-3 text-[14px] font-semibold">글쓰기</p>
+        <p class="text-[12.5px] text-muted-foreground">보도자료·메일·뉴스레터 초안. 내 말투로.</p>
+        <div class="mt-3 pt-3 border-t border-black/5 space-y-2 text-[12px]">
+          <p class="flex items-center gap-2"><span class="pg w-5 h-5 !rounded-md" data-glyph="openai"></span>gpt-5.4-mini <span class="text-muted-foreground">· ChatGPT Pro</span></p>
+          <p class="flex items-center gap-2"><span class="dots"><i class="f"></i><i class="f"></i><i></i><i></i></span>월간 뉴스레터 <span class="text-muted-foreground">· 초안까지</span></p>
+        </div>
+      </button>
+      <!-- 개인 기록 (로컬) -->
+      <button class="text-left rounded-2xl border p-4 tint-card lift flex flex-col" style="--c:#10b981">
+        <div class="flex items-start justify-between">
+          <span class="av av-lg" style="--c:#10b981"><span>🐢</span></span>
+          <span class="flex flex-col items-end gap-1">
+            <span class="tag border border-emerald-200 bg-emerald-50 text-emerald-700"><i data-lucide="lock" class="!w-3 !h-3"></i>로컬 전용</span>
+            <span class="tag border bg-white text-muted-foreground"><i data-lucide="pencil" class="!w-3 !h-3"></i>직접 키우는 중</span>
+          </span>
+        </div>
+        <p class="mt-3 text-[14px] font-semibold">개인 기록</p>
+        <p class="text-[12.5px] text-muted-foreground">가계부·건강 기록. 밖으로 안 나가요.</p>
+        <div class="mt-3 pt-3 border-t border-black/5 space-y-2 text-[12px]">
+          <p class="flex items-center gap-2"><span class="pg w-5 h-5 !rounded-md" data-glyph="ollama"></span>qwen3:14b <span class="text-muted-foreground">· 내 컴퓨터</span></p>
+          <p class="flex items-center gap-2"><span class="dots"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></span>가계부 월말 정리 <span class="text-muted-foreground">· 맡기기</span></p>
+        </div>
+      </button>
+      <!-- 로키 제안 -->
+      <div class="rounded-2xl border-2 border-dashed border-border bg-muted/30 p-4 flex flex-col">
+        <div class="flex items-center gap-2 text-[12px] font-medium text-muted-foreground"><i data-lucide="sparkles" class="!w-3.5 !h-3.5"></i>로키의 제안</div>
+        <div class="mt-3 flex items-center gap-3">
+          <span class="av av-md opacity-70" style="--c:#ec4899"><span>🦋</span></span>
+          <div><p class="text-[14px] font-semibold">일정·메일 비서</p><p class="text-[12px] text-muted-foreground">최근 2주간 일정 조율 요청 9번</p></div>
+        </div>
+        <p class="mt-3 text-[12.5px] leading-5 text-muted-foreground">지금은 로키가 직접 하고 있는데, 따로 두면 메일 말투와 일정 규칙을 더 잘 배워요.</p>
+        <div class="mt-auto pt-3 flex gap-2"><button class="btn btn-outline btn-xs">설계안 보기</button><button class="btn btn-ghost btn-xs text-muted-foreground">괜찮아요</button></div>
+      </div>
+      <!-- 새로 만들기 -->
+      <button class="rounded-2xl border-2 border-dashed border-border/70 bg-muted/30 hover:bg-muted/60 hover:border-primary/40 p-4 flex flex-col items-center justify-center gap-2 text-center min-h-[200px]">
+        <span class="w-10 h-10 rounded-xl bg-background border flex items-center justify-center"><i data-lucide="plus"></i></span>
+        <span class="text-[13.5px] font-semibold">직접 만들기</span>
+        <span class="text-[12px] text-muted-foreground">역할만 말해 주면 로키가 초안을 잡아 드려요</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════════════════ 6. 에이전트 키우기 ═════════════════════════ -->
+<section class="screen flex-col" data-screen="agent">
+  <div class="shrink-0 border-b px-8 pt-5 pb-4">
+    <button class="text-[12px] text-muted-foreground flex items-center gap-1 hover:text-foreground" data-go="team"><i data-lucide="chevron-left" class="!w-3.5 !h-3.5"></i>팀</button>
+    <div class="mt-3 flex items-center gap-4">
+      <span class="av av-xl" style="--c:#8b5cf6"><span>🐙</span></span>
+      <div class="flex-1 min-w-0">
+        <p class="flex items-center gap-2"><b class="text-2xl font-semibold">데이터 분석</b><span class="tag bg-secondary">v7</span></p>
+        <p class="mt-1 text-[13.5px] text-muted-foreground">엑셀·지표 정리와 그래프 · 함께한 지 5주 · 작업 31번</p>
+      </div>
+      <div class="flex flex-col items-end gap-1.5">
+        <div class="seg" id="tune-seg">
+          <button class="on" data-tune="rocky"><i data-lucide="sprout" class="!w-3.5 !h-3.5"></i>로키와 함께 키우기</button>
+          <button data-tune="manual"><i data-lucide="pencil" class="!w-3.5 !h-3.5"></i>직접 키우기</button>
+        </div>
+        <p class="text-[11.5px] text-muted-foreground" id="tune-help">로키가 기록을 보고 개선안을 제안해요. 적용은 항상 당신이 해요.</p>
+      </div>
+      <button class="btn btn-primary ml-2"><i data-lucide="message-circle"></i>대화하기</button>
+    </div>
+    <div class="mt-4 tabs">
+      <button class="on">지침</button><button>도구</button><button>모델</button><button>지식</button><button>업무</button><button>성장 기록</button>
+    </div>
+  </div>
+  <div class="flex-1 flex min-h-0">
+    <div class="flex-1 overflow-y-auto scroll-thin px-8 py-5 space-y-4">
+      <!-- 로키 제안 (로키와 함께 모드) -->
+      <div class="rounded-2xl border border-foreground/15 bg-card shadow-sm" id="proposal-card">
+        <div class="px-4 pt-4 flex items-center gap-2">
+          <div class="rocky-mark w-7 h-6"><img src="../../../web/public/Rocky_logo_mark.svg" alt="" /></div>
+          <b class="text-[14px] font-semibold">로키의 개선 제안</b>
+          <span class="text-[12px] text-muted-foreground">최근 3번 고쳐 주신 걸 보고 배웠어요</span>
+        </div>
+        <div class="mx-4 mt-3 rounded-xl border overflow-hidden text-[12.5px] leading-7">
+          <div class="px-3 text-muted-foreground bg-muted/50">## 숫자 표기</div>
+          <div class="px-3 diff-del">- 금액은 원 단위 그대로 쓴다.</div>
+          <div class="px-3 diff-add">+ 금액은 "억·만 원" 단위로 쓰고, 소수점 첫째 자리까지.</div>
+          <div class="px-3 text-muted-foreground bg-muted/50">## 그래프</div>
+          <div class="px-3 diff-add">+ 기간 추이는 막대 대신 선 그래프. 축 제목은 항상 단다.</div>
+        </div>
+        <div class="px-4 py-3.5 flex items-center gap-2">
+          <span class="text-[12px] text-muted-foreground">근거: 10/14, 10/16, 10/20 작업에서 직접 수정</span>
+          <button class="btn btn-ghost btn-sm ml-auto text-muted-foreground">보류</button>
+          <button class="btn btn-outline btn-sm">고쳐서 적용</button>
+          <button class="btn btn-primary btn-sm">v8로 적용</button>
+        </div>
+      </div>
+      <!-- 직접 모드 안내 -->
+      <div class="rounded-2xl border border-dashed bg-muted/30 px-4 py-3.5 items-center gap-3 hidden" id="manual-note">
+        <i data-lucide="pencil" class="text-muted-foreground"></i>
+        <p class="text-[13px] text-muted-foreground flex-1">직접 키우는 중이에요. 로키는 먼저 제안하지 않아요.</p>
+        <button class="btn btn-outline btn-sm"><i data-lucide="sparkles"></i>로키 의견 듣기</button>
+      </div>
+
+      <!-- 지침 편집 -->
+      <div class="rounded-2xl border bg-card">
+        <div class="px-4 py-3 border-b flex items-center gap-2">
+          <b class="text-[13.5px] font-semibold">지침</b>
+          <span class="text-[12px] text-muted-foreground">v7 · 3일 전 로키가 고침 (승인함)</span>
+          <button class="ml-auto btn btn-ghost btn-xs text-muted-foreground"><i data-lucide="history" class="!w-3.5 !h-3.5"></i>버전 기록</button>
+        </div>
+        <div class="px-5 py-4 text-[13px] leading-6 text-foreground/85 whitespace-pre-line"># 역할
+너는 운영팀의 데이터 분석 담당이야. 엑셀과 CSV를 정리하고, 지표를 계산하고, 그래프로 보여 준다.
+
+## 작업 원칙
+- 원본 파일은 절대 덮어쓰지 않는다. 결과는 outputs/에 새 파일로.
+- 계산 근거(수식, 사용한 시트)를 결과 맨 아래에 남긴다.
+- 기준이 애매하면 추측하지 말고 묻는다.
+
+## 숫자 표기
+- 금액은 원 단위 그대로 쓴다.</div>
+      </div>
+    </div>
+
+    <!-- 요약 열 -->
+    <aside class="w-[340px] shrink-0 border-l overflow-y-auto scroll-thin p-5 space-y-4 text-[13px] bg-muted/30">
+      <div class="rounded-2xl border bg-card p-4">
+        <p class="eyebrow">모델</p>
+        <div class="mt-2.5 flex items-center gap-2.5"><span class="pg w-8 h-8" data-glyph="openai"></span><div><b class="font-semibold">gpt-5.4</b><p class="text-[12px] text-muted-foreground">ChatGPT Pro · 깊게 생각</p></div></div>
+        <div class="mt-2.5 flex items-center gap-2.5 text-[12px] text-muted-foreground"><span class="pg w-6 h-6" data-glyph="ollama"></span>대체: qwen3:14b (구독 한도에 닿으면)</div>
+      </div>
+      <div class="rounded-2xl border bg-card p-4">
+        <p class="eyebrow">도구</p>
+        <ul class="mt-2.5 space-y-2.5">
+          <li class="flex items-center gap-2.5"><i data-lucide="file-text" class="text-muted-foreground"></i><span class="flex-1">파일 읽기</span><span class="tag bg-secondary text-muted-foreground">읽기</span><span class="text-[12px] text-muted-foreground w-12 text-right">자동</span></li>
+          <li class="flex items-center gap-2.5"><i data-lucide="file-pen-line" class="text-muted-foreground"></i><span class="flex-1">파일 쓰기</span><span class="tag bg-sky-50 text-sky-700">쓰기</span><span class="text-[12px] text-muted-foreground w-12 text-right">자동</span></li>
+          <li class="flex items-center gap-2.5"><i data-lucide="terminal" class="text-muted-foreground"></i><span class="flex-1">셸 실행</span><span class="tag bg-amber-50 text-amber-700">실행</span><span class="text-[12px] font-medium w-12 text-right">물어보기</span></li>
+          <li class="flex items-center gap-2.5"><i data-lucide="globe" class="text-muted-foreground"></i><span class="flex-1">웹 가져오기</span><span class="tag bg-secondary text-muted-foreground">읽기</span><span class="text-[12px] text-muted-foreground w-12 text-right">끔</span></li>
+        </ul>
+      </div>
+      <div class="rounded-2xl border bg-card p-4">
+        <p class="eyebrow">볼 수 있는 지식</p>
+        <div class="mt-2.5 flex flex-wrap gap-1.5">
+          <span class="chip !h-7"><i data-lucide="book-open" class="!w-3.5 !h-3.5"></i>preferences.md</span>
+          <span class="chip !h-7"><i data-lucide="book-open" class="!w-3.5 !h-3.5"></i>projects/투자유치.md</span>
+          <span class="chip !h-7 !border-dashed text-muted-foreground"><i data-lucide="plus" class="!w-3.5 !h-3.5"></i>추가</span>
+        </div>
+      </div>
+      <div class="rounded-2xl border bg-card p-4">
+        <p class="eyebrow">맡은 업무</p>
+        <div class="mt-2.5 flex items-center gap-2"><span class="dots"><i class="f"></i><i class="f"></i><i></i><i></i></span><b class="font-medium">주간 매출·광고비 리포트</b></div>
+        <p class="mt-1 text-[12px] text-muted-foreground">초안까지 · 연속 승인 4/5</p>
+        <div class="mt-2 h-1.5 rounded-full bg-muted overflow-hidden"><div class="h-full w-4/5 bg-primary rounded-full"></div></div>
+        <p class="mt-2 text-[11.5px] text-muted-foreground">한 번 더 수정 없이 승인되면 "하고 보고"를 제안해요</p>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ═════════════════════════ 7. 연결 ═════════════════════════ -->
+<section class="screen flex-col overflow-y-auto scroll-thin" data-screen="connections">
+  <div class="max-w-[960px] w-full mx-auto px-10 pt-8 pb-10">
+    <h1 class="text-2xl font-semibold">연결</h1>
+    <p class="mt-1.5 text-[14px] text-muted-foreground">로키와 팀원이 생각할 때 쓰는 모델이에요. 하나만 있어도 시작할 수 있어요.</p>
+
+    <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="badge-check" class="text-muted-foreground"></i>구독으로 연결</p>
+    <div class="mt-2.5 grid grid-cols-2 gap-3">
+      <div class="rounded-2xl border bg-card p-4">
+        <div class="flex items-center gap-3">
+          <span class="pg w-10 h-10 !rounded-xl" data-glyph="openai"></span>
+          <div class="flex-1"><b class="text-[14px] font-semibold">ChatGPT</b><p class="text-[12px] text-muted-foreground">Pro 플랜 · Sign in with ChatGPT</p></div>
+          <span class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700"><span class="neon-dot" data-status="active"></span>연결됨</span>
+        </div>
+        <div class="mt-3.5 space-y-2 text-[11px]">
+          <div class="flex items-center gap-2"><span class="w-6 font-semibold text-muted-foreground">5H</span><div class="flex-1 h-1 rounded-full bg-muted overflow-hidden"><div class="h-full w-[62%] bg-green-500 rounded-full"></div></div><span class="w-[120px] text-muted-foreground text-right">62% 남음 · 3시간 12분</span></div>
+          <div class="flex items-center gap-2"><span class="w-6 font-semibold text-muted-foreground">7D</span><div class="flex-1 h-1 rounded-full bg-muted overflow-hidden"><div class="h-full w-[81%] bg-green-500 rounded-full"></div></div><span class="w-[120px] text-muted-foreground text-right">81% 남음 · 4일</span></div>
+        </div>
+        <p class="mt-3 text-[11.5px] text-muted-foreground">앱별 사용 상한은 ChatGPT 설정에서 정할 수 있어요.</p>
+      </div>
+      <div class="rounded-2xl border bg-card p-4">
+        <div class="flex items-center gap-3">
+          <span class="pg w-10 h-10 !rounded-xl" data-glyph="anthropic"></span>
+          <div class="flex-1"><b class="text-[14px] font-semibold">Claude</b><p class="text-[12px] text-muted-foreground">Pro · Max 구독</p></div>
+          <span class="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground"><span class="neon-dot" data-status="off"></span>연결 불가</span>
+        </div>
+        <div class="mt-3 rounded-xl bg-muted/70 px-3 py-2.5 text-[12px] leading-5">
+          Anthropic 정책상 다른 앱에서는 Claude 구독으로 로그인할 수 없어요. <b class="font-semibold">Max·Team 플랜이면 매달 API 크레딧</b>이 들어 있으니 API 키로 연결해 보세요.
+        </div>
+        <div class="mt-3 flex gap-2"><button class="btn btn-outline btn-xs"><i data-lucide="key-round" class="!w-3.5 !h-3.5"></i>API 키로 연결</button><button class="btn btn-ghost btn-xs text-muted-foreground">크레딧 받는 법<i data-lucide="external-link" class="!w-3 !h-3"></i></button></div>
+      </div>
+    </div>
+
+    <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="key-round" class="text-muted-foreground"></i>API 키로 연결</p>
+    <div class="mt-2.5 rounded-2xl border bg-card divide-y">
+      <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8" data-glyph="anthropic"></span><div class="flex-1"><b class="text-[13.5px] font-semibold">Anthropic</b><p class="text-[12px] text-muted-foreground">sk-ant-…7Qx · 이번 달 $12.40</p></div><span class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700"><span class="neon-dot" data-status="active"></span>연결됨</span><button class="icon-btn"><i data-lucide="ellipsis"></i></button></div>
+      <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8" data-glyph="openai"></span><div class="flex-1"><b class="text-[13.5px] font-semibold">OpenAI</b><p class="text-[12px] text-muted-foreground">API 키로 쓴 만큼 내요</p></div><button class="btn btn-outline btn-xs">키 입력</button></div>
+      <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8 text-[11px] font-bold">G</span><div class="flex-1"><b class="text-[13.5px] font-semibold">Google Gemini</b><p class="text-[12px] text-muted-foreground">AI Studio 키</p></div><button class="btn btn-outline btn-xs">키 입력</button></div>
+      <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8 text-[10px] font-bold">OR</span><div class="flex-1"><b class="text-[13.5px] font-semibold">OpenRouter</b><p class="text-[12px] text-muted-foreground">여러 오픈 모델을 키 하나로</p></div><button class="btn btn-outline btn-xs">로그인</button></div>
+    </div>
+
+    <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="hard-drive" class="text-muted-foreground"></i>내 컴퓨터의 모델</p>
+    <div class="mt-2.5 rounded-2xl border bg-card divide-y">
+      <div class="px-4 py-3">
+        <div class="flex items-center gap-3"><span class="pg w-8 h-8" data-glyph="ollama"></span><div class="flex-1"><b class="text-[13.5px] font-semibold">Ollama</b><p class="text-[12px] text-muted-foreground">127.0.0.1:11434 · 자동으로 찾았어요</p></div><span class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700"><span class="neon-dot" data-status="active"></span>연결됨</span></div>
+        <div class="mt-2.5 ml-11 flex flex-wrap gap-1.5">
+          <span class="chip !h-7">qwen3:14b<span class="tag bg-emerald-50 text-emerald-700 !h-[18px]">도구 지원</span></span>
+          <span class="chip !h-7">gemma3:12b<span class="tag bg-emerald-50 text-emerald-700 !h-[18px]">도구 지원</span></span>
+          <span class="chip !h-7 text-muted-foreground">llama3.2:3b<span class="tag bg-secondary !h-[18px]">대화 전용</span></span>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8 text-[10px] font-bold">LM</span><div class="flex-1"><b class="text-[13.5px] font-semibold">LM Studio</b><p class="text-[12px] text-muted-foreground">127.0.0.1:1234 · 실행 중이 아니에요</p></div><span class="flex items-center gap-1.5 text-[12px] text-muted-foreground"><span class="neon-dot" data-status="off"></span>찾지 못함</span></div>
+      <div class="flex items-center gap-3 px-4 py-3"><span class="w-8 h-8 rounded-[10px] border border-dashed flex items-center justify-center"><i data-lucide="plus" class="!w-4 !h-4 text-muted-foreground"></i></span><div class="flex-1"><b class="text-[13.5px] font-semibold">직접 추가</b><p class="text-[12px] text-muted-foreground">vLLM 등 OpenAI 호환 주소</p></div><button class="btn btn-outline btn-xs">주소 입력</button></div>
+    </div>
+
+    <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="sliders-horizontal" class="text-muted-foreground"></i>모델 역할 <span class="font-normal text-muted-foreground">· 로키가 팀원 모델을 추천할 때 이 기준을 써요</span></p>
+    <div class="mt-2.5 grid grid-cols-4 gap-3">
+      <div class="rounded-2xl border bg-card p-3.5"><p class="text-[12px] text-muted-foreground flex items-center gap-1.5"><i data-lucide="brain" class="!w-3.5 !h-3.5"></i>깊게 생각</p><p class="mt-2 flex items-center gap-2 text-[13px] font-medium"><span class="pg w-5 h-5 !rounded-md" data-glyph="openai"></span>gpt-5.4</p></div>
+      <div class="rounded-2xl border bg-card p-3.5"><p class="text-[12px] text-muted-foreground flex items-center gap-1.5"><i data-lucide="scale" class="!w-3.5 !h-3.5"></i>균형</p><p class="mt-2 flex items-center gap-2 text-[13px] font-medium"><span class="pg w-5 h-5 !rounded-md" data-glyph="anthropic"></span>Claude Sonnet 5.5</p></div>
+      <div class="rounded-2xl border bg-card p-3.5"><p class="text-[12px] text-muted-foreground flex items-center gap-1.5"><i data-lucide="zap" class="!w-3.5 !h-3.5"></i>빠르게</p><p class="mt-2 flex items-center gap-2 text-[13px] font-medium"><span class="pg w-5 h-5 !rounded-md" data-glyph="openai"></span>gpt-5.4-mini</p></div>
+      <div class="rounded-2xl border bg-card p-3.5"><p class="text-[12px] text-muted-foreground flex items-center gap-1.5"><i data-lucide="lock" class="!w-3.5 !h-3.5"></i>로컬 전용</p><p class="mt-2 flex items-center gap-2 text-[13px] font-medium"><span class="pg w-5 h-5 !rounded-md" data-glyph="ollama"></span>qwen3:14b</p></div>
+    </div>
+  </div>
+</section>
+
+        </div><!-- /screens -->
+
+        <!-- ── 결정함 시트 (어느 화면에서든 튀어나옴) ── -->
+        <div class="scrim absolute inset-0 bg-black/20 z-30" id="scrim" data-close-sheet></div>
+        <aside class="panel absolute right-0 top-0 bottom-0 w-[460px] bg-background border-l shadow-2xl z-40 flex flex-col" id="sheet">
+          <div class="shrink-0 px-5 pt-4 pb-3 border-b">
+            <div class="flex items-center gap-2">
+              <i data-lucide="inbox"></i><b class="text-[16px] font-semibold">결정함</b>
+              <button class="icon-btn ml-auto" data-close-sheet><i data-lucide="x"></i></button>
+            </div>
+            <p class="mt-1 text-[12.5px] text-muted-foreground">AI가 정할 수 없는 것만 모았어요. 대부분 로키 추천대로 누르면 돼요.</p>
+            <div class="mt-3 tabs" id="sheet-tabs">
+              <button class="on" data-tab="need">결정 필요 <span id="need-count">3</span></button>
+              <button data-tab="report">보고 4</button>
+              <button data-tab="proxy">로키가 대신 답함 2</button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-y-auto scroll-thin p-4 space-y-3 text-[13px]">
+            <!-- 결정 필요 -->
+            <div data-tabpane="need" class="space-y-3">
+              <div class="rounded-2xl border border-foreground/15 bg-card shadow-sm p-4 dc">
+                <div class="flex items-center gap-2 text-[11.5px]">
+                  <span class="tag bg-red-50 text-red-700 border border-red-200"><span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>작업이 멈춰 있어요</span>
+                  <span class="text-muted-foreground flex items-center gap-1"><span class="av !w-4 !h-4 !text-[10px] !rounded-[5px]" style="--c:#8b5cf6"><span>🐙</span></span>데이터 분석 · 투자사 미팅 준비</span>
+                </div>
+                <p class="mt-2 text-[14px] font-semibold leading-5">3분기 매출에 7월 일회성 매출(2.1억)을 포함할까요?</p>
+                <p class="mt-1 text-[12.5px] leading-5 text-muted-foreground">지난 미팅 자료엔 포함, 투자사 자료에선 보통 제외. 지식에 기준이 없어요.</p>
+                <div class="mt-3 flex flex-wrap gap-2"><button class="opt rec !min-h-8 !text-[12.5px]" data-resolve-sheet>제외하고 각주로<span class="rec-tag">추천</span></button><button class="opt !min-h-8 !text-[12.5px]" data-resolve-sheet>포함</button></div>
+              </div>
+              <div class="rounded-2xl border bg-card p-4 dc">
+                <div class="flex items-center gap-2 text-[11.5px]">
+                  <span class="tag bg-amber-50 text-amber-700 border border-amber-200"><i data-lucide="terminal" class="!w-3 !h-3"></i>권한</span>
+                  <span class="text-muted-foreground flex items-center gap-1"><span class="av !w-4 !h-4 !text-[10px] !rounded-[5px]" style="--c:#0ea5e9"><span>🦉</span></span>리서치 · 경쟁사 동향 모니터링</span>
+                </div>
+                <p class="mt-2 text-[14px] font-semibold leading-5">프로그램을 설치하려고 해요</p>
+                <div class="mt-2 rounded-xl bg-slate-950 text-slate-100 font-mono text-[12px] px-3 py-2">pip install yfinance</div>
+                <p class="mt-2 text-[12.5px] leading-5 text-muted-foreground">주가 데이터를 받으려면 필요해요. 리서치 작업 폴더 안에만 설치돼요.</p>
+                <div class="mt-3 flex flex-wrap gap-2"><button class="opt rec !min-h-8 !text-[12.5px]" data-resolve-sheet>이번만 허용<span class="rec-tag">추천</span></button><button class="opt !min-h-8 !text-[12.5px]" data-resolve-sheet>리서치는 항상 허용</button><button class="opt !min-h-8 !text-[12.5px] text-muted-foreground" data-resolve-sheet>거절</button></div>
+              </div>
+              <div class="rounded-2xl border bg-card p-4 dc">
+                <div class="flex items-center gap-2 text-[11.5px]">
+                  <span class="tag bg-secondary border"><i data-lucide="sparkles" class="!w-3 !h-3"></i>로키 제안</span>
+                  <span class="text-muted-foreground">위임 단계</span>
+                </div>
+                <p class="mt-2 text-[14px] font-semibold leading-5">경쟁사 동향 모니터링을 "맡기기"로 올릴까요?</p>
+                <div class="mt-2.5 flex items-center gap-2 text-[12px]">
+                  <span class="chip !h-7"><span class="dots"><i class="f"></i><i class="f"></i><i class="f"></i><i></i></span>하고 보고</span>
+                  <i data-lucide="arrow-right" class="!w-3.5 !h-3.5 text-muted-foreground"></i>
+                  <span class="chip !h-7 !border-foreground"><span class="dots"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></span>맡기기</span>
+                </div>
+                <p class="mt-2 text-[12.5px] leading-5 text-muted-foreground">6주 동안 보고를 한 번도 고치지 않으셨어요. 올리면 예외가 있을 때만 알려 드려요.</p>
+                <div class="mt-3 flex flex-wrap gap-2"><button class="opt rec !min-h-8 !text-[12.5px]" data-resolve-sheet>올리기</button><button class="opt !min-h-8 !text-[12.5px]" data-resolve-sheet>아직은</button></div>
+              </div>
+            </div>
+            <!-- 보고 -->
+            <div data-tabpane="report" class="space-y-2 hidden">
+              <div class="rounded-2xl border bg-card px-4 py-3 flex items-center gap-3"><span class="av av-sm" style="--c:#0ea5e9"><span>🦉</span></span><div class="flex-1"><b class="font-medium">경쟁사 비교표 완성</b><p class="text-[12px] text-muted-foreground">투자사 미팅 준비 · 14분 전</p></div><i data-lucide="chevron-right" class="text-muted-foreground"></i></div>
+              <div class="rounded-2xl border bg-card px-4 py-3 flex items-center gap-3"><span class="av av-sm" style="--c:#10b981"><span>🐢</span></span><div class="flex-1"><b class="font-medium">10월 가계부 정리 완료</b><p class="text-[12px] text-muted-foreground">맡기기 · 어제</p></div><i data-lucide="chevron-right" class="text-muted-foreground"></i></div>
+              <div class="rounded-2xl border bg-card px-4 py-3 flex items-center gap-3"><span class="av av-sm" style="--c:#0ea5e9"><span>🦉</span></span><div class="flex-1"><b class="font-medium">B사 신규 기능 출시 감지</b><p class="text-[12px] text-muted-foreground">하고 보고 · 어제</p></div><i data-lucide="chevron-right" class="text-muted-foreground"></i></div>
+              <div class="rounded-2xl border bg-card px-4 py-3 flex items-center gap-3"><span class="av av-sm" style="--c:#8b5cf6"><span>🐙</span></span><div class="flex-1"><b class="font-medium">주간 리포트 초안 승인됨</b><p class="text-[12px] text-muted-foreground">월요일 08:42</p></div><i data-lucide="chevron-right" class="text-muted-foreground"></i></div>
+            </div>
+            <!-- 대신 답함 -->
+            <div data-tabpane="proxy" class="space-y-2 hidden">
+              <p class="text-[12px] text-muted-foreground px-1">팀원이 물었지만 로키가 지식으로 답한 것들이에요. 틀렸으면 고쳐 주세요. 로키가 배워요.</p>
+              <div class="rounded-2xl border bg-card p-4">
+                <p class="text-[12px] text-muted-foreground flex items-center gap-1"><span class="av !w-4 !h-4 !text-[10px] !rounded-[5px]" style="--c:#0ea5e9"><span>🦉</span></span>리서치가 물음 · 20분 전</p>
+                <p class="mt-1.5 font-medium">"유료 리포트 내용을 써도 되나요?"</p>
+                <p class="mt-1">→ 요약 인용만, 출처 표기</p>
+                <p class="mt-1 text-[12px] text-muted-foreground">근거: preferences.md #4 "유료 자료는 요약만"</p>
+                <div class="mt-2.5 flex gap-2"><button class="btn btn-ghost btn-xs !px-2 text-muted-foreground"><i data-lucide="check" class="!w-3.5 !h-3.5"></i>맞아요</button><button class="btn btn-outline btn-xs">답 바꾸기</button></div>
+              </div>
+              <div class="rounded-2xl border bg-card p-4">
+                <p class="text-[12px] text-muted-foreground flex items-center gap-1"><span class="av !w-4 !h-4 !text-[10px] !rounded-[5px]" style="--c:#8b5cf6"><span>🐙</span></span>데이터 분석이 물음 · 어제</p>
+                <p class="mt-1.5 font-medium">"광고비에 부가세를 포함하나요?"</p>
+                <p class="mt-1">→ 제외 (공급가 기준)</p>
+                <p class="mt-1 text-[12px] text-muted-foreground">근거: 9/30 결정에서 정한 규칙</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 토스트 -->
+        <div id="toast-host" class="absolute top-[56px] right-5 z-50"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 설계 메모 -->
+<div id="notes" class="fixed left-4 bottom-4 w-[330px] rounded-2xl bg-[#0a0a0a]/92 text-white shadow-2xl backdrop-blur p-4 z-[100]">
+  <p class="text-[11px] uppercase tracking-[0.18em] text-white/45 font-semibold">설계 메모</p>
+  <p id="notes-title" class="mt-1 text-[14px] font-semibold"></p>
+  <ul id="notes-list" class="mt-2 space-y-1.5 text-[12.5px] leading-5 text-white/80"></ul>
+</div>
+
+<template id="toast-tpl">
+  <div class="toast w-[340px] rounded-2xl border border-foreground/10 bg-card px-4 py-3 shadow-[0_18px_48px_-12px_rgba(0,0,0,0.25)] flex gap-3">
+    <span class="av av-md" style="--c:#0ea5e9"><span>🦉</span></span>
+    <div class="flex-1 min-w-0">
+      <p class="text-[13.5px] font-semibold">리서치가 끝났어요</p>
+      <p class="text-[12px] leading-5 text-muted-foreground">경쟁사 비교표가 준비됐어요. 로키가 구성안에 넣는 중이에요.</p>
+      <button class="mt-2 btn btn-primary btn-xs" data-panel="research">결과 보기</button>
+    </div>
+    <button class="icon-btn !w-6 !h-6 -mr-1 -mt-0.5" data-dismiss><i data-lucide="x" class="!w-3.5 !h-3.5"></i></button>
+  </div>
+</template>
+
+<script>
+  // ── 공급자 글리프 (web/src/domains/codex/components/provider-glyph.tsx 그대로) ──
+  const GLYPHS = {
+    openai: '<svg viewBox="146 227 268 266" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M249.176 323.434V298.276C249.176 296.158 249.971 294.569 251.825 293.509L302.406 264.381C309.29 260.409 317.5 258.555 325.973 258.555C357.75 258.555 377.877 283.185 377.877 309.399C377.877 311.253 377.877 313.371 377.611 315.49L325.178 284.771C322.001 282.919 318.822 282.919 315.645 284.771L249.176 323.434ZM367.283 421.415V361.301C367.283 357.592 365.694 354.945 362.516 353.092L296.048 314.43L317.763 301.982C319.617 300.925 321.206 300.925 323.058 301.982L373.639 331.112C388.205 339.586 398.003 357.592 398.003 375.069C398.003 395.195 386.087 413.733 367.283 421.412V421.415ZM233.553 368.452L211.838 355.742C209.986 354.684 209.19 353.095 209.19 350.975V292.718C209.19 264.383 230.905 242.932 260.301 242.932C271.423 242.932 281.748 246.641 290.49 253.26L238.321 283.449C235.146 285.303 233.555 287.951 233.555 291.659V368.455L233.553 368.452ZM280.292 395.462L249.176 377.985V340.913L280.292 323.436L311.407 340.913V377.985L280.292 395.462ZM300.286 475.968C289.163 475.968 278.837 472.259 270.097 465.64L322.264 435.449C325.441 433.597 327.03 430.949 327.03 427.239V350.445L349.011 363.155C350.865 364.213 351.66 365.802 351.66 367.922V426.179C351.66 454.514 329.679 475.965 300.286 475.965V475.968ZM237.525 416.915L186.944 387.785C172.378 379.31 162.582 361.305 162.582 343.827C162.582 323.436 174.763 305.164 193.563 297.485V357.861C193.563 361.571 195.154 364.217 198.33 366.071L264.535 404.467L242.82 416.915C240.967 417.972 239.377 417.972 237.525 416.915ZM234.614 460.343C204.689 460.343 182.71 437.833 182.71 410.028C182.71 407.91 182.976 405.792 183.238 403.672L235.405 433.863C238.582 435.715 241.763 435.715 244.938 433.863L311.407 395.466V420.622C311.407 422.742 310.612 424.331 308.758 425.389L258.179 454.519C251.293 458.491 243.083 460.343 234.611 460.343H234.614ZM300.286 491.854C332.329 491.854 359.073 469.082 365.167 438.892C394.825 431.211 413.892 403.406 413.892 375.073C413.892 356.535 405.948 338.529 391.648 325.552C392.972 319.991 393.766 314.43 393.766 308.87C393.766 271.003 363.048 242.666 327.562 242.666C320.413 242.666 313.528 243.723 306.644 246.109C294.725 234.457 278.307 227.042 260.301 227.042C228.258 227.042 201.513 249.815 195.42 280.004C165.761 287.685 146.694 315.49 146.694 343.824C146.694 362.362 154.638 380.368 168.938 393.344C167.613 398.906 166.819 404.467 166.819 410.027C166.819 447.894 197.538 476.231 233.024 476.231C240.172 476.231 247.058 475.173 253.943 472.788C265.859 484.441 282.278 491.854 300.286 491.854Z"/></svg>',
+    anthropic: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width:62%;height:62%"><path fill="currentColor" d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>',
+    ollama: '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.75 14.5C4.75 10.22 8.22 6.75 12.5 6.75C16.78 6.75 20.25 10.22 20.25 14.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7.25 14.5C7.25 11.6 9.6 9.25 12.5 9.25C15.4 9.25 17.75 11.6 17.75 14.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M9.75 14.5C9.75 12.98 10.98 11.75 12.5 11.75C14.02 11.75 15.25 12.98 15.25 14.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12.5" cy="15.5" r="1.75" fill="currentColor"/></svg>'
+  };
+  document.querySelectorAll('[data-glyph]').forEach(el => { el.innerHTML = GLYPHS[el.dataset.glyph] || ''; el.classList.add('text-foreground'); });
+
+  // ── 설계 메모 ──
+  const NOTES = {
+    onboarding: ['1 · 첫 만남', [
+      '첫 화면은 "설정"이 아니라 "비서를 들이는 첫날". 세 단계만 보이고 나머지는 숨긴다.',
+      '1단계는 가장 쉬운 길(ChatGPT 로그인)을 추천으로 고정. 로컬 모델은 자동 탐지 결과를 바로 보여 준다.',
+      '2단계부터는 폼이 아니라 로키와의 대화. 답은 지식 파일(me.md)로 저장된다.',
+      '재사용: 부팅 영상 rocky-start-screen.mp4, 로고 마크, 카드 호버 리프트, 스킬 종류 색 타일.'
+    ]],
+    home: ['2 · 로키 홈', [
+      '기본은 로키와의 대화 하나. 파일·작업 과정·결정은 필요할 때만 튀어나온다.',
+      '위쪽 브리핑 줄: 결정 필요(검정 강조) · 진행 중 · 다음 업무. 숫자만, 누르면 열림.',
+      '위임은 대화 안의 접힌 카드. 누르면 오른쪽 패널에 팀원의 도구 호출 과정이 나온다.',
+      '팀원 질문은 로키가 먼저 거른다. "로키가 대신 답함"을 숨기지 않고 남긴다.',
+      '입력창 위 "다음 한 걸음" 칩이 항상 1~2개 → 뭘 할지 헤매지 않게.',
+      '작업이 끝나면 토스트(기존 마일스톤 토스트 스타일). 2초 뒤 시연됨.'
+    ]],
+    decisions: ['3 · 결정함', [
+      '어느 화면에서든 레일의 "결정"을 누르면 오른쪽에서 튀어나온다. 페이지가 아니다.',
+      '사용자에게 오는 건 두 종류뿐: 결정 필요 / 보고.',
+      '작업을 막고 있는 결정이 맨 위. 모든 카드에 로키 추천과 이유.',
+      '질문·권한(셸 실행)·제안(위임 단계 올리기)이 같은 카드 문법을 쓴다.',
+      '"로키가 대신 답함" 탭: 틀린 답을 여기서 고치면 로키의 규칙이 바뀐다.'
+    ]],
+    handover: ['4 · 업무 넘기기', [
+      '폼이 아니라 인터뷰. 왼쪽은 대화, 오른쪽 업무 카드가 실시간으로 채워진다.',
+      '위쪽 6개 항목(무엇을·언제·결과물·기준·주의·담당)이 진행 표시 역할.',
+      '위임 단계는 사다리. 처음엔 "초안까지"에서 시작, 위 단계는 기록이 쌓여야 열린다.',
+      '담당 팀원은 로키가 추천하되 근거(작업 수, 승인율)를 보여 준다.',
+      '마지막 버튼은 "저장"이 아니라 "지난주 데이터로 한번 해보기" — 바로 신뢰를 시험.'
+    ]],
+    team: ['5 · 팀', [
+      '로키는 맨 위 고정 카드. 사용자가 만들지도 지우지도 않는다.',
+      '팀원 카드는 기존 이모지+색 아바타, 색 틴트, 호버 리프트 그대로.',
+      '카드에는 판단에 필요한 것만: 역할, 모델, 키우기 방식, 맡은 업무와 위임 단계(점 4개).',
+      '로키의 "새 에이전트 제안"이 점선 카드로 자연스럽게 섞인다.',
+      '"로컬 전용" 팀원은 민감한 지식만 다루고 밖으로 데이터를 보내지 않는다.'
+    ]],
+    agent: ['6 · 에이전트 키우기', [
+      '"키우기 방식" 토글이 화면 성격을 바꾼다 — 눌러 보세요.',
+      '로키와 함께: 로키가 수정 기록에서 배운 개선안을 diff로 제안 → 적용/보류.',
+      '직접: 로키는 먼저 제안하지 않고, "로키 의견 듣기"를 눌러야만 의견을 낸다.',
+      '지침은 버전(v7 → v8)으로 관리하고 되돌릴 수 있다.',
+      '오른쪽 열은 요약. 도구마다 위험 등급(읽기·쓰기·실행)과 허용 방식(자동·물어보기·끔).'
+    ]],
+    connections: ['7 · 연결', [
+      '구독 / API 키 / 내 컴퓨터 세 묶음. "하나만 있어도 된다"를 먼저 말한다.',
+      'ChatGPT 구독은 공식 Sign in with ChatGPT. 기존 5H/7D 사용량 막대 재사용.',
+      'Claude 구독은 정책상 불가하다는 사실을 숨기지 않고, 대안(Max·Team API 크레딧)을 바로 안내.',
+      '로컬 모델은 자동 탐지하고 "도구 지원 / 대화 전용"을 구분해 보여 준다.',
+      '모델 역할(깊게·균형·빠르게·로컬 전용)은 로키가 팀원 모델을 추천할 때의 기준.'
+    ]]
+  };
+
+  const screens = [...document.querySelectorAll('.screen')];
+  const sheet = document.getElementById('sheet');
+  const scrim = document.getElementById('scrim');
+  const rail = document.getElementById('rail');
+  let toastTimer;
+
+  function setNotes(key) {
+    const [title, items] = NOTES[key];
+    document.getElementById('notes-title').textContent = title;
+    document.getElementById('notes-list').innerHTML = items.map(t => `<li class="flex gap-2"><span class="text-white/35">–</span><span>${t}</span></li>`).join('');
+  }
+
+  function openSheet(tab) {
+    sheet.classList.add('open'); scrim.classList.add('open');
+    if (tab) selectSheetTab(tab);
+  }
+  function closeSheet() { sheet.classList.remove('open'); scrim.classList.remove('open'); }
+  function selectSheetTab(tab) {
+    document.querySelectorAll('#sheet-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+    document.querySelectorAll('[data-tabpane]').forEach(p => p.classList.toggle('hidden', p.dataset.tabpane !== tab));
+  }
+
+  function showToast() {
+    const host = document.getElementById('toast-host');
+    host.innerHTML = '';
+    host.appendChild(document.getElementById('toast-tpl').content.cloneNode(true));
+    lucide.createIcons();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { host.innerHTML = ''; }, 7000);
+  }
+
+  function go(key) {
+    const target = key === 'decisions' ? 'home' : key;
+    screens.forEach(s => s.classList.toggle('on', s.dataset.screen === target));
+    rail.style.display = target === 'onboarding' ? 'none' : '';
+    document.querySelectorAll('.rail-btn[data-rail]').forEach(b => b.classList.toggle('active', b.dataset.rail === (target === 'agent' ? 'team' : target)));
+    document.querySelectorAll('#rv-tabs .rv-tab').forEach(b => b.classList.toggle('on', b.dataset.screen === key));
+    document.querySelectorAll('.panel').forEach(p => p !== sheet && p.classList.remove('open'));
+    document.getElementById('toast-host').innerHTML = '';
+    clearTimeout(toastTimer);
+    if (key === 'decisions') { openSheet('need'); } else { closeSheet(); }
+    if (target === 'home') { const c = document.getElementById('chat-scroll'); requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; }); }
+    if (key === 'home') { toastTimer = setTimeout(showToast, 2000); }
+    setNotes(key);
+    try { history.replaceState(null, '', '#' + key); } catch (e) {}
+  }
+
+  // 클릭 위임
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-screen].rv-tab, [data-go], [data-open], [data-panel], [data-close-panel], [data-close-sheet], [data-dismiss], [data-resolve], [data-resolve-sheet], #sheet-tabs button, .ob-step, .rung, #tune-seg button, #notes-toggle');
+    if (!t) return;
+    if (t.id === 'notes-toggle') { const n = document.getElementById('notes'); n.classList.toggle('hidden'); t.classList.toggle('on'); return; }
+    if (t.matches('.rv-tab[data-screen]')) return go(t.dataset.screen);
+    if (t.dataset.go) return go(t.dataset.go);
+    if (t.dataset.open === 'decisions') return openSheet(t.dataset.tab || 'need');
+    if (t.dataset.panel) {
+      if (!document.querySelector('.screen[data-screen="home"]').classList.contains('on')) go('home');
+      document.getElementById('panel-' + t.dataset.panel).classList.add('open');
+      document.getElementById('toast-host').innerHTML = '';
+      return;
+    }
+    if (t.hasAttribute('data-close-panel')) return t.closest('.panel').classList.remove('open');
+    if (t.hasAttribute('data-close-sheet')) return closeSheet();
+    if (t.hasAttribute('data-dismiss')) return document.getElementById('toast-host').innerHTML = '';
+    if (t.dataset.resolve) {
+      document.getElementById('inline-decision-body').outerHTML =
+        `<div class="rounded-2xl border bg-muted/40 px-4 py-3 flex items-center gap-2.5 text-[13px]" style="animation:rise-in .2s ease-out">
+           <span class="w-5 h-5 rounded-full bg-foreground text-white flex items-center justify-center"><i data-lucide="check" class="!w-3 !h-3"></i></span>
+           <span><b class="font-medium">"${t.dataset.resolve}"</b>로 정했어요. 데이터 분석이 이어서 진행해요.</span>
+           <span class="ml-auto text-[12px] text-muted-foreground flex items-center gap-1"><i data-lucide="book-open" class="!w-3.5 !h-3.5"></i>규칙으로 기억함</span>
+         </div>`;
+      bumpCount(-1); lucide.createIcons(); return;
+    }
+    if (t.hasAttribute('data-resolve-sheet')) {
+      const card = t.closest('.dc');
+      card.style.transition = 'opacity .2s, transform .2s'; card.style.opacity = '0'; card.style.transform = 'translateX(16px)';
+      setTimeout(() => card.remove(), 200); bumpCount(-1); return;
+    }
+    if (t.matches('#sheet-tabs button')) return selectSheetTab(t.dataset.tab);
+    if (t.classList.contains('ob-step')) return setStep(t.dataset.step);
+    if (t.classList.contains('rung')) {
+      if (t.classList.contains('locked')) return;
+      document.querySelectorAll('#ladder .rung').forEach(r => r.classList.toggle('sel', r === t)); return;
+    }
+    if (t.matches('#tune-seg button')) {
+      const manual = t.dataset.tune === 'manual';
+      document.querySelectorAll('#tune-seg button').forEach(b => b.classList.toggle('on', b === t));
+      document.getElementById('proposal-card').classList.toggle('hidden', manual);
+      const note = document.getElementById('manual-note'); note.classList.toggle('hidden', !manual); note.classList.toggle('flex', manual);
+      document.getElementById('tune-help').textContent = manual ? '내가 직접 지침과 도구를 고쳐요. 로키는 물어볼 때만 의견을 줘요.' : '로키가 기록을 보고 개선안을 제안해요. 적용은 항상 당신이 해요.';
+    }
+  });
+
+  let count = 3;
+  function bumpCount(d) {
+    count = Math.max(0, count + d);
+    ['rail-badge', 'brief-count', 'need-count'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = count; });
+    document.getElementById('rail-badge').style.display = count ? '' : 'none';
+  }
+
+  function setStep(n) {
+    document.querySelectorAll('.ob-step').forEach(b => {
+      const on = b.dataset.step === String(n), done = Number(b.dataset.step) < Number(n);
+      b.classList.toggle('chip-dark', on);
+      const num = b.querySelector('.ob-num');
+      num.className = 'ob-num w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ' + (on ? 'bg-white text-black' : done ? 'bg-foreground text-white' : 'bg-secondary text-muted-foreground');
+      num.textContent = done ? '✓' : b.dataset.step;
+    });
+    document.querySelectorAll('.ob-panel').forEach(p => p.classList.toggle('hidden', p.dataset.step !== String(n)));
+  }
+
+  // 캔버스 맞춤
+  function fit() {
+    const stage = document.getElementById('stage'), canvas = document.getElementById('canvas');
+    const pad = 28, w = stage.clientWidth - pad * 2, h = stage.clientHeight - pad * 2;
+    const s = Math.min(w / 1360, h / 860, 1);
+    canvas.style.transform = `scale(${s})`;
+    canvas.style.left = Math.max(pad, (stage.clientWidth - 1360 * s) / 2) + 'px';
+    canvas.style.top = Math.max(pad, (stage.clientHeight - 860 * s) / 2) + 'px';
+  }
+  window.addEventListener('resize', fit);
+
+  lucide.createIcons();
+  setStep(1);
+  fit();
+  const initial = (location.hash || '').slice(1);
+  go(NOTES[initial] ? initial : 'home');
+</script>
+</body>
+</html>

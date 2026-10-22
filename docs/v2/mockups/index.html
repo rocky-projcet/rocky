@@ -832,12 +832,12 @@
     <h1 class="text-2xl font-semibold">연결</h1>
     <p class="mt-1.5 text-[14px] text-muted-foreground">로키와 팀원이 생각할 때 쓰는 모델이에요. 하나만 있어도 시작할 수 있어요.</p>
 
-    <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="badge-check" class="text-muted-foreground"></i>구독으로 연결</p>
+    <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="badge-check" class="text-muted-foreground"></i>추천 연결</p>
     <div class="mt-2.5 grid grid-cols-2 gap-3">
       <div class="rounded-2xl border bg-card p-4">
         <div class="flex items-center gap-3">
           <span class="pg w-10 h-10 !rounded-xl" data-glyph="openai"></span>
-          <div class="flex-1"><b class="text-[14px] font-semibold">ChatGPT</b><p class="text-[12px] text-muted-foreground">Pro 플랜 · Sign in with ChatGPT</p></div>
+          <div class="flex-1"><b class="text-[14px] font-semibold">ChatGPT</b><p class="text-[12px] text-muted-foreground">Pro 구독 · ChatGPT로 로그인</p></div>
           <span class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700"><span class="neon-dot" data-status="active"></span>연결됨</span>
         </div>
         <div class="mt-3.5 space-y-2 text-[11px]">
@@ -849,19 +849,21 @@
       <div class="rounded-2xl border bg-card p-4">
         <div class="flex items-center gap-3">
           <span class="pg w-10 h-10 !rounded-xl" data-glyph="anthropic"></span>
-          <div class="flex-1"><b class="text-[14px] font-semibold">Claude</b><p class="text-[12px] text-muted-foreground">Pro · Max 구독</p></div>
-          <span class="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground"><span class="neon-dot" data-status="off"></span>연결 불가</span>
+          <div class="flex-1"><b class="text-[14px] font-semibold">Claude</b><p class="text-[12px] text-muted-foreground">API 크레딧 · 키 …7Qx</p></div>
+          <span class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700"><span class="neon-dot" data-status="active"></span>연결됨</span>
         </div>
-        <div class="mt-3 rounded-xl bg-muted/70 px-3 py-2.5 text-[12px] leading-5">
-          Anthropic 정책상 다른 앱에서는 Claude 구독으로 로그인할 수 없어요. <b class="font-semibold">Max·Team 플랜이면 매달 API 크레딧</b>이 들어 있으니 API 키로 연결해 보세요.
+        <div class="mt-3.5 flex items-baseline gap-2">
+          <span class="text-[20px] font-semibold tracking-tight">$12.40</span>
+          <span class="text-[11.5px] text-muted-foreground">이번 달 Rocky에서 쓴 금액 · 추정</span>
+          <button class="ml-auto text-[11.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground">남은 크레딧 보기</button>
         </div>
-        <div class="mt-3 flex gap-2"><button class="btn btn-outline btn-xs"><i data-lucide="key-round" class="!w-3.5 !h-3.5"></i>API 키로 연결</button><button class="btn btn-ghost btn-xs text-muted-foreground">크레딧 받는 법<i data-lucide="external-link" class="!w-3 !h-3"></i></button></div>
+        <p class="mt-2.5 text-[11.5px] leading-5 text-muted-foreground">Max·Team 구독이면 매달 API 크레딧이 들어 있어요. 사용한 만큼 내 크레딧에서 빠져요.</p>
+        <div class="mt-3 flex gap-2"><button class="btn btn-outline btn-xs" data-open-modal="claude"><i data-lucide="key-round" class="!w-3.5 !h-3.5"></i>연결 방법 보기</button><button class="btn btn-ghost btn-xs text-muted-foreground">키 바꾸기</button></div>
       </div>
     </div>
 
     <p class="mt-7 text-[13px] font-semibold flex items-center gap-2"><i data-lucide="key-round" class="text-muted-foreground"></i>API 키로 연결</p>
     <div class="mt-2.5 rounded-2xl border bg-card divide-y">
-      <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8" data-glyph="anthropic"></span><div class="flex-1"><b class="text-[13.5px] font-semibold">Anthropic</b><p class="text-[12px] text-muted-foreground">sk-ant-…7Qx · 이번 달 $12.40</p></div><span class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700"><span class="neon-dot" data-status="active"></span>연결됨</span><button class="icon-btn"><i data-lucide="ellipsis"></i></button></div>
       <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8" data-glyph="openai"></span><div class="flex-1"><b class="text-[13.5px] font-semibold">OpenAI</b><p class="text-[12px] text-muted-foreground">API 키로 쓴 만큼 내요</p></div><button class="btn btn-outline btn-xs">키 입력</button></div>
       <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8 text-[11px] font-bold">G</span><div class="flex-1"><b class="text-[13.5px] font-semibold">Google Gemini</b><p class="text-[12px] text-muted-foreground">AI Studio 키</p></div><button class="btn btn-outline btn-xs">키 입력</button></div>
       <div class="flex items-center gap-3 px-4 py-3"><span class="pg w-8 h-8 text-[10px] font-bold">OR</span><div class="flex-1"><b class="text-[13.5px] font-semibold">OpenRouter</b><p class="text-[12px] text-muted-foreground">여러 오픈 모델을 키 하나로</p></div><button class="btn btn-outline btn-xs">로그인</button></div>
@@ -972,6 +974,41 @@
           </div>
         </aside>
 
+        <!-- Claude 연결 흐름 (연결 화면의 "연결 방법 보기") -->
+        <div class="scrim absolute inset-0 bg-black/30 z-40 flex items-center justify-center" id="claude-modal" data-close-modal>
+          <div class="w-[520px] rounded-3xl bg-background border shadow-2xl" data-modal-body>
+            <div class="px-6 pt-5 pb-4 border-b flex items-center gap-3">
+              <span class="pg w-9 h-9 !rounded-xl" data-glyph="anthropic"></span>
+              <div class="flex-1"><p class="text-[15px] font-semibold">Claude 연결</p><p class="text-[12px] text-muted-foreground">내 API 크레딧으로 써요. 로그인은 Anthropic 페이지에서 해요.</p></div>
+              <button class="icon-btn" data-close-modal><i data-lucide="x"></i></button>
+            </div>
+            <ol class="px-6 py-5 space-y-4 text-[13px]">
+              <li class="flex gap-3">
+                <span class="w-6 h-6 rounded-full bg-foreground text-white flex items-center justify-center shrink-0"><i data-lucide="check" class="!w-3 !h-3"></i></span>
+                <div class="flex-1"><b class="font-semibold">Console에서 키 만들기</b><p class="mt-0.5 text-[12px] text-muted-foreground">브라우저에서 Anthropic에 로그인하고 "API 키 만들기"를 눌러요.</p>
+                  <button class="mt-2 btn btn-outline btn-xs">Console 열기<i data-lucide="external-link" class="!w-3 !h-3"></i></button></div>
+              </li>
+              <li class="flex gap-3">
+                <span class="w-6 h-6 rounded-full border-2 border-foreground text-[11px] font-semibold flex items-center justify-center shrink-0">2</span>
+                <div class="flex-1"><b class="font-semibold">복사하고 돌아오기</b><p class="mt-0.5 text-[12px] text-muted-foreground">만든 키를 복사해서 Rocky로 돌아오면 알아서 찾아요.</p>
+                  <div class="mt-2 rounded-xl border-2 border-foreground/80 px-3 py-2.5 flex items-center gap-2 glow">
+                    <i data-lucide="clipboard-check" class="!w-4 !h-4"></i>
+                    <span class="flex-1">복사한 키를 찾았어요 <span class="text-muted-foreground">· sk-ant-api03-…7Qx</span></span>
+                    <button class="btn btn-primary btn-xs">이 키로 연결</button>
+                  </div>
+                  <button class="mt-1.5 text-[11.5px] text-muted-foreground underline underline-offset-2">직접 붙여넣기</button></div>
+              </li>
+              <li class="flex gap-3">
+                <span class="w-6 h-6 rounded-full border text-[11px] font-semibold text-muted-foreground flex items-center justify-center shrink-0">3</span>
+                <div class="flex-1"><b class="font-semibold text-muted-foreground">확인하고 저장</b><p class="mt-0.5 text-[12px] text-muted-foreground">키가 맞는지 확인하고, 이 컴퓨터에만 암호화해서 저장해요.</p></div>
+              </li>
+            </ol>
+            <div class="mx-6 mb-6 rounded-xl bg-muted/70 px-3.5 py-3 text-[12px] leading-5">
+              <b class="font-semibold">Max·Team 구독자는 매달 API 크레딧이 들어 있어요</b> (Max 5x $100 · Max 20x $200 · Team 최대 $500). Console에서 조직을 연결하면 받을 수 있어요. Pro·Free는 쓴 만큼 내요.
+            </div>
+          </div>
+        </div>
+
         <!-- 토스트 -->
         <div id="toast-host" class="absolute top-[56px] right-5 z-50"></div>
       </div>
@@ -1052,9 +1089,10 @@
       '오른쪽 열은 요약. 도구마다 위험 등급(읽기·쓰기·실행)과 허용 방식(자동·물어보기·끔).'
     ]],
     connections: ['7 · 연결', [
-      '구독 / API 키 / 내 컴퓨터 세 묶음. "하나만 있어도 된다"를 먼저 말한다.',
+      '추천 연결(ChatGPT 구독, Claude API 크레딧) / API 키 / 내 컴퓨터 세 묶음. "하나만 있어도 된다"를 먼저 말한다.',
       'ChatGPT 구독은 공식 Sign in with ChatGPT. 기존 5H/7D 사용량 막대 재사용.',
-      'Claude 구독은 정책상 불가하다는 사실을 숨기지 않고, 대안(Max·Team API 크레딧)을 바로 안내.',
+      'Claude는 API 크레딧(내 API 키)으로 연결한다(ADR 0004). "연결 방법 보기": Console 열기 → 복사한 키 자동 감지 → 확인·암호화 저장.',
+      '일반 키로는 남은 크레딧을 조회할 수 없어 Rocky가 쓴 금액을 추정해 보여 주고, 잔액은 Console 링크로 연다.',
       '로컬 모델은 자동 탐지하고 "도구 지원 / 대화 전용"을 구분해 보여 준다.',
       '모델 역할(깊게·균형·빠르게·로컬 전용)은 로키가 팀원 모델을 추천할 때의 기준.'
     ]]
@@ -1098,6 +1136,7 @@
     document.querySelectorAll('.rail-btn[data-rail]').forEach(b => b.classList.toggle('active', b.dataset.rail === (target === 'agent' ? 'team' : target)));
     document.querySelectorAll('#rv-tabs .rv-tab').forEach(b => b.classList.toggle('on', b.dataset.screen === key));
     document.querySelectorAll('.panel').forEach(p => p !== sheet && p.classList.remove('open'));
+    document.getElementById('claude-modal').classList.remove('open');
     document.getElementById('toast-host').innerHTML = '';
     clearTimeout(toastTimer);
     if (key === 'decisions') { openSheet('need'); } else { closeSheet(); }
@@ -1109,7 +1148,7 @@
 
   // 클릭 위임
   document.addEventListener('click', e => {
-    const t = e.target.closest('[data-screen].rv-tab, [data-go], [data-open], [data-panel], [data-close-panel], [data-close-sheet], [data-dismiss], [data-resolve], [data-resolve-sheet], #sheet-tabs button, .ob-step, .rung, #tune-seg button, #notes-toggle');
+    const t = e.target.closest('[data-screen].rv-tab, [data-go], [data-open], [data-panel], [data-close-panel], [data-close-sheet], [data-dismiss], [data-resolve], [data-resolve-sheet], [data-open-modal], [data-close-modal], #sheet-tabs button, .ob-step, .rung, #tune-seg button, #notes-toggle');
     if (!t) return;
     if (t.id === 'notes-toggle') { const n = document.getElementById('notes'); n.classList.toggle('hidden'); t.classList.toggle('on'); return; }
     if (t.matches('.rv-tab[data-screen]')) return go(t.dataset.screen);
@@ -1123,6 +1162,11 @@
     }
     if (t.hasAttribute('data-close-panel')) return t.closest('.panel').classList.remove('open');
     if (t.hasAttribute('data-close-sheet')) return closeSheet();
+    if (t.dataset.openModal) return document.getElementById(t.dataset.openModal + '-modal').classList.add('open');
+    if (t.hasAttribute('data-close-modal')) {
+      if (t.id === 'claude-modal' && e.target.closest('[data-modal-body]')) return;
+      return document.getElementById('claude-modal').classList.remove('open');
+    }
     if (t.hasAttribute('data-dismiss')) return document.getElementById('toast-host').innerHTML = '';
     if (t.dataset.resolve) {
       document.getElementById('inline-decision-body').outerHTML =

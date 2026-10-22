@@ -2,40 +2,16 @@ import {
   Navigate,
   createBrowserRouter,
   createHashRouter,
-  useParams,
 } from "react-router-dom";
-
-function RedirectTemplateEditToSkill() {
-  const { templateId } = useParams<{ templateId: string }>();
-  return <Navigate to={`/skills/${encodeURIComponent(templateId ?? "")}/edit`} replace />;
-}
 
 import { AppShell } from "../shared/components/app-shell";
 import { PageState } from "../shared/components/page-state";
-import { AccountPage } from "../domains/codex/pages/account-page";
+import { SettingsPage } from "../domains/settings/pages/settings-page";
 import { AgentDetailPage } from "../domains/agent/pages/agent-detail-page";
 import { AgentsPage } from "../domains/agent/pages/agents-page";
 import { AgentsArchivedPage } from "../domains/agent/pages/agents-archived-page";
 import { AgentNewPage } from "../domains/agent/pages/agent-new-page";
 import { WorkspaceFilePreviewPage } from "../domains/agent/pages/workspace-file-preview-page";
-import { RockyAgentPage } from "../domains/rocky/pages/rocky-agent-page";
-import { HomePage, RockyTaskDetailPage } from "../domains/rocky/pages/home-page";
-import { SearchPage } from "../domains/rocky/pages/search-page";
-import { FavoritesPage } from "../domains/favorite/favorites-page";
-import { IntegrationsPage } from "../domains/connector/pages/integrations-page";
-import { TasksPage } from "../domains/rocky/pages/tasks-page";
-import {
-  TemplateBuilderPage,
-  TemplatesPage,
-} from "../domains/template/pages/templates-page";
-import { SkillsPage } from "../domains/skill/pages/skills-page";
-import { SkillsArchivedPage } from "../domains/skill/pages/skills-archived-page";
-import { SkillExternalPage } from "../domains/skill/pages/skill-external-page";
-import { SkillNewPage } from "../domains/skill/pages/skill-new-page";
-import { SkillDetailPage } from "../domains/skill/pages/skill-detail-page";
-import { SkillTemplateDetailPage } from "../domains/skill/pages/skill-template-detail-page";
-import { RunInspectorPage } from "../domains/run/pages/run-inspector-page";
-import { SessionWorkspacePage } from "../domains/session/pages/session-workspace-page";
 import { isDesktopRuntime } from "../shared/lib/desktop-api";
 
 const createRouter = isDesktopRuntime(globalThis)
@@ -49,27 +25,13 @@ export const router = createRouter([
     children: [
       {
         index: true,
-        element: <HomePage />,
-      },
-      {
-        path: "search",
-        element: <SearchPage />,
-      },
-      {
-        path: "favorites",
-        element: <FavoritesPage />,
-      },
-      {
-        path: "integrations",
-        element: <IntegrationsPage />,
-      },
-      {
-        path: "tasks",
-        element: <TasksPage />,
-      },
-      {
-        path: "tasks/:taskId",
-        element: <RockyTaskDetailPage />,
+        element: (
+          <PageState
+            eyebrow="Rocky v2"
+            title="새 엔진을 준비하고 있어요"
+            description="에이전트와 작업 폴더의 파일은 지금도 그대로 쓸 수 있어요."
+          />
+        ),
       },
       {
         path: "agents",
@@ -80,50 +42,6 @@ export const router = createRouter([
         element: <AgentNewPage />,
       },
       {
-        path: "templates",
-        element: <TemplatesPage />,
-      },
-      {
-        path: "templates/new",
-        element: <TemplateBuilderPage />,
-      },
-      {
-        path: "templates/:templateId/edit",
-        element: <RedirectTemplateEditToSkill />,
-      },
-      {
-        path: "templates/archived",
-        element: <Navigate to="/templates" replace />,
-      },
-      {
-        path: "templates/:kind",
-        element: <SkillTemplateDetailPage />,
-      },
-      {
-        path: "skills",
-        element: <SkillsPage />,
-      },
-      {
-        path: "skills/new",
-        element: <SkillNewPage />,
-      },
-      {
-        path: "skills/external",
-        element: <SkillExternalPage />,
-      },
-      {
-        path: "skills/archived",
-        element: <SkillsArchivedPage />,
-      },
-      {
-        path: "skills/:skillId/edit",
-        element: <SkillNewPage />,
-      },
-      {
-        path: "skills/:skillId",
-        element: <SkillDetailPage />,
-      },
-      {
         path: "agents/archived",
         element: <AgentsArchivedPage />,
       },
@@ -132,47 +50,25 @@ export const router = createRouter([
         element: <AgentDetailPage />,
       },
       {
-        path: "agents/:agentId/sessions/:sessionId",
-        element: <SessionWorkspacePage />,
+        path: "settings",
+        element: <SettingsPage />,
       },
       {
         path: "admin",
-        element: <Navigate to="/admin/rocky" replace />,
-      },
-      {
-        path: "admin/rocky",
-        element: <RockyAgentPage />,
+        element: <Navigate to="/settings" replace />,
       },
       {
         path: "admin/settings",
-        element: <AccountPage />,
-      },
-      {
-        path: "rocky/agent",
-        element: <Navigate to="/admin/rocky" replace />,
-      },
-      {
-        path: "runs",
-        element: (
-          <PageState
-            eyebrow="라우트 전용"
-            title="실행 기록 열기"
-            description="세션 트랜스크립트 항목, 실시간 상태 카드, 또는 /runs/:runId 직접 링크를 사용하세요. MVP 셸은 전체 실행 목록을 제공하지 않습니다."
-          />
-        ),
-      },
-      {
-        path: "runs/:runId",
-        element: <RunInspectorPage />,
-      },
-      {
-        path: "settings",
-        element: <Navigate to="/admin/settings" replace />,
+        element: <Navigate to="/settings" replace />,
       },
       {
         path: "account",
-        element: <Navigate to="/admin/settings" replace />,
-      }
+        element: <Navigate to="/settings" replace />,
+      },
+      {
+        path: "*",
+        element: <Navigate to="/" replace />,
+      },
     ],
   },
   {

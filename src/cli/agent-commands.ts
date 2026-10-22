@@ -1,5 +1,4 @@
 import type { AgentUpdatePatch } from "../agents/agent-types.js";
-import type { RuntimeKind } from "../runtime/runtime-types.js";
 import type { CliContext } from "./cli-types.js";
 import {
   compactAgentUpdatePatch,
@@ -7,18 +6,6 @@ import {
   usageError,
   writeJson,
 } from "./cli-helpers.js";
-
-function parseRuntimeOption(value: string | undefined): RuntimeKind | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  if (value === "codex-cli" || value === "claude-code") {
-    return value;
-  }
-
-  throw new Error(`Unsupported runtime: ${value}`);
-}
 
 export async function handleAgentCommand(
   command: string | undefined,
@@ -32,7 +19,6 @@ export async function handleAgentCommand(
       description: context.values.description,
       workspaceRoot: context.values["workspace-root"],
       runtimeHome: context.values["runtime-home"],
-      defaultRuntime: parseRuntimeOption(context.values.runtime),
       sandboxPolicy: context.values.sandbox,
       approvalPolicy: context.values.approval,
       modelProfile: context.values["model-profile"],
@@ -60,8 +46,7 @@ export async function handleAgentCommand(
         description: context.values.description,
         workspaceRoot: context.values["workspace-root"],
         runtimeHome: context.values["runtime-home"],
-        defaultRuntime: parseRuntimeOption(context.values.runtime),
-        sandboxPolicy: context.values.sandbox,
+          sandboxPolicy: context.values.sandbox,
         approvalPolicy: context.values.approval,
         modelProfile: context.values["model-profile"],
         status: context.values.status,

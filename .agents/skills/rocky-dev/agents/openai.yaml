@@ -1,4 +1,4 @@
 interface:
   display_name: "Rocky Dev"
-  short_description: "Build and validate the Rocky backend and runtime"
-  default_prompt: "Use $rocky-dev to implement the next Rocky runtime or backend slice in this repository, keep the runtime boundaries clean, and run the required test and smoke checks."
+  short_description: "Build and validate the Rocky backend and v2 harness"
+  default_prompt: "Use $rocky-dev to implement the next Rocky v2 backend slice in this repository, keep the harness boundaries from docs/v2/engine-design.md clean, and run the required test checks."

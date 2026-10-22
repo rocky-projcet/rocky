@@ -43,7 +43,7 @@ test("agent CLI creates, lists, and updates agents", async () => {
 
   assert.equal(createExitCode, 0);
   assert.equal(created.id, "cli-agent");
-  await access(path.join(created.workspaceRoot, ".agents", "skills"));
+  await access(path.join(created.workspaceRoot, ".agents", "agent.config.json"));
 
   const listStdout = createBufferStream();
   const listExitCode = await runAgentCli(

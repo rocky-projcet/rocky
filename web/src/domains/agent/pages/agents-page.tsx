@@ -5,7 +5,7 @@ import { AgentCard } from "../components/agent-card";
 import { useAgentsQuery } from "../hooks";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Card } from "@/shared/ui/card";
-import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
+import { filterUserManagedAgents } from "@/domains/agent/lib/rocky-agent-catalog";
 
 export function AgentsPage() {
   const agentsQuery = useAgentsQuery();
@@ -51,7 +51,7 @@ export function AgentsPage() {
         title="내 에이전트"
         description={
           agents.length === 0
-            ? "에이전트를 만들면 누가 어떤 일을 맡고 있는지 한눈에 보고 바로 작업을 요청할 수 있어요."
+            ? "에이전트를 만들면 누가 어떤 일을 맡고 있는지 한눈에 볼 수 있어요."
             : `${agents.length}명의 에이전트 중 누구에게 일을 맡길지 골라주세요.`
         }
       />
@@ -81,7 +81,7 @@ function NewAgentCard() {
       </div>
       <p className="mt-3 text-sm font-semibold text-foreground">새로운 나만의 에이전트 만들기</p>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-        이름·이모지·스킬을 골라 캐릭터를 만들어요.
+        이름·이모지·소울을 정해 캐릭터를 만들어요.
       </p>
     </Link>
   );

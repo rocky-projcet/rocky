@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { createAgentEngineServer } from "../../src/api/agent-engine-server.js";
 import { AppUpdateService } from "../../src/installer/app-update-service.js";
 
-import type { RuntimeChildProcess } from "../../src/runtime/runtime-types.js";
+import type { RuntimeChildProcess } from "../../src/runtime/process-types.js";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");

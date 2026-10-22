@@ -5,16 +5,11 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { AgentRegistryService } from "./agents/agent-registry-service.js";
-import { SessionService } from "./sessions/session-service.js";
-import { createDefaultRuntimeRegistry } from "./runtime/runtime-registry.js";
 import { handleAgentCommand } from "./cli/agent-commands.js";
 import { printUsage, isCliResource } from "./cli/cli-helpers.js";
-import { handleRunCommand } from "./cli/run-commands.js";
 import { handleServeCommand } from "./cli/serve-command.js";
-import { handleSessionCommand } from "./cli/session-commands.js";
 import { loadDotenvFile } from "./cli/dotenv.js";
 
-import type { AgentRegistryServiceOptions } from "./agents/agent-types.js";
 import type { CliDependencies, CliOptionValues } from "./cli/cli-types.js";
 
 export async function runAgentCli(
@@ -32,13 +27,9 @@ export async function runAgentCli(
       port: { type: "string" },
       id: { type: "string" },
       name: { type: "string" },
-      title: { type: "string" },
       description: { type: "string" },
-      prompt: { type: "string" },
-      stream: { type: "boolean" },
       "workspace-root": { type: "string" },
       "runtime-home": { type: "string" },
-      runtime: { type: "string" },
       sandbox: { type: "string" },
       approval: { type: "string" },
       "model-profile": { type: "string" },
@@ -69,34 +60,16 @@ export async function runAgentCli(
       now: dependencies.now,
       idGenerator: dependencies.idGenerator,
     });
-  const sessionService =
-    dependencies.sessionService ??
-    new SessionService({
-      stateRoot: values["state-root"],
-      runtimeRegistry: createDefaultRuntimeRegistry(process.env),
-      manager: dependencies.manager as AgentRegistryServiceOptions["manager"],
-      now: dependencies.now,
-      idGenerator: dependencies.idGenerator,
-    });
   const context = {
     values,
     stdout,
     stderr,
     service,
-    sessionService,
     dependencies,
   };
 
   if (resource === "serve") {
     return handleServeCommand(context);
-  }
-
-  if (resource === "session") {
-    return handleSessionCommand(command, targetId, context);
-  }
-
-  if (resource === "run") {
-    return handleRunCommand(command, targetId, context);
   }
 
   return handleAgentCommand(command, targetId, context);

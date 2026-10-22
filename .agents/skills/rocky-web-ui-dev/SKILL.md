@@ -75,7 +75,6 @@ Keep `Tasks`, `Skills`, `Automations`, and `Ops` as future routes unless the cur
 - Run browser flow checks with `playwright` when the web app exists.
 - Keep backend validation on the existing repository commands:
   - `npm test`
-  - `npm run test:e2e`
 
 ## Notes
 

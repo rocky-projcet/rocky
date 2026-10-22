@@ -13,14 +13,14 @@ import {
   useRevealRockyAppUpdateInstallerMutation,
   useRockyAppUpdateQuery,
   useStartRockyAppUpdateInstallerMutation,
-} from "@/domains/rocky/hooks";
+} from "@/shared/hooks/use-app-update";
 import {
   appUpdateStatusLabel,
   canRevealAppUpdateDownload,
   primaryAppUpdateActionLabel,
   shouldAutoCheckAppUpdate,
   shouldAutoInstallAppUpdate,
-} from "@/domains/rocky/lib/app-update";
+} from "@/shared/lib/app-update";
 import type { AppUpdateRecord } from "@/shared/lib/agent-engine-client";
 import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";

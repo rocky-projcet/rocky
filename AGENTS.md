@@ -11,8 +11,6 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 - `rocky-web-ui-dev` -> `.agents/skills/rocky-web-ui-dev/SKILL.md`
 - `karpathy-guidelines` -> `.agents/skills/karpathy-guidelines/SKILL.md`
 - `requirement-understanding` -> `.agents/skills/requirement-understanding/SKILL.md`
-- `rocky-runtime-probe` -> `.agents/skills/rocky-runtime-probe/SKILL.md`
-- `ecount-oapi` -> `.agents/skills/ecount-oapi/SKILL.md`
 - `mcp-on-demand` -> `.agents/skills/mcp-on-demand/SKILL.md`
 - `git-safe-operations` -> `.agents/skills/git-safe-operations/SKILL.md`
 - `grill-me` -> `.agents/skills/grill-me/SKILL.md`
@@ -31,7 +29,7 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 | Skill | Decision | Note |
 | --- | --- | --- |
 | `bug-report` | Remove | Notion bug tracker workflow is no longer part of the repo-local skill set. |
-| `ecount-oapi` | Keep | Specialized ECOUNT Open API troubleshooting remains available. |
+| `ecount-oapi` | Remove | The ECOUNT integration was removed in the v2 reset (M0). |
 | `github` | Keep | Primary issue and PR workflow. |
 | `git-safe-operations` | Keep | Safe branch, staging, commit, and push workflow. |
 | `grill-me` | Add | Imported planning interview workflow for stress-testing designs. |
@@ -45,10 +43,10 @@ This file is a compact index plus repo-wide defaults. Detailed workflows live in
 | `requirement-understanding` | Keep | Requirement interpretation workflow. |
 | `roc-finish-current-work` | Keep | End-to-end issue/PR completion workflow. |
 | `roc-publish` | Keep | GitHub Issue and PR publication workflow. |
-| `rocky-dev` | Keep | Runtime and backend development workflow. |
+| `rocky-dev` | Keep | Backend and v2 harness development workflow. |
 | `rocky-electron-desktop-chrome` | Add | Captures the Electron titlebar, native menu, preload bridge, and desktop chrome verification workflow. |
 | `rocky-release` | Keep | Release preparation and validation workflow. |
-| `rocky-runtime-probe` | Keep | Runtime flag and model capability verification. |
+| `rocky-runtime-probe` | Remove | The Codex CLI runtime it probed was removed in the v2 reset (M0). |
 | `rocky-service-run` | Keep | Local backend and web service run workflow. |
 | `rocky-web-ui-dev` | Keep | Web UI development workflow. |
 | `to-issues` | Add | Imported workflow for breaking plans into independently grabbable issues. |

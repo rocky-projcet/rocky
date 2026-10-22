@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "v2-mockups",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "4317", "--bind", "127.0.0.1", "--directory", "."],
+      "port": 4317
+    },
+    {
+      "name": "dev-stack-isolated",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/run-dev-stack.mjs",
+        "--skip-install",
+        "--state-root",
+        ".runtime/dev-stack-isolated",
+        "--backend-port",
+        "3317",
+        "--web-port",
+        "4373"
+      ],
+      "port": 4373
+    }
+  ]
+}

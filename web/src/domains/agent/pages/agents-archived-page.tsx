@@ -2,7 +2,7 @@ import { Bot } from "lucide-react";
 
 import { AgentCard } from "../components/agent-card";
 import { useAgentsQuery } from "../hooks";
-import { filterUserManagedAgents } from "@/domains/rocky/lib/rocky-agent-catalog";
+import { filterUserManagedAgents } from "@/domains/agent/lib/rocky-agent-catalog";
 import { ArchiveEmpty } from "@/shared/components/archive-empty";
 import { PageContainer, PageHeader } from "@/shared/components/page-container";
 import { Card } from "@/shared/ui/card";

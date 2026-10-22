@@ -28,16 +28,10 @@ import type {
   AgentManagerOptions,
   AgentPaths,
   AgentRecord,
-  AgentSkillPolicy,
-  AgentSessionOverrides,
   AgentUpdatePatch,
   ExecFileLike,
   ExecFileResult,
 } from "./agent-types.js";
-import type {
-  RuntimeKind,
-  RuntimeSessionInput,
-} from "../runtime/runtime-types.js";
 
 export {
   DEFAULT_AGENT_WORKSPACE_MODE,
@@ -55,27 +49,10 @@ export {
   ensureAgentWorkspaceScaffold,
 } from "./agent-workspace.js";
 
-export const DEFAULT_AGENT_RUNTIME: RuntimeKind = "codex-cli";
 export const DEFAULT_AGENT_STATUS = "active";
 export const DEFAULT_AGENT_LIFECYCLE = "active";
 export const DEFAULT_SANDBOX_POLICY = "workspace-write";
 export const DEFAULT_APPROVAL_POLICY = "on-request";
-
-export function buildDefaultAgentSkillPolicy(): AgentSkillPolicy {
-  return {
-    automaticSkillCreation: false,
-  };
-}
-
-function normalizeAgentSkillPolicy(
-  value: Partial<AgentSkillPolicy> | null | undefined
-): AgentSkillPolicy {
-  return {
-    ...buildDefaultAgentSkillPolicy(),
-    ...(value ?? {}),
-    automaticSkillCreation: value?.automaticSkillCreation === true,
-  };
-}
 
 function badRequestError(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), {
@@ -238,7 +215,6 @@ function hydrateAgentRecord(persisted: Partial<AgentRecord>): AgentRecord {
     color: persisted.color ?? null,
     workspaceRoot: path.resolve(persisted.workspaceRoot),
     runtimeHome: path.resolve(persisted.runtimeHome),
-    defaultRuntime: persisted.defaultRuntime ?? DEFAULT_AGENT_RUNTIME,
     sandboxPolicy: persisted.sandboxPolicy ?? DEFAULT_SANDBOX_POLICY,
     approvalPolicy: persisted.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
     modelProfile: persisted.modelProfile ?? null,
@@ -248,7 +224,6 @@ function hydrateAgentRecord(persisted: Partial<AgentRecord>): AgentRecord {
       buildDefaultAgentToolPolicy({
         workspaceRoot: path.resolve(persisted.workspaceRoot),
       }),
-    skillPolicy: normalizeAgentSkillPolicy(persisted.skillPolicy),
     status: persisted.status ?? DEFAULT_AGENT_STATUS,
     lifecycle: persisted.lifecycle === "archived" ? "archived" : "active",
     archivedAt:
@@ -300,42 +275,6 @@ export function usesManagedAgentPaths(
     path.resolve(agent.workspaceRoot) === managedPaths.workspaceRoot &&
     path.resolve(agent.runtimeHome) === managedPaths.runtimeHome
   );
-}
-
-export function buildAgentSessionInput(
-  agent: AgentRecord,
-  overrides: AgentSessionOverrides = {}
-): RuntimeSessionInput {
-  if (!agent.id) {
-    throw new Error("buildAgentSessionInput() requires an agent record");
-  }
-
-  return {
-    id: overrides.sessionId,
-    agentId: agent.id,
-    runtimeKind: overrides.runtimeKind ?? agent.defaultRuntime,
-    runtimeSessionId: overrides.runtimeSessionId ?? null,
-    workspaceRoot: path.resolve(overrides.workspaceRoot ?? agent.workspaceRoot),
-    runtimeHome: path.resolve(overrides.runtimeHome ?? agent.runtimeHome),
-    codexBin: overrides.codexBin,
-    sandbox: overrides.sandbox ?? agent.sandboxPolicy,
-    approval: overrides.approval ?? agent.approvalPolicy,
-    profile: overrides.profile ?? agent.modelProfile ?? null,
-    authProfileId: overrides.authProfileId ?? null,
-    model: overrides.model ?? null,
-    ollamaLaunchTarget: overrides.ollamaLaunchTarget ?? null,
-    reasoningEffort: overrides.reasoningEffort ?? null,
-    serviceTier: overrides.serviceTier ?? null,
-    fullAuto: overrides.fullAuto ?? false,
-    dangerouslyBypassApprovalsAndSandbox:
-      overrides.dangerouslyBypassApprovalsAndSandbox ?? false,
-    additionalWritableDirs: overrides.additionalWritableDirs ?? [],
-    configOverrides: overrides.configOverrides ?? [],
-    enableFeatures: overrides.enableFeatures ?? [],
-    disableFeatures: overrides.disableFeatures ?? [],
-    skipGitRepoCheck: overrides.skipGitRepoCheck ?? true,
-    ephemeral: overrides.ephemeral ?? false,
-  };
 }
 
 export class AgentManager {
@@ -393,7 +332,6 @@ export class AgentManager {
       color: persistedInput.color ?? null,
       workspaceRoot: paths.workspaceRoot,
       runtimeHome: paths.runtimeHome,
-      defaultRuntime: persistedInput.defaultRuntime ?? DEFAULT_AGENT_RUNTIME,
       sandboxPolicy: persistedInput.sandboxPolicy ?? DEFAULT_SANDBOX_POLICY,
       approvalPolicy: persistedInput.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
       modelProfile: persistedInput.modelProfile ?? null,
@@ -404,7 +342,6 @@ export class AgentManager {
         buildDefaultAgentToolPolicy({
           workspaceRoot: paths.workspaceRoot,
         }),
-      skillPolicy: normalizeAgentSkillPolicy(persistedInput.skillPolicy),
       status: persistedInput.status ?? DEFAULT_AGENT_STATUS,
       lifecycle:
         persistedInput.lifecycle === "archived" ? "archived" : DEFAULT_AGENT_LIFECYCLE,
@@ -566,10 +503,6 @@ export class AgentManager {
             buildDefaultAgentToolPolicy({
               workspaceRoot: paths.workspaceRoot,
             });
-    const inferredSkillPolicy =
-      "skillPolicy" in persistedPatch
-        ? normalizeAgentSkillPolicy(persistedPatch.skillPolicy)
-        : current.skillPolicy ?? buildDefaultAgentSkillPolicy();
     const inferredPythonEnvironment =
       "pythonEnvironment" in persistedPatch
         ? persistedPatch.pythonEnvironment
@@ -592,7 +525,6 @@ export class AgentManager {
       runtimeHome: paths.runtimeHome,
       runtimePolicy: inferredRuntimePolicy,
       toolPolicy: inferredToolPolicy,
-      skillPolicy: inferredSkillPolicy,
       lifecycle: inferredLifecycle,
       archivedAt:
         inferredLifecycle === "archived"
@@ -640,28 +572,5 @@ export class AgentManager {
       recursive: true,
       force: false,
     });
-  }
-
-  async createRuntimeSession<T>(
-    runtime: { createSession(input: RuntimeSessionInput): Promise<T> },
-    agentOrId: string | AgentRecord,
-    overrides: AgentSessionOverrides = {}
-  ): Promise<T> {
-    if (!runtime?.createSession) {
-      throw new Error("createRuntimeSession() requires a runtime adapter");
-    }
-
-    const agent =
-      typeof agentOrId === "string" ? await this.getAgent(agentOrId) : agentOrId;
-
-    return runtime.createSession(buildAgentSessionInput(agent, overrides));
-  }
-
-  async createCodexSession<T>(
-    runtime: { createSession(input: RuntimeSessionInput): Promise<T> },
-    agentOrId: string | AgentRecord,
-    overrides: AgentSessionOverrides = {}
-  ): Promise<T> {
-    return this.createRuntimeSession(runtime, agentOrId, overrides);
   }
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import * as appUpdateUi from "../../web/src/domains/rocky/lib/app-update.js";
+import * as appUpdateUi from "../../web/src/shared/lib/app-update.js";
 
 import {
   AgentEngineClient,
